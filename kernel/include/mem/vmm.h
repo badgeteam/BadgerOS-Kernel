@@ -6,6 +6,7 @@
 #pragma once
 
 #include "errno.h"
+#include "mutex.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -40,6 +41,15 @@
 // Map memory as uncached write coalescing.
 #define VMM_FLAG_NC 0b100000000000
 
+// Mark page as copy-on-write (W must be disabled).
+#define VMM_FLAG_COW  0b000100000000
+// Mark page as shared (will not be turned int CoW on fork).
+#define VMM_FLAG_SHM  0b001000000000
+// Mark page as memory-mapped I/O (anything except normal RAM; informational in case hardare doesn't support this flag).
+#define VMM_FLAG_MMIO 0b001100000000
+// What kind of memory is mapped at this page.
+#define VMM_FLAG_MODE 0b001100000000
+
 // Map memory as read-write.
 #define VMM_FLAG_RW  (VMM_FLAG_R | VMM_FLAG_W)
 // Map memory as read-execute.
@@ -53,9 +63,29 @@
 typedef size_t vpn_t;
 typedef size_t ppn_t;
 
+// A page table.
+typedef struct {
+    ppn_t   root_ppn;
+    mutex_t mtx;
+} pagetable_t;
+
+// Allocator for virtual address ranges.
+typedef struct {
+    vpn_t free_space;
+    void *free_list;
+} vma_alloc_t;
+
+// Mutex of allocator for virtual address ranges.
+typedef struct {
+    mutex_t     inner;
+    vma_alloc_t data;
+} mutex_vma_alloc_t;
+
 // Memory management context.
 typedef struct {
-    ppn_t pt_root_ppn;
+    bool              is_kernel;
+    pagetable_t       pagetable;
+    mutex_vma_alloc_t vma_alloc;
 } vmm_ctx_t;
 
 // Describes the result of a virtual to physical address translation.
@@ -93,9 +123,9 @@ extern size_t vmm_kernel_paddr;
 void vmm_init();
 
 // Create a new user page table.
-errno_t vmm_create_user_ctx(vmm_ctx_t *pt_root_ppn_out);
+errno_t vmm_create_user_ctx(vmm_ctx_t *ctx_out);
 // Destroy a user page table.
-void    vmm_destroy_user_ctx(vmm_ctx_t pt_root_ppn);
+void    vmm_destroy_user_ctx(vmm_ctx_t ctx);
 
 // Map a range of memory for the kernel at any virtual address.
 // Returns the virtual page number where it was mapped.
@@ -103,11 +133,11 @@ errno_t     vmm_map_k(vpn_t *virt_base_out, vpn_t virt_len, ppn_t phys_base, uin
 // Map a range of memory for a user page table at a specific virtual address.
 errno_t     vmm_map_k_at(vpn_t virt_base, vpn_t virt_len, ppn_t phys_base, uint32_t flags);
 // Unmap a range of kernel memory.
-errno_t     vmm_unmap_k(vpn_t virt_base, vpn_t virt_len);
+void        vmm_unmap_k(vpn_t virt_base, vpn_t virt_len);
 // Map a range of memory for a user page table at a specific virtual address.
 errno_t     vmm_map_u_at(vmm_ctx_t *ctx, vpn_t virt_base, vpn_t virt_len, ppn_t phys_base, uint32_t flags);
 // Unmap a range of user memory.
-errno_t     vmm_unmap_u(vmm_ctx_t *ctx, vpn_t virt_base, vpn_t virt_len);
+void        vmm_unmap_u(vmm_ctx_t *ctx, vpn_t virt_base, vpn_t virt_len);
 // Translate a virtual to a physical address.
 virt2phys_t vmm_virt2phys(vmm_ctx_t *ctx, size_t vaddr);
 // Switch to a different user virtual memory context.

@@ -24,6 +24,9 @@
 
 
 
+// Called by the interrupt handler when the CPU-local timer fires.
+void riscv_sbi_timer_interrupt();
+
 // Table of trap names.
 static char const *const trapnames[] = {
     "Instruction address misaligned",
@@ -62,14 +65,21 @@ static void kill_proc_on_trap() {
 
 // Called from ASM on interrupt.
 void riscv_interrupt_handler() {
+    long cause;
+    asm volatile("csrr %0, " CSR_CAUSE_STR : "=r"(cause));
+
+    if ((cause & RISCV_VT_ICAUSE_MASK) == RISCV_INT_TIMER) {
+        asm("csrc sie, %0" ::"r"(1 << RISCV_INT_TIMER));
+        riscv_sbi_timer_interrupt();
+        return;
+    }
+
     device_t *device = isr_ctx_get()->cpulocal->root_irqctl;
     if (!device) {
         claim_panic();
         logkf_from_isr(LOG_FATAL, "Interrupt without interrupt controller");
         panic_abort_unchecked();
     }
-    long cause;
-    asm volatile("csrr %0, " CSR_CAUSE_STR : "=r"(cause));
     device_interrupt(device, cause & RISCV_VT_ICAUSE_MASK);
 }
 

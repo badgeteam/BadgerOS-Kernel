@@ -5,14 +5,12 @@
 
 #include "cpu/driver/riscv_intc.h"
 
+#include "assertions.h"
 #include "cpu/riscv.h"
 #include "device/class/irqctl.h"
 #include "device/device.h"
 #include "log.h"
 #include "panic.h"
-
-// Called by the interrupt handler when the CPU-local timer fires.
-void riscv_sbi_timer_interrupt();
 
 bool riscv_intc_match(device_info_t *info) {
     return device_test_dtb_compat(info, 1, (char const *const[]){"riscv,cpu-intc"});
@@ -22,14 +20,15 @@ errno_t riscv_intc_add(device_t *device) {
     return 0;
 }
 
+void riscv_intc_post_add(device_t *device) {
+}
+
 void riscv_intc_remove(device_t *device) {
 }
 
 bool riscv_intc_interrupt(device_t *device, irqno_t pin) {
-    if (pin == RISCV_INT_TIMER) {
-        asm("csrc sie, %0" ::"r"(1 << RISCV_INT_TIMER));
-        riscv_sbi_timer_interrupt();
-    } else if (!device_forward_interrupt(device, pin)) {
+    assert_dev_drop(pin != RISCV_INT_TIMER);
+    if (!device_forward_interrupt(device, pin)) {
         logkf_from_isr(LOG_FATAL, "Unhandled interrupt 0x%{size;x}", pin);
         panic_abort();
     }
@@ -63,6 +62,7 @@ driver_irqctl_t const riscv_intc_driver = {
     .base.dev_class          = DEV_CLASS_IRQCTL,
     .base.match              = riscv_intc_match,
     .base.add                = riscv_intc_add,
+    .base.post_add           = riscv_intc_post_add,
     .base.remove             = riscv_intc_remove,
     .base.interrupt          = riscv_intc_interrupt,
     .base.enable_irq_out     = riscv_intc_enable_irq,

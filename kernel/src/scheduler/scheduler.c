@@ -6,11 +6,13 @@
 #include "arrays.h"
 #include "assertions.h"
 #include "badge_strings.h"
+#include "cpu/interrupt.h"
 #include "cpu/isr.h"
 #include "cpulocal.h"
 #include "housekeeping.h"
 #include "interrupt.h"
 #include "isr_ctx.h"
+#include "list.h"
 #include "log.h"
 #include "mem/vmm.h"
 #include "page_alloc.h"
@@ -58,7 +60,11 @@ sched_thread_t *thread_dequeue_self() {
     isr_ctx_t        *kctx = isr_ctx_get();
     sched_cpulocal_t *info = kctx->cpulocal->sched;
     sched_thread_t   *self = kctx->thread;
+    bool              ie   = irq_disable();
+    spinlock_take(&info->queue_lock);
     dlist_remove(&info->queue, &self->node);
+    spinlock_release(&info->queue_lock);
+    irq_enable_if(ie);
     return self;
 }
 
@@ -155,6 +161,8 @@ static void sw_handle_sched_flags(timestamp_us_t now, int cur_cpu, sched_cpuloca
 
 // Measure load on this CPU.
 static void sw_measure_load(sched_cpulocal_t *info) {
+    spinlock_take_shared(&info->queue_lock);
+
     // Measure time usage.
     timestamp_us_t  used_time = 0;
     sched_thread_t *thread    = (sched_thread_t *)info->queue.head;
@@ -181,6 +189,8 @@ static void sw_measure_load(sched_cpulocal_t *info) {
 
     info->load_average  = total_load;
     info->load_estimate = total_load;
+
+    spinlock_release_shared(&info->queue_lock);
 }
 
 // Requests the scheduler to prepare a switch from inside an interrupt routine.
@@ -335,22 +345,24 @@ static void sched_housekeeping(int taskno, void *arg) {
     }
     spinlock_release(&unused_lock);
 
-    // Clean up all dead threads.
+    // Threads must be removed from the list before being properly reaped because that is preemptible.
+    dlist_foreach_node(sched_thread_t, thread, &tmp) {
+        array_binsearch_t res =
+            array_binsearch(threads, sizeof(void *), threads_len, (void *)(ptrdiff_t)thread->id, tid_int_cmp);
+        assert_dev_drop(res.found);
+        array_lencap_remove(&threads, sizeof(void *), &threads_len, &threads_cap, NULL, res.index);
+    }
+
+    spinlock_release(&threads_lock);
+    irq_enable();
+
     while (tmp.len) {
         sched_thread_t *thread = (void *)dlist_pop_front(&tmp);
         sched_free_stack(thread->kernel_stack_bottom);
         if (thread->name) {
             free(thread->name);
         }
-        array_binsearch_t res =
-            array_binsearch(threads, sizeof(void *), threads_len, (void *)(ptrdiff_t)thread->id, tid_int_cmp);
-        assert_dev_drop(res.found);
-        array_lencap_remove(&threads, sizeof(void *), &threads_len, &threads_cap, NULL, res.index);
-        free(thread);
     }
-
-    spinlock_release(&threads_lock);
-    irq_enable();
 }
 
 // Idle function ran when a CPU has no threads.

@@ -3,37 +3,32 @@
 // SPDX-License-Identifier: MIT
 
 use core::{
+    cell::UnsafeCell,
     fmt::Debug,
-    ops::Div,
-    ptr::slice_from_raw_parts,
-    sync::atomic::{Atomic, AtomicUsize, Ordering},
+    ops::Range,
+    ptr::{slice_from_raw_parts, slice_from_raw_parts_mut},
+    sync::atomic::AtomicUsize,
 };
 
-use mmu::PTE_PER_PAGE;
+use alloc::vec::Vec;
+use pagetable::{OwnedPTE, PAGING_LEVELS};
 
 use crate::{
-    bindings::{
-        self,
-        error::{EResult, Errno},
-        log::LogLevel,
-        mutex::{Mutex, SharedMutexGuard},
-        raw::{errno_t, virt2phys_t},
-    },
+    badgelib::{irq::IrqGuard, rcu},
+    bindings::{error::EResult, log::LogLevel, mutex::Mutex},
     config::PAGE_SIZE,
-    cpu::{
-        self,
-        mmu::{BITS_PER_LEVEL, PackedPTE},
-    },
+    cpu::mmu::{self, BITS_PER_LEVEL},
     mem::{
-        pmm::{PPN, page_alloc},
-        vmm::mmu::PAGING_LEVELS,
+        pmm::{self, PPN},
+        vmm::{pagetable::PageTable, vma_alloc::VmaAlloc},
     },
 };
 
-use super::pmm;
+use super::pmm::phys_ptr::PhysPtr;
 
 mod c_api;
-pub mod mmu;
+pub mod pagetable;
+pub mod vma_alloc;
 
 pub mod flags {
     // Note: These flags are the same bit positions as in the RISC-V PTE format, do not change them!
@@ -55,6 +50,12 @@ pub mod flags {
 
     /// Mark page as copy-on-write (W must be disabled).
     pub const COW: u32 = 0b0001_0000_0000;
+    /// Mark page as shared (will not be turned int CoW on fork).
+    pub const SHM: u32 = 0b0010_0000_0000;
+    /// Mark page as memory-mapped I/O (anything except normal RAM; informational in case hardare doesn't support this flag).
+    pub const MMIO: u32 = 0b0011_0000_0000;
+    /// What kind of memory is mapped at this page.
+    pub const MODE: u32 = 0b0011_0000_0000;
 
     /// Map memory as I/O (uncached, no write coalescing).
     pub const IO: u32 = 0b0100_0000_0000;
@@ -67,6 +68,9 @@ pub mod flags {
     pub const RX: u32 = R | X;
     /// Map memory as read-write-execute.
     pub const RWX: u32 = R | W | X;
+
+    /// Allow creation of I/O PTE even though the page may be RAM.
+    pub(super) const HHDM: u32 = 0b1_0000_0000_0000;
 }
 
 /// Unsigned integer that can store a virtual page number.
@@ -78,11 +82,15 @@ pub type VPN = usize;
 /// Naturally aligned slice that is a page or more of zeroes.
 static mut ZEROES: *const [u8] = unsafe { core::mem::zeroed() };
 
-/// Kernel page table root PPN.
-pub static mut KERNEL_VMM_CTX: Context = Context { pt_root_ppn: 0 };
+/// The kernel memory map.
+static mut KERNEL_MM: UnsafeCell<Option<Memmap>> = UnsafeCell::new(None);
 
-/// Mutex guarding modifications to the kernel page table.
-pub static KERNEL_VMM_MTX: Mutex<()> = unsafe { Mutex::new_static(()) };
+/// Get the kernel memory map.
+pub fn kernel_mm() -> &'static Memmap {
+    unsafe { (*&raw const KERNEL_MM).as_ref_unchecked() }
+        .as_ref()
+        .unwrap()
+}
 
 unsafe extern "C" {
     static __start_text: [u8; 0];
@@ -114,237 +122,316 @@ unsafe extern "C" {
     pub static mut KERNEL_PADDR: usize;
 }
 
-// Memory management context.
+/// High-level interface to memory maps.
 #[repr(C)]
-pub struct Context {
-    pt_root_ppn: PPN,
+pub struct Memmap {
+    is_kernel: bool,
+    /// An invalid non-NULL leaf PTE is used for swapped-out or mmap()ed pages.
+    pagetable: PageTable,
+    vma_alloc: Mutex<VmaAlloc>,
+    // TODO: Metadata storage for e.g. file mmap()s.
 }
 
-/// Calculates the maximum page table level wherein the next part of the mapping can be made.
-fn calc_superpage(virt_base: VPN, virt_len: VPN, phys_base: PPN) -> u8 {
-    let align = virt_base | phys_base;
-    ((align.trailing_zeros().min(virt_len.ilog2()) / BITS_PER_LEVEL as u32) as u8)
-        .min(unsafe { PAGING_LEVELS as u8 })
-}
+unsafe impl Send for Memmap {}
+unsafe impl Sync for Memmap {}
 
-/// Common implementation of the various (un)map functions.
-unsafe fn map_impl(
-    ctx: &Context,
-    virt_base: VPN,
-    virt_len: VPN,
-    phys_base: PPN,
-    flags: u32,
-) -> EResult<()> {
-    // Map in original page table.
-    let mut offset = 0 as VPN;
-    let mut root_touched = false;
-    while offset < virt_len {
-        let level = calc_superpage(virt_base + offset, virt_len - offset, phys_base + offset);
-        root_touched |= unsafe {
-            mmu::map(
-                ctx.pt_root_ppn,
-                virt_base + offset,
-                mmu::PTE {
-                    ppn: phys_base + offset,
-                    flags,
-                    level,
-                    valid: flags & flags::RWX != 0,
-                    leaf: true,
-                },
-            )
-        }?;
-        offset += (1 as VPN) << (BITS_PER_LEVEL * level as u32);
+impl Memmap {
+    /// Create a new user memory map.
+    pub fn new_user() -> EResult<Self> {
+        let mut pagetable = PageTable::new()?;
+        let kernel_mm = kernel_mm();
+        unsafe { pagetable.copy_higher_half(&kernel_mm.pagetable) };
+        Ok(Self {
+            is_kernel: false,
+            pagetable,
+            vma_alloc: Mutex::new(VmaAlloc::new()),
+        })
     }
 
-    if root_touched && (flags & flags::G) != 0 {
-        let root_pte_size = 1usize << ((unsafe { PAGING_LEVELS } - 1) * BITS_PER_LEVEL);
+    /// Do a virtual to physical lookup in this context.
+    pub fn virt2phys(&self, vaddr: usize) -> Virt2Phys {
+        if !pagetable::is_canon_addr(vaddr) {
+            logkf!(
+                LogLevel::Warning,
+                "Tried to look up non-canonical virtual address"
+            );
+            return Virt2Phys {
+                page_vaddr: vaddr & !(PAGE_SIZE as usize - 1),
+                page_paddr: 0,
+                size: PAGE_SIZE as usize,
+                paddr: 0,
+                flags: 0,
+                valid: false,
+            };
+        }
 
-        // Broadcast global mappings to process page tables.
-        let guard = unsafe {
-            SharedMutexGuard::new_raw(
-                &raw mut bindings::raw::proc_mtx,
-                slice_from_raw_parts(bindings::raw::procs, bindings::raw::procs_len),
-            )
+        let pte = self.pagetable.walk(vaddr / PAGE_SIZE as usize);
+
+        let size = (PAGE_SIZE as usize) << (mmu::BITS_PER_LEVEL * pte.order as u32);
+        let page_vaddr = vaddr & !(size - 1);
+        let page_paddr = pte.ppn * PAGE_SIZE as usize;
+        let offset = vaddr - page_vaddr;
+        Virt2Phys {
+            page_vaddr,
+            page_paddr,
+            size,
+            paddr: page_paddr + offset,
+            flags: pte.flags,
+            valid: pte.valid,
+        }
+    }
+
+    /// Create a fork()ed duplicate of this map.
+    /// Converts anonymous writeable mappings into copy-on-write mappings.
+    pub fn fork(&self) -> EResult<Self> {
+        assert!(!self.is_kernel);
+        // This function doesn't change the effective contents of this memmap, but must ensure no concurrent modifications happen;
+        // it cannot lock the page table spinlock constantly, so this guard effectively prevents concurrent modifications.
+        let _guard = self.vma_alloc.lock();
+
+        let new_mm = Self::new_user()?;
+
+        let mut prev_vpn = 0;
+        while let Some((vpn, mut pte)) = self.pagetable.find_first(prev_vpn, false) {
+            if !pagetable::is_canon_user_page(vpn) {
+                break;
+            }
+
+            if pte.valid && pte.flags & (flags::W | flags::MODE) == flags::W {
+                // If PTE is writeable anonymous memory, it must be turned into a CoW mapping.
+                pte.flags = (pte.flags & !flags::W) | flags::COW;
+                unsafe { self.pagetable.map(vpn, OwnedPTE::from_raw_ref(pte)) }.unwrap();
+            }
+
+            if !pte.is_null() {
+                unsafe { new_mm.pagetable.map(vpn, OwnedPTE::from_raw_ref(pte)) }?;
+            }
+
+            prev_vpn = vpn;
+        }
+
+        // TODO: Fallible clone of this structure.
+        *new_mm.vma_alloc.lock() = self.vma_alloc.lock_shared().clone();
+
+        Ok(new_mm)
+    }
+
+    // TODO: Mapping function for files.
+
+    /// Create a new mapping at a fixed physical address.
+    /// Assumes that the range encompases existing physical memory.
+    ///
+    /// The [`flags::MODE`] flags affect how the mapping is treated:
+    /// - `0`: Anonymous mapping; writable mappings will be turned into CoW on [`Self::fork`].
+    /// - [`flags::COW`]: Page mustn't be writable; it will be copied on write.
+    /// - [`flags::SHM`]: Writable shared mappings won't be turned into CoW on [`Self::fork`].
+    /// - [`flags::MMIO`]: `ppn` is assumed not to be normal RAM.
+    ///
+    /// If `vpn` is [`None`], an arbitrary virtual address range is chosen.
+    pub unsafe fn map_fixed(
+        &self,
+        ppn: PPN,
+        vpn: Option<VPN>,
+        size: VPN,
+        mut flags: u32,
+    ) -> EResult<VPN> {
+        let mut guard = self.vma_alloc.lock();
+        let mut do_steal = false;
+        let vpn = match vpn {
+            Some(vpn) => {
+                do_steal = true;
+                vpn
+            }
+            None => guard.alloc(size)?,
         };
-        for proc in guard.iter() {
-            let proc_pt_root = unsafe { (**proc).memmap.mem_ctx.pt_root_ppn };
-            for index in
-                virt_base.div(root_pte_size)..(virt_base + virt_len).div_ceil(root_pte_size)
-            {
-                unsafe {
-                    mmu::xchg_pte(proc_pt_root, index, mmu::read_pte(ctx.pt_root_ppn, index))
-                };
-            }
-        }
-    }
 
-    // Local TLB invalidation.
-    let inval_range = virt_base..virt_base + virt_len;
-    if inval_range.len() > cpu::mmu::INVAL_PAGE_THRESHOLD {
-        cpu::mmu::vmem_fence(None, None);
-    } else {
-        for page in inval_range {
-            cpu::mmu::vmem_fence(Some(page * PAGE_SIZE as usize), None);
-        }
-    }
-
-    // TODO: Remote TLB invalidation dispatch.
-
-    Ok(())
-}
-
-/// Map a range of memory for the kernel at a specific virtual address.
-/// # Safety
-/// - The caller is responsible for ensuring the safety of `virt_base`;
-/// - The caller is responsible for managing the memory at `phys_base`.
-pub unsafe fn map_k_at(virt_base: VPN, virt_len: VPN, phys_base: PPN, flags: u32) -> EResult<()> {
-    if flags & flags::U != 0
-        || !mmu::is_canon_kernel_range(
-            virt_base * PAGE_SIZE as usize..(virt_base + virt_len) * PAGE_SIZE as usize,
-        )
-    {
-        return Err(Errno::EINVAL);
-    }
-    let flags = flags | flags::G;
-    let _guard = KERNEL_VMM_MTX.lock();
-    unsafe {
-        map_impl(
-            &*&raw const KERNEL_VMM_CTX,
-            virt_base,
-            virt_len,
-            phys_base,
-            flags,
-        )
-    }
-}
-
-/// Finds a certain length of free pages within the higher half.
-/// Makes sure there is at least one unmapped page before and after the found region.
-/// # Safety
-/// - The caller is responsible for preventing a concurrent map/unmap in the same page table.
-unsafe fn find_free_pages(pt_root_ppn: PPN, virt_len: VPN) -> EResult<VPN> {
-    let mut vpn = (mmu::higher_half_vaddr() / PAGE_SIZE as usize) as VPN;
-    let limit = vpn + (mmu::canon_half_size() / PAGE_SIZE as usize) as VPN;
-    let mut start_vpn = 0 as VPN;
-    let mut avl_len = 0 as VPN;
-
-    while vpn < limit {
-        let pte = unsafe { mmu::walk(pt_root_ppn, vpn) };
-        let pte_len = 1 << (pte.level as VPN * BITS_PER_LEVEL as VPN);
-        if pte.valid {
-            avl_len = 0;
+        if self.is_kernel {
+            flags |= flags::A | flags::D | flags::G;
+            assert!(pagetable::is_canon_kernel_page_range(vpn..vpn + size));
         } else {
-            if avl_len == 0 {
-                start_vpn = vpn;
+            flags |= flags::A | flags::D | flags::U;
+            assert!(flags & flags::G == 0);
+            assert!(pagetable::is_canon_user_page_range(vpn..vpn + size));
+        }
+
+        let mut ptes = Vec::new();
+        // Storing the to-be-freed pages here so they're only freed after an RCU sync.
+        let mut to_free = Vec::new();
+        to_free.try_reserve(size)?;
+
+        let mut offset = 0;
+        while offset < size {
+            let order = pagetable::calc_superpage(vpn + offset, ppn + offset, size - offset);
+            if flags & flags::MODE == flags::MMIO {
+                ptes.push(OwnedPTE::new_io(ppn + offset, order, flags));
+            } else {
+                let mem = unsafe { PhysPtr::from_ref_ppn(ppn + offset) };
+                let mem_offset = ppn + offset - mem.ppn();
+                ptes.push(OwnedPTE::new_ram(mem, mem_offset, order, flags));
             }
-            avl_len += pte_len;
+            debug_assert!(ptes.last().as_ref().unwrap().order() == order);
+            offset += 1 << mmu::BITS_PER_LEVEL * order as u32;
         }
-        if avl_len >= virt_len + 2 {
-            return Ok(start_vpn + 1);
+
+        unsafe { self.map_impl(ptes, &mut to_free, vpn, size)? };
+        if do_steal {
+            guard.steal(vpn..vpn + size);
         }
-        vpn += pte_len;
+
+        if to_free.len() != 0 {
+            rcu::rcu_sync();
+        }
+
+        Ok(vpn)
     }
 
-    Err(Errno::ENOMEM)
-}
+    /// Allocate memory for and create a new mapping.
+    /// Assumes that the range encompases existing physical memory.
+    ///
+    /// The [`flags::MODE`] flags affect how the mapping is treated:
+    /// - `0`: Anonymous mapping; writable mappings will be turned into CoW on [`Self::fork`].
+    /// - [`flags::COW`]: Page mustn't be writable; it will be copied on write.
+    /// - [`flags::SHM`]: Writable shared mappings won't be turned into CoW on [`Self::fork`].
+    /// - [`flags::MMIO`]: Invalid for this function.
+    ///
+    /// If `vpn` is [`None`], an arbitrary virtual address range is chosen.
+    pub unsafe fn map_ram(&self, vpn: Option<VPN>, size: VPN, mut flags: u32) -> EResult<VPN> {
+        let mut guard = self.vma_alloc.lock();
+        let mut do_steal = false;
+        let vpn = match vpn {
+            Some(vpn) => {
+                do_steal = true;
+                vpn
+            }
+            None => guard.alloc(size)?,
+        };
 
-/// Map a range of memory for the kernel at any virtual address.
-/// Returns the virtual page number where it was mapped.
-/// # Safety
-/// - The caller is responsible for managing the memory at `phys_base`.
-pub unsafe fn map_k(virt_len: VPN, phys_base: PPN, flags: u32) -> EResult<VPN> {
-    if flags & flags::U != 0 {
-        return Err(Errno::EINVAL);
+        if self.is_kernel {
+            flags |= flags::A | flags::D | flags::G;
+            assert!(pagetable::is_canon_kernel_page_range(vpn..vpn + size));
+        } else {
+            flags |= flags::A | flags::D | flags::U;
+            assert!(flags & flags::G == 0);
+            assert!(pagetable::is_canon_user_page_range(vpn..vpn + size));
+        }
+
+        assert!(flags & flags::MODE != flags::MMIO);
+        let mut ptes = Vec::new();
+        // Storing the to-be-freed pages here so they're only freed after an RCU sync.
+        let mut to_free = Vec::new();
+        to_free.try_reserve(size)?;
+
+        let mem = PhysPtr::new(
+            (VPN::BITS - size.leading_zeros() - 1) as u8,
+            pmm::PageUsage::KernelAnon,
+        )?;
+        let mut offset = 0;
+        while offset < size {
+            let order = pagetable::calc_superpage(vpn + offset, mem.ppn() + offset, size - offset);
+            ptes.push(OwnedPTE::new_ram(mem.clone(), offset, order, flags));
+            offset += 1 << mmu::BITS_PER_LEVEL * order as u32;
+        }
+
+        unsafe { self.map_impl(ptes, &mut to_free, vpn, size)? };
+        if do_steal {
+            guard.steal(vpn..vpn + size);
+        }
+
+        rcu::rcu_sync();
+
+        Ok(vpn)
     }
-    let flags = flags | flags::G;
-    let _guard = KERNEL_VMM_MTX.lock();
-    let virt_base = unsafe { find_free_pages(KERNEL_VMM_CTX.pt_root_ppn, virt_len) }?;
-    unsafe {
-        map_impl(
-            &*&raw const KERNEL_VMM_CTX,
-            virt_base,
-            virt_len,
-            phys_base,
-            flags,
-        )
-    }?;
-    Ok(virt_base)
-}
 
-/// Unmap a range of kernel memory.
-/// # Safety
-/// - The caller is responsible for ensuring the unmapped memory is no longer in use.
-pub unsafe fn unmap_k(virt_base: VPN, virt_len: VPN) -> EResult<()> {
-    if !mmu::is_canon_kernel_range(
-        virt_base * PAGE_SIZE as usize..(virt_base + virt_len) * PAGE_SIZE as usize,
-    ) {
-        return Err(Errno::EINVAL);
-    }
-    unsafe { map_impl(&*&raw const KERNEL_VMM_CTX, virt_base, virt_len, 0, 0) }
-}
-
-/// Map a range of memory for a user page table at a specific virtual address.
-/// # Safety
-/// - The caller is responsible for managing the memory at `phys_base`;
-/// - The caller is responsible for preventing a concurrent map/unmap in the same page table.
-pub unsafe fn map_u_at(
-    ctx: &Context,
-    virt_base: VPN,
-    virt_len: VPN,
-    phys_base: PPN,
-    flags: u32,
-) -> EResult<()> {
-    if flags & !(flags::RWX | flags::A | flags::D) != 0
-        || !mmu::is_canon_user_range(
-            virt_base * PAGE_SIZE as usize..(virt_base + virt_len) * PAGE_SIZE as usize,
-        )
-    {
-        return Err(Errno::EINVAL);
-    }
-    let flags = flags | flags::U;
-    unsafe { map_impl(ctx, virt_base, virt_len, phys_base, flags) }
-}
-
-/// Unmap a range of user memory.
-/// # Safety
-/// - The caller is responsible for preventing a concurrent map/unmap in the same page table.
-pub unsafe fn unmap_u(ctx: &Context, virt_base: VPN, virt_len: VPN) -> EResult<()> {
-    if !mmu::is_canon_user_range(
-        virt_base * PAGE_SIZE as usize..(virt_base + virt_len) * PAGE_SIZE as usize,
-    ) {
-        return Err(Errno::EINVAL);
-    }
-    unsafe { map_impl(ctx, virt_base, virt_len, 0, 0) }
-}
-
-/// Create a user virtual memory context.
-pub fn create_user_ctx() -> EResult<Context> {
-    unsafe {
-        let pt_root_ppn = page_alloc(0, pmm::PageUsage::PageTable)?;
-
-        // Copy the current kernel mappings into this new user page table.
-        let new_pt_hhdm = &*slice_from_raw_parts(
-            (pt_root_ppn * PAGE_SIZE as usize + HHDM_OFFSET) as *const Atomic<PackedPTE>,
-            PTE_PER_PAGE,
+    /// Common implementation of all mapping functions.
+    unsafe fn map_impl(
+        &self,
+        ptes: Vec<OwnedPTE>,
+        to_free: &mut Vec<OwnedPTE>,
+        vpn: VPN,
+        size: VPN,
+    ) -> EResult<()> {
+        let actual_size = ptes
+            .iter()
+            .map(|x| 1 << x.order() as u32 * BITS_PER_LEVEL)
+            .sum::<VPN>();
+        debug_assert!(
+            actual_size == size,
+            "map_impl size mismatch; expected 0x{:x}, got 0x{:x}",
+            size,
+            actual_size
         );
-        let kernel_pt_hhdm = &*slice_from_raw_parts(
-            (KERNEL_VMM_CTX.pt_root_ppn * PAGE_SIZE as usize + HHDM_OFFSET)
-                as *const Atomic<PackedPTE>,
-            PTE_PER_PAGE,
-        );
-        for i in 0..PTE_PER_PAGE {
-            new_pt_hhdm[i].store(kernel_pt_hhdm[i].load(Ordering::Acquire), Ordering::Release);
+
+        // Pre-allocate page tables so no partial mapping is left on failure.
+        let mut i = 0usize;
+        let mut offset = 0 as VPN;
+        while offset < size {
+            self.pagetable.prealloc(vpn + offset, ptes[i].order())?;
+            offset += 1 << mmu::BITS_PER_LEVEL * ptes[i].order() as u32;
+            i += 1;
         }
 
-        Ok(Context { pt_root_ppn })
+        offset = 0;
+        for pte in ptes {
+            let level = pte.order();
+            let unmapped = unsafe { self.pagetable.map(vpn + offset, pte) }
+                .expect("Page tables weren't preallocated");
+            if unmapped.owns_ram() {
+                to_free.push(unmapped);
+            }
+            offset += 1 << mmu::BITS_PER_LEVEL * level as u32;
+        }
+
+        mmu::vmem_fence(None, None);
+
+        Ok(())
+    }
+
+    /// Unmap a range of pages.
+    pub unsafe fn unmap(&self, pages: Range<PPN>) {
+        if self.is_kernel {
+            assert!(pagetable::is_canon_kernel_page_range(pages.clone()));
+        } else {
+            assert!(pagetable::is_canon_user_page_range(pages.clone()));
+        }
+
+        let mut guard = self.vma_alloc.lock();
+        // Storing the to-be-freed pages here so they're only freed after an RCU sync.
+        let mut to_free = Vec::new();
+
+        unsafe { self.unmap_impl(pages.clone(), &mut to_free) };
+
+        mmu::vmem_fence(None, None);
+
+        if to_free.len() != 0 {
+            rcu::rcu_sync();
+        }
+
+        guard.free(pages);
+        drop(guard);
+    }
+
+    /// Unmap a range of pages; the caller must guarantee that the contents of `to_free` are only dropped after an [`rcu::rcu_sync`].
+    unsafe fn unmap_impl(&self, pages: Range<PPN>, to_free: &mut Vec<OwnedPTE>) {
+        let mut vpn = pages.start;
+        while vpn < pages.end {
+            let pte = self.pagetable.walk(vpn);
+
+            if !pte.is_null() {
+                let old_pte = unsafe { self.pagetable.map(vpn, OwnedPTE::NULL) }.unwrap();
+                if old_pte.owns_ram() {
+                    to_free.push(old_pte);
+                }
+            }
+
+            vpn += 1 << mmu::BITS_PER_LEVEL * pte.order as u32;
+        }
     }
 }
 
-/// Destroy a user virtual memory context.
-/// # Safety
-/// - The caller is responsible for ensuring the context is no longer in use.
-pub unsafe fn destroy_user_ctx(_ctx: Context) {
-    logkf!(LogLevel::Warning, "TODO: vmm::destroy_user_ctx");
+impl Drop for Memmap {
+    fn drop(&mut self) {
+        assert!(!self.is_kernel);
+    }
 }
 
 /// Describes the result of a virtual to physical address translation.
@@ -399,121 +486,104 @@ impl Debug for Virt2Phys {
     }
 }
 
-/// Translate a virtual to a physical address.
-pub unsafe fn virt2phys(ctx: &Context, vaddr: usize) -> Virt2Phys {
-    if !mmu::is_canon_addr(vaddr) {
-        logkf!(
-            LogLevel::Warning,
-            "Tried to look up non-canonical virtual address"
-        );
-        return Virt2Phys {
-            page_vaddr: vaddr & !(PAGE_SIZE as usize - 1),
-            page_paddr: 0,
-            size: PAGE_SIZE as usize,
-            paddr: 0,
-            flags: 0,
-            valid: false,
-        };
-    }
-
-    let pte = unsafe { mmu::walk(ctx.pt_root_ppn, vaddr / PAGE_SIZE as usize) };
-
-    let size = (PAGE_SIZE as usize) << (BITS_PER_LEVEL * pte.level as u32);
-    let page_vaddr = vaddr & !(size - 1);
-    let page_paddr = pte.ppn * PAGE_SIZE as usize;
-    let offset = vaddr - page_vaddr;
-    Virt2Phys {
-        page_vaddr,
-        page_paddr,
-        size,
-        paddr: page_paddr + offset,
-        flags: pte.flags,
-        valid: pte.valid,
-    }
+/// Naturally aligned slice that is a page or more of zeroes.
+pub fn zeroes() -> &'static [u8] {
+    unsafe { &*ZEROES }
 }
 
 /// Initialize the virtual memory subsystem.
 pub unsafe fn init() {
     unsafe {
-        // Detect MMU mode to be used.
-        cpu::mmu::early_init();
+        mmu::early_init();
         logkf!(LogLevel::Info, "MMU paging levels: {}", { PAGING_LEVELS });
 
         // Prepare new page tables containing kernel and HHDM.
+        // Note: Using the MMIO mode to map the kernel here, as it will never be in memory marked as RAM.
+        // Don't confuse this for the IO and NC flags, which actually change how the CPU accesses the pages.
         let res: EResult<()> = try {
-            // Allocate and zero out page table.
-            let pt_root_ppn = mmu::alloc_pgtable_page()?;
-            KERNEL_VMM_CTX = Context { pt_root_ppn };
+            let tmp = &mut *(*&raw const KERNEL_MM).as_mut_unchecked();
+            *tmp = Some(Memmap {
+                is_kernel: true,
+                pagetable: PageTable::new()?,
+                vma_alloc: Mutex::new(VmaAlloc::new()),
+            });
+            let kernel_mm = kernel_mm();
+
+            // 1/4 through 3/4 of the higher half is available for miscellaneous mappings.
+            kernel_mm.vma_alloc.lock().free(
+                pagetable::higher_half_vpn() + pagetable::canon_half_pages() / 4
+                    ..pagetable::higher_half_vpn() + pagetable::canon_half_pages() * 3 / 4,
+            );
 
             // Kernel RX.
+            logkf_unlocked!(LogLevel::Debug, "Mapping kernel RX");
             let text_vaddr = &raw const __start_text as usize;
             let text_len = &raw const __stop_text as usize - &raw const __start_text as usize;
             debug_assert!(text_len % PAGE_SIZE as usize == 0);
-            map_k_at(
-                text_vaddr / PAGE_SIZE as usize,
-                text_len / PAGE_SIZE as usize,
+            kernel_mm.map_fixed(
                 (text_vaddr - KERNEL_VADDR + KERNEL_PADDR) / PAGE_SIZE as usize,
-                flags::RX | flags::G | flags::A | flags::D,
+                Some(text_vaddr / PAGE_SIZE as usize),
+                text_len / PAGE_SIZE as usize,
+                flags::RX | flags::G,
             )?;
 
             // Kernel R.
+            logkf_unlocked!(LogLevel::Debug, "Mapping kernel R");
             let rodata_vaddr = &raw const __start_rodata as usize;
             let rodata_len = &raw const __stop_rodata as usize - &raw const __start_rodata as usize;
             debug_assert!(rodata_len % PAGE_SIZE as usize == 0);
-            map_k_at(
-                rodata_vaddr / PAGE_SIZE as usize,
-                rodata_len / PAGE_SIZE as usize,
+            kernel_mm.map_fixed(
                 (rodata_vaddr - KERNEL_VADDR + KERNEL_PADDR) / PAGE_SIZE as usize,
-                flags::R | flags::G | flags::A | flags::D,
+                Some(rodata_vaddr / PAGE_SIZE as usize),
+                rodata_len / PAGE_SIZE as usize,
+                flags::R | flags::G,
             )?;
 
             // Kernel RW.
+            logkf_unlocked!(LogLevel::Debug, "Mapping kernel RW");
             let data_vaddr = &raw const __start_data as usize;
             let data_len = &raw const __stop_data as usize - &raw const __start_data as usize;
             debug_assert!(data_len % PAGE_SIZE as usize == 0);
-            map_k_at(
-                data_vaddr / PAGE_SIZE as usize,
-                data_len / PAGE_SIZE as usize,
+            kernel_mm.map_fixed(
                 (data_vaddr - KERNEL_VADDR + KERNEL_PADDR) / PAGE_SIZE as usize,
-                flags::RW | flags::G | flags::A | flags::D,
+                Some(data_vaddr / PAGE_SIZE as usize),
+                data_len / PAGE_SIZE as usize,
+                flags::RW | flags::G,
             )?;
 
             // HHDM RW.
+            logkf_unlocked!(LogLevel::Debug, "Mapping HHDM RW");
             debug_assert!(HHDM_SIZE % PAGE_SIZE as usize == 0);
-            map_k_at(
-                HHDM_VADDR / PAGE_SIZE as usize,
-                HHDM_SIZE / PAGE_SIZE as usize,
+            kernel_mm.map_fixed(
                 (HHDM_VADDR - HHDM_OFFSET) / PAGE_SIZE as usize,
-                flags::RW | flags::G | flags::A | flags::D,
+                Some(HHDM_VADDR / PAGE_SIZE as usize),
+                HHDM_SIZE / PAGE_SIZE as usize,
+                flags::RW | flags::G | flags::MMIO | flags::HHDM,
             )?;
 
             // Page of zeroes.
+            logkf_unlocked!(LogLevel::Debug, "Mapping zeroes page");
             let zeroes_order = 0;
-            let zeroes_ppn = pmm::page_alloc(zeroes_order, pmm::PageUsage::KernelAnon)?;
-            let zeroes_vpn = map_k(
-                1 << zeroes_order,
-                zeroes_ppn,
-                flags::R | flags::G | flags::A | flags::D,
-            )?;
+            let zeroes_vpn = kernel_mm.map_ram(None, 1, flags::R | flags::G)?;
             ZEROES = slice_from_raw_parts(
                 (zeroes_vpn * PAGE_SIZE as usize) as *const u8,
                 (PAGE_SIZE as usize) << zeroes_order,
             );
-            (*(ZEROES as *mut [u8])).fill(0);
+
+            let zeroes_paddr = kernel_mm
+                .virt2phys(zeroes_vpn * PAGE_SIZE as usize)
+                .page_paddr;
+            (&mut *slice_from_raw_parts_mut(
+                (zeroes_paddr + HHDM_OFFSET) as *mut u8,
+                PAGE_SIZE as usize,
+            ))
+                .fill(0);
         };
         res.expect("Failed to create inital page table");
 
         // Finalize MMU initialization and switch to new page table.
         logkf!(LogLevel::Info, "Switching to new page table");
-        cpu::mmu::init(KERNEL_VMM_CTX.pt_root_ppn);
+        mmu::init(kernel_mm().pagetable.root_ppn());
         logkf!(LogLevel::Info, "Virtual memory management initialized");
-    }
-}
-
-/// Returns at least one page of zeroed memory.
-pub fn zeroes() -> &'static [u8] {
-    unsafe {
-        assert!(!ZEROES.is_null());
-        &*ZEROES
     }
 }

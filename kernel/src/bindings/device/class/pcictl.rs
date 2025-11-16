@@ -6,10 +6,10 @@ use crate::{
     bindings::{
         device::{AbstractDevice, Device, DeviceFilters, addr::PciAddr},
         error::{EResult, Errno},
-        log::LogLevel,
         raw::{self, dev_class_t_DEV_CLASS_PCICTL, device_pcictl_t, pci_bar_info_t},
     },
-    config, logkf, mem,
+    config,
+    mem::vmm,
 };
 
 /// Representation of some mapped PCIe BAR memory.
@@ -30,14 +30,9 @@ impl Drop for MappedBar {
         let mut size = self.info.len;
         size += vaddr % config::PAGE_SIZE as usize;
         vaddr -= vaddr % config::PAGE_SIZE as usize;
-        let res = unsafe {
-            mem::vmm::unmap_k(
-                vaddr / config::PAGE_SIZE as usize,
-                size.div_ceil(config::PAGE_SIZE as usize),
-            )
-        };
-        #[cfg(debug_assertions)]
-        res.unwrap();
+        let vpn = vaddr / config::PAGE_SIZE as usize;
+        let pages = size.div_ceil(config::PAGE_SIZE as usize);
+        unsafe { vmm::kernel_mm().unmap(vpn..vpn + pages) };
     }
 }
 

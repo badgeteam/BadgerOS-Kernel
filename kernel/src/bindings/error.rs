@@ -212,6 +212,8 @@ pub enum Errno {
     ENOTRECOVERABLE = raw::ENOTRECOVERABLE,
     ERFKILL = raw::ERFKILL,
     EHWPOISON = raw::EHWPOISON,
+
+    EASSERT = raw::EASSERT,
 }
 
 impl Errno {

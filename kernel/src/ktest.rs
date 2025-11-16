@@ -2,9 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use alloc::boxed::Box;
-
-use core::{error::Error, fmt::Display, ptr::slice_from_raw_parts};
+use crate::bindings::error::EResult;
 
 /// Describes at what level of init a testcase should run.
 #[repr(C)]
@@ -29,7 +27,7 @@ pub enum KTestWhen {
 pub struct KTest {
     pub when: KTestWhen,
     pub name: &'static str,
-    pub func: &'static fn() -> Result<(), Box<dyn Error>>,
+    pub func: &'static fn() -> EResult<()>,
 }
 
 /// Run test cases of a certain level.
@@ -41,6 +39,8 @@ pub extern "C" fn ktests_runlevel(level: KTestWhen) {
         static __stop_ktests: u8;
     }
     let tests = unsafe {
+        use core::ptr::slice_from_raw_parts;
+
         let start = &raw const __start_ktests as *const KTest;
         let stop = &raw const __stop_ktests as *const KTest;
         &*slice_from_raw_parts(start, stop.offset_from_unsigned(start))
@@ -148,10 +148,10 @@ macro_rules! ktest {
             when: $when,
             name: stringify!($name),
             func: {
-                fn func() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
+                fn func() -> crate::bindings::error::EResult<()> {
                     try { $($code)* }
                 }
-                &(func as fn() -> Result<(), alloc::boxed::Box<dyn core::error::Error>>)
+                &(func as fn() -> crate::bindings::error::EResult<()>)
             },
         };
     };
@@ -163,17 +163,6 @@ macro_rules! ktest {
 macro_rules! ktest {
     ($when: expr, $name: ident, $($code: tt)*) => {};
 }
-
-/// Kernel test assertion failure.
-#[derive(Debug)]
-pub struct KTestAssertFail {}
-
-impl Display for KTestAssertFail {
-    fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        fmt.write_str("FAILED")
-    }
-}
-impl Error for KTestAssertFail {}
 
 /// Assert that some expression has a certain relation.
 #[macro_export]
@@ -189,7 +178,7 @@ macro_rules! ktest_expect {
             $($(
                 crate::printf!("    where {} => {}\n", stringify!($ctx), {$ctx});
             )*)?
-            Err(crate::ktest::KTestAssertFail{})?;
+            Err(crate::bindings::error::Errno::EASSERT)?;
         }
     };
     ($lhs: expr, $rhs: expr $(, [ $($ctx: expr),* ])?) => {
@@ -209,7 +198,7 @@ macro_rules! ktest_assert {
             $($(
                 crate::printf!("    where {} => {}\n", stringify!($ctx), {$ctx});
             )*)?
-            Err(crate::ktest::KTestAssertFail{})?;
+            Err(crate::bindings::error::Errno::EASSERT)?;
         }
     };
 }

@@ -235,6 +235,7 @@ void *__wrap_realloc(void *ptr, size_t size) {
         default: BADGEROS_MALLOC_MSG_ERROR("realloc(" FMT_P ") = Unknown pointer type", ptr);
     }
     SPIN_LOCK_UNLOCK(lock);
+
     return new_ptr;
 }
 

@@ -44,7 +44,10 @@ void *buddy_reallocate(void *ptr, size_t size) {
         return ptr;
     }
 
-    void  *newmem    = buddy_allocate(size, buddy_get_type(ptr), 0);
+    void *newmem = buddy_allocate(size, buddy_get_type(ptr), 0);
+    if (!newmem) {
+        return NULL;
+    }
     size_t copy_size = old_size < size ? old_size : size;
     mem_copy(newmem, ptr, copy_size);
 

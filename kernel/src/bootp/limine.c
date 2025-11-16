@@ -89,9 +89,6 @@ uacpi_status uacpi_kernel_get_rsdp(uacpi_phys_addr *out_rsdp_address) {
 
 
 
-// Memory map entry selected to be early alloc pool.
-static size_t early_alloc_index;
-
 // Early hardware initialization.
 void bootp_early_init() {
     rawprint("\033[0m\033[2J");
@@ -197,8 +194,7 @@ void bootp_early_init() {
         reclaim_len >> 20
     );
 
-    // Add biggest already available region to allocator.
-    early_alloc_index                      = biggest_pool_index;
+    // Initialize PMM with the biggest contiguous usable region now.
     struct limine_memmap_entry *early_pool = mem->entries[biggest_pool_index];
     logkf_from_isr(
         LOG_INFO,
@@ -212,6 +208,23 @@ void bootp_early_init() {
         (early_pool->base + CONFIG_PAGE_SIZE - 1) / CONFIG_PAGE_SIZE,
         (early_pool->base + early_pool->length) / CONFIG_PAGE_SIZE
     );
+
+    // Add the smaller contiguous usable regions to PMM.
+    for (size_t i = 0; i < mem->entry_count; i++) {
+        struct limine_memmap_entry const *ent = mem->entries[i];
+
+        ppn_t start = (ent->base + CONFIG_PAGE_SIZE - 1) / CONFIG_PAGE_SIZE;
+        ppn_t end   = (ent->base + ent->length) / CONFIG_PAGE_SIZE;
+
+        if (ent->type == LIMINE_MEMMAP_USABLE && i != biggest_pool_index) {
+            pmm_mark_free(start, end);
+        } else if (ent->type == LIMINE_MEMMAP_KERNEL_AND_MODULES) {
+            for (ppn_t ppn = start; ppn < end; ppn++) {
+                pmm_page_struct(ppn)->flags = PAGE_USAGE_KERNEL_SEGMENT << PGFLAGS_USAGE_EXP;
+            }
+        }
+    }
+
     ktests_runlevel(KTEST_WHEN_PMM);
 }
 
@@ -266,8 +279,7 @@ void bootp_reclaim_mem() {
     size_t len  = 0;
     for (uint64_t i = 0; i < bootp_mm_req.response->entry_count; i++) {
         struct limine_memmap_entry *entry = bootp_mm_req.response->entries[i];
-        if (i == early_alloc_index ||
-            (entry->type != LIMINE_MEMMAP_USABLE && entry->type != LIMINE_MEMMAP_BOOTLOADER_RECLAIMABLE)) {
+        if (entry->type != LIMINE_MEMMAP_BOOTLOADER_RECLAIMABLE) {
             // TODO: LIMINE_MEMMAP_ACPI_RECLAIMABLE is currently not reclaimed.
             continue;
         }

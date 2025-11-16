@@ -139,6 +139,7 @@ char const *errno_get_name(int errno) {
         case ENOTRECOVERABLE: return "ENOTRECOVERABLE";
         case ERFKILL: return "ERFKILL";
         case EHWPOISON: return "EHWPOISON";
+        case EASSERT: return "EASSERT";
     }
 }
 
@@ -278,5 +279,6 @@ char const *errno_get_desc(int errno) {
         case ENOTRECOVERABLE: return "State not recoverable";
         case ERFKILL: return "Operation not possible due to RF-kill";
         case EHWPOISON: return "Memory page has hardware error";
+        case EASSERT: return "Assertion failed";
     }
 }

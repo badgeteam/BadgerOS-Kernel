@@ -99,7 +99,7 @@ static bool device_init(device_union_t *device) {
                     &vpn,
                     (addr->size - 1) / CONFIG_PAGE_SIZE + 1,
                     addr->paddr / CONFIG_PAGE_SIZE,
-                    VMM_FLAG_RW | VMM_FLAG_IO | VMM_FLAG_A | VMM_FLAG_D
+                    VMM_FLAG_RW | VMM_FLAG_IO | VMM_FLAG_A | VMM_FLAG_D | VMM_FLAG_MMIO
                 ) < 0) {
                 for (i--; i != SIZE_MAX; i--) {
                     if (device->base.info.addrs[i].type == DEV_ATYPE_MMIO) {
@@ -112,7 +112,7 @@ static bool device_init(device_union_t *device) {
                         if (size % CONFIG_PAGE_SIZE) {
                             size += CONFIG_PAGE_SIZE - size % CONFIG_PAGE_SIZE;
                         }
-                        assert_dev_keep(vmm_unmap_k(vaddr / CONFIG_PAGE_SIZE, size / CONFIG_PAGE_SIZE) >= 0);
+                        vmm_unmap_k(vaddr / CONFIG_PAGE_SIZE, size / CONFIG_PAGE_SIZE);
                         addr->vaddr = 0;
                     }
                 }
@@ -138,7 +138,7 @@ static void device_deinit(device_union_t *device) {
             if (addr.size % CONFIG_PAGE_SIZE) {
                 addr.size += CONFIG_PAGE_SIZE - addr.size % CONFIG_PAGE_SIZE;
             }
-            assert_dev_keep(vmm_unmap_k(addr.vaddr / CONFIG_PAGE_SIZE, addr.size / CONFIG_PAGE_SIZE) >= 0);
+            vmm_unmap_k(addr.vaddr / CONFIG_PAGE_SIZE, addr.size / CONFIG_PAGE_SIZE);
         }
     }
 

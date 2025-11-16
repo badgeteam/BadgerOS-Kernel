@@ -328,3 +328,6 @@ typedef struct {
 #define ERFKILL         132
 // Memory page has hardware error.
 #define EHWPOISON       133
+
+// Assertion failed.
+#define EASSERT 134

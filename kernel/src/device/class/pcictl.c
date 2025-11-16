@@ -264,7 +264,7 @@ void *device_pcictl_bar_map(device_pcictl_t *device, pci_bar_info_t bar_info) {
     size_t cpu_paddr = device->ranges[i].cpu_paddr + bar_info.addr - pci_paddr;
 
     // Determine appropriate flags.
-    int flags = VMM_FLAG_RW | VMM_FLAG_NC | VMM_FLAG_A | VMM_FLAG_D;
+    int flags = VMM_FLAG_RW | VMM_FLAG_NC | VMM_FLAG_A | VMM_FLAG_D | VMM_FLAG_MMIO;
     if (!ppa.attr.prefetch) {
         flags |= VMM_FLAG_IO;
     }

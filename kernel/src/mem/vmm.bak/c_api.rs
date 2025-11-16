@@ -2,14 +2,6 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::ffi::c_void;
-
-use crate::bindings::{
-    self,
-    error::Errno,
-    raw::{errno_t, virt2phys_t},
-};
-
 use super::*;
 
 #[unsafe(no_mangle)]
@@ -24,26 +16,21 @@ unsafe extern "C" fn vmm_ctxswitch_from_isr() {
     unsafe {
         let proc = bindings::raw::proc_current();
         if proc.is_null() {
-            mmu::set_page_table(kernel_mm().pagetable.root_ppn(), 0);
+            cpu::mmu::set_page_table(KERNEL_MM.page_table, 0);
         } else {
-            mmu::set_page_table((*proc).memmap.mem_ctx.pagetable.root_ppn, 0);
+            cpu::mmu::set_page_table((*proc).memmap.mem_ctx.pt_root_ppn, 0);
         }
-        mmu::vmem_fence(None, None);
+        cpu::mmu::vmem_fence(None, None);
     }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vmm_create_user_ctx(ctx: *mut Memmap) -> errno_t {
-    match Memmap::new_user() {
+    match create_user_ctx() {
         Ok(x) => {
             unsafe {
-                bindings::raw::memcpy(
-                    ctx as *mut c_void,
-                    &raw const x as *const c_void,
-                    size_of::<Memmap>(),
-                );
+                *ctx = x;
             }
-            core::mem::forget(x);
             0
         }
         Err(x) => -(x as errno_t),
@@ -52,7 +39,7 @@ pub unsafe extern "C" fn vmm_create_user_ctx(ctx: *mut Memmap) -> errno_t {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vmm_destroy_user_ctx(ctx: Memmap) {
-    drop(ctx);
+    unsafe { destroy_user_ctx(ctx) };
 }
 
 #[unsafe(no_mangle)]
@@ -63,7 +50,7 @@ pub unsafe extern "C" fn vmm_map_k(
     flags: u32,
 ) -> errno_t {
     unsafe {
-        match kernel_mm().map_fixed(phys_base, None, virt_len, flags) {
+        match map_k(virt_len, phys_base, flags) {
             Ok(vpn) => {
                 if !virt_base_out.is_null() {
                     *virt_base_out = vpn;
@@ -82,19 +69,12 @@ pub unsafe extern "C" fn vmm_map_k_at(
     phys_base: PPN,
     flags: u32,
 ) -> errno_t {
-    unsafe {
-        match kernel_mm().map_fixed(phys_base, Some(virt_base), virt_len, flags) {
-            Ok(_) => 0,
-            Err(e) => -(e as errno_t),
-        }
-    }
+    Errno::extract(unsafe { map_k_at(virt_base, virt_len, phys_base, flags) })
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn vmm_unmap_k(virt_base: VPN, virt_len: VPN) {
-    unsafe {
-        kernel_mm().unmap(virt_base..virt_base + virt_len);
-    }
+pub unsafe extern "C" fn vmm_unmap_k(virt_base: VPN, virt_len: VPN) -> errno_t {
+    Errno::extract(unsafe { unmap_k(virt_base, virt_len) })
 }
 
 #[unsafe(no_mangle)]
@@ -105,26 +85,24 @@ pub unsafe extern "C" fn vmm_map_u_at(
     phys_base: PPN,
     flags: u32,
 ) -> errno_t {
-    Errno::extract(unsafe {
-        (*vmm_ctx)
-            .map_fixed(phys_base, Some(virt_base), virt_len, flags)
-            .map(|_| ())
-    })
+    Errno::extract(unsafe { map_u_at(&*vmm_ctx, virt_base, virt_len, phys_base, flags) })
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn vmm_unmap_u(vmm_ctx: *mut Memmap, virt_base: VPN, virt_len: VPN) {
-    unsafe {
-        (*vmm_ctx).unmap(virt_base..virt_base + virt_len);
-    }
+pub unsafe extern "C" fn vmm_unmap_u(
+    vmm_ctx: *mut Memmap,
+    virt_base: VPN,
+    virt_len: VPN,
+) -> errno_t {
+    Errno::extract(unsafe { unmap_u(&*vmm_ctx, virt_base, virt_len) })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vmm_virt2phys(mut vmm_ctx: *mut Memmap, vaddr: usize) -> virt2phys_t {
     if vmm_ctx.is_null() {
-        vmm_ctx = kernel_mm() as *const Memmap as *mut Memmap;
+        vmm_ctx = &raw mut KERNEL_MM;
     }
-    let tmp = unsafe { (*vmm_ctx).virt2phys(vaddr) };
+    let tmp = unsafe { virt2phys(&*vmm_ctx, vaddr) };
     virt2phys_t {
         page_vaddr: tmp.page_vaddr,
         page_paddr: tmp.page_paddr,
@@ -138,15 +116,15 @@ pub unsafe extern "C" fn vmm_virt2phys(mut vmm_ctx: *mut Memmap, vaddr: usize) -
 #[unsafe(no_mangle)]
 unsafe extern "C" fn vmm_ctxswitch(ctx: *mut Memmap) {
     unsafe {
-        mmu::set_page_table((*ctx).pagetable.root_ppn(), 0);
-        mmu::vmem_fence(None, None);
+        cpu::mmu::set_page_table((*ctx).page_table, 0);
+        cpu::mmu::vmem_fence(None, None);
     }
 }
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn vmm_ctxswitch_k() {
     unsafe {
-        mmu::set_page_table(kernel_mm().pagetable.root_ppn(), 0);
-        mmu::vmem_fence(None, None);
+        cpu::mmu::set_page_table(KERNEL_MM.page_table, 0);
+        cpu::mmu::vmem_fence(None, None);
     }
 }

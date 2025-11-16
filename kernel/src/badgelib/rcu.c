@@ -62,6 +62,10 @@ void rcu_sched_init_callback(rcu_cpulocal_t *rcu_cpulocal) {
 
 // Synchronize RCU for reclamation.
 void rcu_sync() {
+    if (running_sched_count == 0) {
+        // Before the scheduler is up, an RCU sync is not needed and this implementation of it cannot work.
+        return;
+    }
     assert_dev_drop(irq_is_enabled());
     int cur_gen = atomic_load_explicit(&rcu_generation, memory_order_relaxed);
     while (atomic_load_explicit(&rcu_generation, memory_order_relaxed) - cur_gen <= 0) {

@@ -10,14 +10,14 @@ use super::{
 
 /// Allocate `1 << order` pages of physical memory.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn pmm_page_alloc(order: u32, usage: PageUsage) -> errno_ppn_t {
+unsafe extern "C" fn pmm_page_alloc(order: u8, usage: PageUsage) -> errno_ppn_t {
     Errno::extract_usize(unsafe { page_alloc(order, usage) })
 }
 
 /// Free pages of physical memory.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn pmm_page_free(block: PPN, order: u32) {
-    unsafe { page_free(block, order) };
+unsafe extern "C" fn pmm_page_free(block: PPN) {
+    unsafe { page_free(block) };
 }
 
 /// Get the `pmm_page_t` struct for some physical page number.
@@ -28,8 +28,8 @@ unsafe extern "C" fn pmm_page_struct(page: PPN) -> *mut Page {
 
 /// Get the `pmm_page_t` struct for the start of the block that some physical page number lies in.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn pmm_page_struct_base(page: PPN, order: u32) -> *mut Page {
-    page_struct_base(page, order)
+unsafe extern "C" fn pmm_page_struct_base(page: PPN) -> *mut Page {
+    page_struct_base(page).0
 }
 
 /// Mark a range of blocks as free.
@@ -39,6 +39,7 @@ unsafe extern "C" fn pmm_mark_free(pages_start: PPN, pages_end: PPN) {
 }
 
 /// Initialize the physical memory allocator.
+/// It is assumed that the boot protocol implementation hereafter marks the kernel executable with [`PageUsage::KernelSegment`].
 #[unsafe(no_mangle)]
 unsafe extern "C" fn pmm_init(total_start: PPN, total_end: PPN, early_start: PPN, early_end: PPN) {
     unsafe { init(total_start..total_end, early_start..early_end) };

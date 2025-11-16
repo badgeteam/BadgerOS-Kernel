@@ -6,7 +6,7 @@ use core::arch::asm;
 
 use crate::mem::{
     pmm::PPN,
-    vmm::mmu::{ASID_BITS, PAGING_LEVELS, PTE},
+    vmm::pagetable::{ASID_BITS, PAGING_LEVELS, PTE},
 };
 
 /// Data type that can store a packed page table entry.
@@ -35,7 +35,7 @@ impl PTE {
             flags: ((raw & 0b11_1111_1110) + (((raw >> 61) & 0b11) << 10)) as u32,
             valid: raw & 1 != 0,
             leaf: raw & 0b1110 != 0,
-            level,
+            order: level,
         }
     }
 

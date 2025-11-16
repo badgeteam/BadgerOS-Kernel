@@ -248,12 +248,7 @@ impl SataDriver {
             let mut offset = 0usize;
             let mut prdt = 0usize;
             while offset < data.len() {
-                let v2p = unsafe {
-                    vmm::virt2phys(
-                        &*&raw const vmm::KERNEL_VMM_CTX,
-                        data.as_ptr() as usize + offset,
-                    )
-                };
+                let v2p = vmm::kernel_mm().virt2phys(data.as_ptr() as usize + offset);
                 let len = v2p.size + v2p.page_paddr - v2p.paddr;
                 let len = len.min(data.len() - offset);
 
