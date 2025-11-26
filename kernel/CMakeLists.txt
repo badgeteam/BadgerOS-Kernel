@@ -226,8 +226,14 @@ endif()
 if(${CONFIG_ENABLE_DTB})
     set(rust_features ${rust_features} --features=dtb)
 endif()
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    set(rust_features ${rust_features} --release)
+    set(rust_build_type release)
+else()
+    set(rust_build_type debug)
+endif()
 set(rust_target ${CMAKE_CURRENT_LIST_DIR}/misc/rust_target/${CONFIG_CPU}-kernel.json)
-set(rust_lib ${CMAKE_CURRENT_LIST_DIR}/target/${CONFIG_CPU}-kernel/debug/libbadgeros_kernel.a)
+set(rust_lib ${CMAKE_CURRENT_LIST_DIR}/target/${CONFIG_CPU}-kernel/${rust_build_type}/libbadgeros_kernel.a)
 add_custom_target(
     rust.target ALL
     cargo +nightly build -Z build-std=core,alloc --target=${rust_target} ${rust_features}

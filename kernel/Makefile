@@ -20,7 +20,7 @@ PORT              ?= /dev/ttyUSB1
 .PHONY: cmake-configure
 cmake-configure:
 	mkdir -p '$(BUILDDIR)'
-	cmake -B '$(BUILDDIR)' "-DCMAKE_BUILD_TYPE=$${CMAKE_BUILD_TYPE:-Debug}"
+	cmake -B '$(BUILDDIR)'
 
 .PHONY: _on_config
 _on_config: _port_on_config

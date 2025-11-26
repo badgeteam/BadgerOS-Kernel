@@ -28,7 +28,14 @@ bindgen = "0.71.0"
 
 [profile.dev]
 panic = "abort"
-opt-level = 0
+lto = false
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.dev.package.badgeros_kernel]
+opt-level = 1
+debug = true
 
 [profile.release]
 panic = "abort"

@@ -10,3 +10,5 @@ root/
 .venv/
 .config
 target/
+kernel/chromedump.json
+uftrace.data

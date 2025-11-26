@@ -65,6 +65,16 @@ qemu:
 	$(MAKE) -C files build
 	$(MAKE) -C kernel qemu
 
+.PHONY: qemu-debug
+qemu-debug:
+	$(MAKE) -C files build
+	$(MAKE) -C kernel qemu-debug
+
+.PHONY: qemu-prof
+qemu-prof:
+	$(MAKE) -C files build
+	$(MAKE) -C kernel qemu-prof
+
 .PHONY: flash
 flash:
 	$(MAKE) -C files build
