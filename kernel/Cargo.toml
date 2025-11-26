@@ -6,6 +6,8 @@ edition = "2024"
 [features]
 # Uses a custom framework to perform various unit tests in-kernel.
 ktest = []
+dtb = []
+acpi = []
 
 [lib]
 crate-type = ["staticlib"]

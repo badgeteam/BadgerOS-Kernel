@@ -1,8 +1,9 @@
+#[cfg(feature = "dtb")]
+use crate::device::dtb::DtbNode;
 use crate::{
     LogLevel,
     bindings::{
         self,
-        device::dtb::DtbNode,
         raw::{dev_class_t, dev_filter_t, set_ent_t, timestamp_us_t},
     },
     filesystem::File,
@@ -16,6 +17,7 @@ use class::{block::BlockDevice, char::CharDevice, pcictl::PciCtlDevice};
 
 pub mod addr;
 pub mod class;
+#[cfg(feature = "dtb")]
 pub mod dtb;
 
 use crate::bindings::raw::mutex_t;
@@ -97,12 +99,14 @@ impl<'a> DeviceInfoView<'a> {
     pub fn addrs(&'a self) -> &'a [dev_addr_t] {
         unsafe { &*core::ptr::slice_from_raw_parts(self.inner.addrs, self.inner.addrs_len) }
     }
+    #[cfg(feature = "dtb")]
     pub fn dtb(&self) -> Option<&'static DtbNode> {
         unsafe { core::mem::transmute(self.inner.dtb_node) }
     }
     pub fn phandle(&self) -> Option<NonZero<u32>> {
         NonZero::try_from(self.inner.phandle).ok()
     }
+    #[cfg(feature = "dtb")]
     pub fn dtb_match(&self, supported: &[&str]) -> bool {
         let compatible: Option<_> = try { self.dtb()?.get_prop("compatible")?.bytes() };
         let compatible = match compatible {

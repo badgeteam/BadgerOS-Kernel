@@ -96,7 +96,7 @@ bool sched_signal_enter(size_t handler_vaddr, size_t return_vaddr, int signum) {
     // Ensure the user has enough stack.
     size_t usp   = thread->user_isr_ctx.regs.rsp;
     size_t usize = sizeof(size_t) * 20;
-    if ((proc_map_contains_raw(thread->process, usp - usize, usize) & MEMPROTECT_FLAG_RW) != MEMPROTECT_FLAG_RW) {
+    if ((proc_map_contains_raw(thread->process, usp - usize, usize) & VMM_FLAG_RW) != VMM_FLAG_RW) {
         // Not enough stack that the process owns.
         return false;
     }
@@ -131,7 +131,7 @@ bool sched_signal_exit() {
     // Ensure the user still has the stack.
     size_t usp   = thread->user_isr_ctx.regs.rsp;
     size_t usize = sizeof(size_t) * 20;
-    if ((proc_map_contains_raw(thread->process, usp, usize) & MEMPROTECT_FLAG_RW) != MEMPROTECT_FLAG_RW) {
+    if ((proc_map_contains_raw(thread->process, usp, usize) & VMM_FLAG_RW) != VMM_FLAG_RW) {
         // If this happens, the process probably corrupted it's own stack.
         return false;
     }

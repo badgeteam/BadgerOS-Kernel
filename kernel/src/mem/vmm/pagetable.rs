@@ -253,7 +253,16 @@ impl PageTable {
     pub unsafe fn map(&self, vpn: VPN, new_pte: OwnedPTE) -> EResult<OwnedPTE> {
         let tmp = new_pte.0;
         let res = unsafe { self.map_raw(vpn, new_pte)? };
-        debug_assert!(self.walk(vpn) == tmp);
+        #[cfg(debug_assertions)]
+        {
+            let read = self.walk(vpn);
+            debug_assert!(
+                read == tmp,
+                "Mapped {:#x?} doesn't match expected {:#x?}",
+                read,
+                tmp
+            );
+        }
         Ok(res)
     }
 

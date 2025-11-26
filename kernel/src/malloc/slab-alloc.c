@@ -18,6 +18,7 @@
 #define _GNU_SOURCE
 #endif
 
+#include "badge_strings.h"
 #include "bitops.h"
 #include "debug.h"
 #include "static-buddy.h"

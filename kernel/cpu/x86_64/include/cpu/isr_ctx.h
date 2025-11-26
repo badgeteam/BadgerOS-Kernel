@@ -7,10 +7,12 @@
 #include "cpu/x86_msr.h"
 
 #ifndef __ASSEMBLER__
+#include "mem/vmm.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-typedef struct mpu_ctx      mpu_ctx_t;
+
 typedef struct sched_thread sched_thread_t;
 typedef struct isr_ctx      isr_ctx_t;
 typedef struct cpulocal     cpulocal_t;
@@ -54,7 +56,7 @@ typedef bool (*isr_noexc_cb_t)(isr_ctx_t *ctx, void *cookie);
 // Context for interrupts, exceptions and traps in relation to threads.
 STRUCT_BEGIN(isr_ctx)
 // Pointer to currently active memory protection information.
-STRUCT_FIELD_PTR(isr_ctx, mpu_ctx_t, mpu_ctx)
+STRUCT_FIELD_PTR(isr_ctx, vmm_ctx_t, mem_ctx)
 // Frame pointer to use for backtraces.
 STRUCT_FIELD_PTR(isr_ctx, void, frameptr)
 // Registers storage.

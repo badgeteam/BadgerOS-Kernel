@@ -14,7 +14,6 @@ set(cpu_src
     ${CMAKE_CURRENT_LIST_DIR}/src/isr.c
     ${CMAKE_CURRENT_LIST_DIR}/src/isr_ctx.c
     ${CMAKE_CURRENT_LIST_DIR}/src/kmodule.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/mmu.c
     ${CMAKE_CURRENT_LIST_DIR}/src/panic.c
     ${CMAKE_CURRENT_LIST_DIR}/src/scheduler.c
     ${CMAKE_CURRENT_LIST_DIR}/src/syscall.c

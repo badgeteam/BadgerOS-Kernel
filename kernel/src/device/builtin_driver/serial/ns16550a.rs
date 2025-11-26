@@ -150,7 +150,11 @@ struct Ns16550aDriver {
 impl Ns16550aDriver {
     /// Match an NS16550A.
     fn match_(info: DeviceInfoView<'_>) -> bool {
-        info.dtb_match(&["ns16550a"])
+        #[cfg(feature = "dtb")]
+        if info.dtb_match(&["ns16550a"]) {
+            return true;
+        }
+        false
     }
 
     pub fn new(device: Device) -> EResult<Box<Self>> {

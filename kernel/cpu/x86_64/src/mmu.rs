@@ -53,13 +53,19 @@ pub const INVALID_PTE: PackedPTE = 0;
 impl PTE {
     /// Pack this PTE.
     pub fn pack(self) -> PackedPTE {
-        debug_assert!(self.flags & flags::R != 0);
-        let mut flags = self.flags as usize & 0x1ff;
-        if self.flags & flags::X != 0 {
+        debug_assert!(!self.valid || !self.leaf || (self.flags & flags::R != 0));
+        let mut flags = self.flags as usize & 0xfff;
+        if !self.leaf {
+            flags |= flags::W as usize | flags::U as usize; // These flags are AND'ed by the CPU.
+        }
+        if self.leaf && self.flags & flags::X == 0 {
             flags |= 1 << 63;
         }
         if self.leaf && self.order > 0 {
             flags |= flags::PS as usize;
+        }
+        if self.valid {
+            flags |= flags::P as usize;
         }
         let ppn = self.ppn << 12;
         flags | ppn
@@ -67,23 +73,35 @@ impl PTE {
 
     /// Unpack this PTE.
     pub fn unpack(packed: PackedPTE, order: u8) -> PTE {
-        let mut ppn = packed & 0x000f_ffff_ffff_f000;
+        let valid = packed & flags::P as usize != 0;
+
+        let mut paddr = packed & 0x000f_ffff_ffff_f000;
+
         let leaf;
         if order == 0 {
-            leaf = true;
+            leaf = valid;
         } else {
             leaf = packed & flags::PS as usize != 0;
-            ppn &= !(1 << 12);
+            if leaf {
+                paddr &= !(1 << 12);
+            }
         }
-        let mut flags = (packed as u32 & 0x1ff) | flags::R;
-        if packed & (1 << 63) == 0 {
-            flags |= flags::X;
+
+        let mut flags = packed as u32 & 0xffe;
+        if leaf {
+            flags |= flags::R;
+            if packed & (1 << 63) == 0 {
+                flags |= flags::X;
+            }
+        } else {
+            flags &= !(flags::W | flags::U);
         }
+
         PTE {
-            ppn,
+            ppn: paddr >> 12,
             flags,
             order,
-            valid: packed & flags::P as usize != 0,
+            valid,
             leaf,
         }
     }

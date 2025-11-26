@@ -77,7 +77,7 @@ void amd64_trap_handler(size_t trapno, size_t error_code) {
     }
 
     isr_ctx_t recurse_ctx;
-    recurse_ctx.mpu_ctx  = NULL;
+    recurse_ctx.mem_ctx  = NULL;
     recurse_ctx.flags    = ISR_CTX_FLAG_IN_ISR | ISR_CTX_FLAG_KERNEL;
     isr_ctx_t *kctx      = isr_ctx_swap(&recurse_ctx);
     recurse_ctx.thread   = kctx->thread;
@@ -125,7 +125,7 @@ void amd64_trap_handler(size_t trapno, size_t error_code) {
         rawprinthex(vaddr, sizeof(size_t) * 2);
         rawputc('\n');
 
-        virt2phys_t info = vmm_virt2phys(kctx->mem_ctx->pt_root_ppn, vaddr);
+        virt2phys_t info = vmm_virt2phys(kctx->mem_ctx, vaddr);
         if (info.valid) {
             rawprint("Memory at this address: ");
             rawputc(info.flags & VMM_FLAG_R ? 'r' : '-');
