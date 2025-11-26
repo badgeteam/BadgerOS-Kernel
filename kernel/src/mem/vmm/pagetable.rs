@@ -225,8 +225,6 @@ impl Clone for OwnedPTE {
 pub struct PageTable {
     /// Root page number.
     root_ppn: PPN,
-    /// Modifications mutex.
-    mtx: Mutex<()>,
 }
 
 impl PageTable {
@@ -234,7 +232,6 @@ impl PageTable {
     pub fn new() -> EResult<Self> {
         Ok(Self {
             root_ppn: alloc_pgtable_page()?,
-            mtx: Mutex::new(()),
         })
     }
 
@@ -279,7 +276,6 @@ impl PageTable {
         level: u8,
     ) -> EResult<OwnedPTE> {
         let mut pgtable_ppn = self.root_ppn;
-        let _guard = self.mtx.lock();
         let null_pte = new_pte.as_ref().map(|x| x.is_null()).unwrap_or(false);
         let global_flag = is_canon_kernel_page(vpn) as u32 * flags::G;
         let mut old_pte = None;

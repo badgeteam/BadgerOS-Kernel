@@ -32,8 +32,7 @@ typedef size_t ppn_t;
 
 // A page table.
 typedef struct {
-    ppn_t   root_ppn;
-    mutex_t mtx;
+    ppn_t root_ppn;
 } pagetable_t;
 
 // Allocator for virtual address ranges.
