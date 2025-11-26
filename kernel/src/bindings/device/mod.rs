@@ -1,5 +1,5 @@
 #[cfg(feature = "dtb")]
-use crate::device::dtb::DtbNode;
+use crate::bindings::device::dtb::DtbNode;
 use crate::{
     LogLevel,
     bindings::{
