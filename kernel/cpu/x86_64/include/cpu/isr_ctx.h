@@ -89,7 +89,7 @@ STRUCT_END(isr_ctx)
 
 #ifndef __ASSEMBLER__
 #include "cpulocal.h"
-#include "memprotect.h"
+#include "mem/vmm.h"
 
 // Stack alignment is defined to be 16 by the SYSV calling convention
 #define STACK_ALIGNMENT 16

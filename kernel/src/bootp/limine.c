@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "arrays.h"
+#include "assertions.h"
 #include "bootp.h"
 #include "device/class/pcictl.h"
 #include "device/dev_class.h"
@@ -78,7 +79,7 @@ __attribute__((section(".requests_end"))) LIMINE_REQUESTS_END_MARKER;
 // Returns the PHYSICAL address of the RSDP structure via *out_rsdp_address.
 uacpi_status uacpi_kernel_get_rsdp(uacpi_phys_addr *out_rsdp_address) {
     if (bootp_rsdp_req.response) {
-        *out_rsdp_address = (uacpi_phys_addr)bootp_rsdp_req.response->address - (uacpi_phys_addr)mmu_hhdm_vaddr;
+        *out_rsdp_address = (uacpi_phys_addr)bootp_rsdp_req.response->address - (uacpi_phys_addr)vmm_hhdm_vaddr;
         return UACPI_STATUS_OK;
     } else {
         logk(LOG_WARN, "uACPI asked for RSDP, but it does not exist");

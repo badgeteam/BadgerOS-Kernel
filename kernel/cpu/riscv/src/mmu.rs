@@ -9,6 +9,37 @@ use crate::mem::{
     vmm::pagetable::{ASID_BITS, PAGING_LEVELS, PTE},
 };
 
+pub mod flags {
+    /// Map memory as executable.
+    pub const R: u32 = 0b0000_0000_0010;
+    /// Map memory as writeable (reads must also be allowed).
+    pub const W: u32 = 0b0000_0000_0100;
+    /// Map memory as executable.
+    pub const X: u32 = 0b0000_0000_1000;
+    /// Map memory as user-accessible.
+    pub const U: u32 = 0b0000_0001_0000;
+    /// Map memory as global (exists in all page ASIDs).
+    pub const G: u32 = 0b0000_0010_0000;
+    /// Page was accessed since this flag was last cleared.
+    pub const A: u32 = 0b0000_0100_0000;
+    /// Page was written since this flag was last cleared.
+    pub const D: u32 = 0b0000_1000_0000;
+
+    /// Mark page as copy-on-write (W must be disabled).
+    pub const COW: u32 = 0b0001_0000_0000;
+    /// Mark page as shared (will not be turned into CoW on fork).
+    pub const SHM: u32 = 0b0010_0000_0000;
+    /// Mark page as memory-mapped I/O (anything except normal RAM; informational in case hardare doesn't support this flag).
+    pub const MMIO: u32 = 0b0011_0000_0000;
+    /// What kind of memory is mapped at this page.
+    pub const MODE: u32 = 0b0011_0000_0000;
+
+    /// Map memory as I/O (uncached, no write coalescing).
+    pub const IO: u32 = 0b0100_0000_0000;
+    /// Map memory as uncached write coalescing.
+    pub const NC: u32 = 0b1000_0000_0000;
+}
+
 /// Data type that can store a packed page table entry.
 pub type PackedPTE = usize;
 /// An invalid PTE with no special data in it.

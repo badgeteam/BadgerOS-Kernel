@@ -10,7 +10,7 @@ use core::{
 use super::*;
 use crate::{
     bindings::{error::EResult, raw::phys_page_free},
-    cpu::mmu::*,
+    cpu::mmu::{INVALID_PTE, PackedPTE},
     mem::pmm,
 };
 

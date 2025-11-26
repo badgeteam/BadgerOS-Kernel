@@ -93,7 +93,7 @@ pub fn logkf(level: LogLevel, thing: &dyn Display) {
 
 /// Write a  string without locking the mutex.
 pub fn write_unlocked(thing: &str) {
-    unsafe { raw::rawprint_substr(thing.as_ptr() as *const u8, thing.len()) }
+    unsafe { raw::rawprint_substr(thing.as_ptr() as *const c_char, thing.len()) }
 }
 
 /// Write a  string.
@@ -140,7 +140,7 @@ macro_rules! logkf {
 /// Write an unformatted message.
 pub fn print(msg: &str) {
     unsafe {
-        raw::rawprint_substr(msg.as_ptr(), msg.len());
+        raw::rawprint_substr(msg.as_ptr() as *const c_char, msg.len());
     }
 }
 

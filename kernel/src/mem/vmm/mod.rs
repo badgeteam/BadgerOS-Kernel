@@ -31,36 +31,7 @@ pub mod pagetable;
 pub mod vma_alloc;
 
 pub mod flags {
-    // Note: These flags are the same bit positions as in the RISC-V PTE format, do not change them!
-
-    /// Map memory as executable.
-    pub const R: u32 = 0b0000_0000_0010;
-    /// Map memory as writeable (reads must also be allowed).
-    pub const W: u32 = 0b0000_0000_0100;
-    /// Map memory as executable.
-    pub const X: u32 = 0b0000_0000_1000;
-    /// Map memory as user-accessible.
-    pub const U: u32 = 0b0000_0001_0000;
-    /// Map memory as global (exists in all page ASIDs).
-    pub const G: u32 = 0b0000_0010_0000;
-    /// Page was accessed since this flag was last cleared.
-    pub const A: u32 = 0b0000_0100_0000;
-    /// Page was written since this flag was last cleared.
-    pub const D: u32 = 0b0000_1000_0000;
-
-    /// Mark page as copy-on-write (W must be disabled).
-    pub const COW: u32 = 0b0001_0000_0000;
-    /// Mark page as shared (will not be turned int CoW on fork).
-    pub const SHM: u32 = 0b0010_0000_0000;
-    /// Mark page as memory-mapped I/O (anything except normal RAM; informational in case hardare doesn't support this flag).
-    pub const MMIO: u32 = 0b0011_0000_0000;
-    /// What kind of memory is mapped at this page.
-    pub const MODE: u32 = 0b0011_0000_0000;
-
-    /// Map memory as I/O (uncached, no write coalescing).
-    pub const IO: u32 = 0b0100_0000_0000;
-    /// Map memory as uncached write coalescing.
-    pub const NC: u32 = 0b1000_0000_0000;
+    pub use crate::cpu::mmu::flags::*;
 
     /// Map memory as read-write.
     pub const RW: u32 = R | W;
@@ -70,7 +41,7 @@ pub mod flags {
     pub const RWX: u32 = R | W | X;
 
     /// Allow creation of I/O PTE even though the page may be RAM.
-    pub(super) const HHDM: u32 = 0b1_0000_0000_0000;
+    pub(super) const HHDM: u32 = 1 << 30;
 }
 
 /// Unsigned integer that can store a virtual page number.
