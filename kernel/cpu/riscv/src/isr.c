@@ -12,9 +12,6 @@
 #include "interrupt.h"
 #include "log.h"
 #include "panic.h"
-#include "process/internal.h"
-#include "process/sighandler.h"
-#include "process/types.h"
 #include "rawprint.h"
 #include "scheduler/cpu.h"
 #include "scheduler/types.h"
@@ -53,15 +50,6 @@ enum { TRAPNAMES_LEN = sizeof(trapnames) / sizeof(trapnames[0]) };
     ((1 << RISCV_TRAP_IACCESS) | (1 << RISCV_TRAP_LACCESS) | (1 << RISCV_TRAP_SACCESS) | (1 << RISCV_TRAP_IALIGN) |    \
      (1 << RISCV_TRAP_LALIGN) | (1 << RISCV_TRAP_SALIGN) | (1 << RISCV_TRAP_IPAGE) | (1 << RISCV_TRAP_LPAGE) |         \
      (1 << RISCV_TRAP_SPAGE))
-
-// Kill a process from a trap / ISR.
-static void kill_proc_on_trap() {
-    proc_exit_self(-1);
-    irq_disable();
-    sched_lower_from_isr();
-    isr_context_switch();
-    assert_unreachable();
-}
 
 // Called from ASM on interrupt.
 void riscv_interrupt_handler() {
@@ -116,6 +104,7 @@ void riscv_trap_handler() {
         return;
     }
 
+    /*
     if (!fault2 && !(kctx->flags & ISR_CTX_FLAG_KERNEL)) {
         switch (trapno) {
                 // Unknown trap? The kernel must have messed up, don't handle it.
@@ -157,6 +146,7 @@ void riscv_trap_handler() {
                 return;
         }
     }
+    */
 
     // Unhandled trap.
     claim_panic();
@@ -230,8 +220,8 @@ void riscv_trap_handler() {
 
     // Print current process.
     if (!fault2 && kctx->thread && !(kctx->thread->flags & THREAD_KERNEL)) {
-        rawprint(" in process ");
-        rawprintdec(kctx->thread->process->pid, 1);
+        // rawprint(" in process ");
+        // rawprintdec(kctx->thread->process->pid, 1);
     }
     rawputc('\n');
     backtrace_from_ptr(kctx->frameptr);
@@ -249,9 +239,9 @@ void syscall_return(long long value) {
     usr->regs.a1 = value >> 32;
 #endif
     usr->regs.pc += 4;
-    if (proc_signals_pending_raw(thread->process)) {
-        proc_signal_handler();
-    }
+    // if (proc_signals_pending_raw(thread->process)) {
+    //     proc_signal_handler();
+    // }
     irq_disable();
     sched_lower_from_isr();
     isr_context_switch();

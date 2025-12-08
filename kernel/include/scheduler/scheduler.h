@@ -13,7 +13,7 @@
 #include <stdint.h>
 
 // Processs struct.
-typedef struct process_t    process_t;
+typedef struct process      process_t;
 // Globally unique thread ID; 1 to INT_MAX.
 typedef int                 tid_t;
 // Thread struct.

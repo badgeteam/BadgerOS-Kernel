@@ -18,7 +18,7 @@ set(cpu_src
     ${CMAKE_CURRENT_LIST_DIR}/src/scheduler.c
     ${CMAKE_CURRENT_LIST_DIR}/src/syscall.c
     ${CMAKE_CURRENT_LIST_DIR}/src/time.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/usercopy.c
+    # ${CMAKE_CURRENT_LIST_DIR}/src/usercopy.c
 )
 set(cpu_include ${CMAKE_CURRENT_LIST_DIR}/include)
 set(cpu_link)

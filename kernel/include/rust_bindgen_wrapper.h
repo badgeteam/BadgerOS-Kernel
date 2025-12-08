@@ -23,7 +23,6 @@
 #include "mutex.h"
 #include "page_alloc.h"
 #include "panic.h"
-#include "process/internal.h"
 #include "process/process.h"
 #include "rawprint.h"
 #include "scheduler/scheduler.h"

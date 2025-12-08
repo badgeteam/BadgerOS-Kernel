@@ -139,7 +139,7 @@ set(kernel_src
     ${CMAKE_CURRENT_LIST_DIR}/src/device/builtin_drivers.c
     ${CMAKE_CURRENT_LIST_DIR}/src/device/device.c
     
-    ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/syscall_impl.c
+    # ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/syscall_impl.c
     
     ${CMAKE_CURRENT_LIST_DIR}/src/freestanding/int_routines.c
     ${CMAKE_CURRENT_LIST_DIR}/src/freestanding/string.c
@@ -150,15 +150,8 @@ set(kernel_src
     
     ${CMAKE_CURRENT_LIST_DIR}/src/mem/mod.c
     
-    ${CMAKE_CURRENT_LIST_DIR}/src/process/kbelfx.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/process/proc_memmap.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/process/process.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/process/sighandler.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/process/syscall_impl.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/process/syscall_util.c
-    
     ${CMAKE_CURRENT_LIST_DIR}/src/scheduler/scheduler.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/scheduler/syscall_impl.c
+    # ${CMAKE_CURRENT_LIST_DIR}/src/scheduler/syscall_impl.c
     ${CMAKE_CURRENT_LIST_DIR}/src/scheduler/waitlist.c
     
     ${CMAKE_CURRENT_LIST_DIR}/src/errno.c
@@ -243,12 +236,7 @@ target_link_libraries(${target} PRIVATE -Wl,--whole-archive ${rust_lib} -Wl,--no
 
 # Add libraries.
 add_subdirectory(../common/badgelib badgelib)
-add_subdirectory(lib/kbelf)
-target_compile_options(kbelf PRIVATE
-    -include ${CMAKE_CURRENT_LIST_DIR}/include/loading/kbelf_pre.h
-)
-target_link_libraries(kbelf PRIVATE badgelib)
-target_link_libraries(${target} PRIVATE kbelf badgelib)
+target_link_libraries(${target} PRIVATE badgelib)
 
 
 

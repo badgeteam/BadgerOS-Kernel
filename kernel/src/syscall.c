@@ -5,6 +5,7 @@
 
 
 
+/*
 // Table of system calls.
 static syscall_info_t systab[] = {
 #define SYSCALL_CAST (void (*)())(void *)
@@ -42,4 +43,9 @@ syscall_info_t syscall_info(int no) {
     } else {
         return systab[no];
     }
+}
+*/
+
+syscall_info_t syscall_info(int no) {
+    return (syscall_info_t){NULL, 0, 0};
 }

@@ -9,9 +9,6 @@
 #include "interrupt.h"
 #include "log.h"
 #include "panic.h"
-#include "process/internal.h"
-#include "process/sighandler.h"
-#include "process/types.h"
 #include "rawprint.h"
 #include "scheduler/cpu.h"
 #include "scheduler/types.h"
@@ -56,15 +53,6 @@ static char const *const trapnames[] = {
     "Security exception",
 };
 enum { TRAPNAMES_LEN = sizeof(trapnames) / sizeof(trapnames[0]) };
-
-// Kill a process from a trap / ISR.
-static void kill_proc_on_trap() {
-    proc_exit_self(-1);
-    irq_disable();
-    sched_lower_from_isr();
-    isr_context_switch();
-    assert_unreachable();
-}
 
 // Generic interrupt handler that runs all callbacks on an IRQ.
 void generic_interrupt_handler(int irq);
@@ -156,8 +144,8 @@ void amd64_trap_handler(size_t trapno, size_t error_code) {
 
     // Print current process.
     if (!fault2 && kctx->thread && !(kctx->thread->flags & THREAD_KERNEL)) {
-        rawprint(" in process ");
-        rawprintdec(kctx->thread->process->pid, 1);
+        // rawprint(" in process ");
+        // rawprintdec(kctx->thread->process->pid, 1);
     }
     rawputc('\n');
     backtrace_from_ptr(kctx->frameptr);
@@ -174,9 +162,9 @@ void syscall_return(long long value) {
     usr->regs.rax = value;
     usr->regs.rip = usr->regs.rcx;
 
-    if (proc_signals_pending_raw(thread->process)) {
-        proc_signal_handler();
-    }
+    // if (proc_signals_pending_raw(thread->process)) {
+    //     proc_signal_handler();
+    // }
     irq_disable();
     sched_lower_from_isr();
     isr_context_switch();

@@ -22,12 +22,12 @@ unsafe extern "C" fn vmm_init() {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn vmm_ctxswitch_from_isr() {
     unsafe {
-        let proc = bindings::raw::proc_current();
-        if proc.is_null() {
-            mmu::set_page_table(kernel_mm().pagetable.root_ppn(), 0);
-        } else {
-            mmu::set_page_table((*proc).memmap.mem_ctx.pagetable.root_ppn, 0);
-        }
+        // let proc = bindings::raw::proc_current();
+        // if proc.is_null() {
+        mmu::set_page_table(kernel_mm().pagetable.root_ppn(), 0);
+        // } else {
+        //     mmu::set_page_table((*proc).memmap.mem_ctx.pagetable.root_ppn, 0);
+        // }
         mmu::vmem_fence(None, None);
     }
 }

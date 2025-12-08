@@ -17,8 +17,8 @@
 #include "mem/vmm.h"
 #include "page_alloc.h"
 #include "panic.h"
-#include "process/sighandler.h"
-#include "process/types.h"
+// #include "process/sighandler.h"
+// #include "process/types.h"
 #include "rcu.h"
 #include "scheduler/cpu.h"
 #include "scheduler/isr.h"
@@ -78,14 +78,14 @@ static void thread_handoff(sched_thread_t *thread, int cpu) {
 
 // Set the context switch to a certain thread.
 static void set_switch(sched_cpulocal_t *info, sched_thread_t *thread) {
-    int pflags = thread->process ? atomic_load(&thread->process->flags) : 0;
+    // int pflags = thread->process ? atomic_load(&thread->process->flags) : 0;
     int tflags = atomic_load(&thread->flags);
 
-    // Check for pending signals.
-    if (!(tflags & (THREAD_PRIVILEGED | THREAD_SIGHANDLER)) && (pflags & PROC_SIGPEND)) {
-        // Process has pending signals to handle first.
-        sched_raise_from_isr(thread, false, proc_signal_handler);
-    }
+    // // Check for pending signals.
+    // if (!(tflags & (THREAD_PRIVILEGED | THREAD_SIGHANDLER)) && (pflags & PROC_SIGPEND)) {
+    //     // Process has pending signals to handle first.
+    //     sched_raise_from_isr(thread, false, proc_signal_handler);
+    // }
 
     // Set context switch target.
     isr_ctx_t *next = (tflags & THREAD_PRIVILEGED) ? &thread->kernel_isr_ctx : &thread->user_isr_ctx;
@@ -238,9 +238,9 @@ void sched_request_switch_from_isr() {
 
         // Check for thread exit conditions.
         bool kill_thread = flags & THREAD_EXITING;
-        if (thread->process && (atomic_load(&thread->process->flags) & PROC_EXITING)) {
-            kill_thread |= !(flags & THREAD_PRIVILEGED);
-        }
+        // if (thread->process && (atomic_load(&thread->process->flags) & PROC_EXITING)) {
+        //     kill_thread |= !(flags & THREAD_PRIVILEGED);
+        // }
 
         if (kill_thread) {
             // Exiting thread/process; clean up thread.
@@ -577,7 +577,7 @@ tid_t thread_new_user(char const *name, process_t *process, size_t user_entrypoi
     thread->kernel_isr_ctx.flags  = ISR_CTX_FLAG_KERNEL;
     thread->kernel_isr_ctx.thread = thread;
     thread->user_isr_ctx.thread   = thread;
-    thread->user_isr_ctx.mem_ctx  = &process->memmap.mem_ctx;
+    // thread->user_isr_ctx.mem_ctx  = &process->memmap.mem_ctx;
     sched_prepare_user_entry(thread, user_entrypoint, user_arg);
 
     irq_disable();

@@ -15,7 +15,6 @@
 #include "malloc.h"
 #include "mem/vmm.h"
 #include "panic.h"
-#include "process/process.h"
 #include "scheduler/scheduler.h"
 #include "set.h"
 #include "time.h"
@@ -167,12 +166,12 @@ static void kernel_init() {
 // When finished, this function returns and the thread should wait for a shutdown event.
 static void userland_init() {
     logk(LOG_INFO, "Kernel initialized");
-    logk(LOG_INFO, "Starting init process");
+    // logk(LOG_INFO, "Starting init process");
 
-    char const *initbin = "/sbin/init";
-    pid_t       pid     = proc_create(-1, "/sbin/init", 1, &initbin);
-    assert_always(pid == 1);
-    assert_always(proc_start(pid) >= 0);
+    // char const *initbin = "/sbin/init";
+    // pid_t       pid     = proc_create(-1, "/sbin/init", 1, &initbin);
+    // assert_always(pid == 1);
+    // assert_always(proc_start(pid) >= 0);
 }
 
 
@@ -181,38 +180,38 @@ static void userland_init() {
 // This signals all processes to exit (or be killed if they wait too long) and shuts down other CPU cores.
 // When finished, the CPU continues to shut down the kernel.
 static void userland_shutdown() {
-    if (proc_has_noninit()) {
-        // Warn all processes of the imminent doom.
-        logk(LOG_INFO, "Sending SIGHUP to running processes");
-        proc_signal_all(SIGHUP);
-        // Wait for one second to give them time.
-        timestamp_us_t lim = time_us() + 1000000;
-        while (time_us() < lim && proc_has_noninit()) thread_yield();
+    // if (proc_has_noninit()) {
+    //     // Warn all processes of the imminent doom.
+    //     logk(LOG_INFO, "Sending SIGHUP to running processes");
+    //     proc_signal_all(SIGHUP);
+    //     // Wait for one second to give them time.
+    //     timestamp_us_t lim = time_us() + 1000000;
+    //     while (time_us() < lim && proc_has_noninit()) thread_yield();
 
-        if (proc_has_noninit()) {
-            // Forcibly terminate all processes.
-            logk(LOG_INFO, "Sending SIGKILL to running processes");
-            proc_signal_all(SIGKILL);
-        }
-    }
+    //     if (proc_has_noninit()) {
+    //         // Forcibly terminate all processes.
+    //         logk(LOG_INFO, "Sending SIGKILL to running processes");
+    //         proc_signal_all(SIGKILL);
+    //     }
+    // }
 
-    // Tell init it's now time to stop.
-    logk(LOG_INFO, "Sending SIGHUP to init");
-    proc_raise_signal(1, SIGHUP);
-    // Wait for a couple seconds to give it time.
-    timestamp_us_t lim = time_us() + 5000000;
-    while (time_us() < lim) {
-        errno64_t flags = proc_getflags(1);
-        if (flags == -ENOENT || (flags > 0 && !(flags & PROC_RUNNING))) {
-            // When the init process stops, userland has successfully been shut down.
-            return;
-        }
-        thread_yield();
-    }
+    // // Tell init it's now time to stop.
+    // logk(LOG_INFO, "Sending SIGHUP to init");
+    // proc_raise_signal(1, SIGHUP);
+    // // Wait for a couple seconds to give it time.
+    // timestamp_us_t lim = time_us() + 5000000;
+    // while (time_us() < lim) {
+    //     errno64_t flags = proc_getflags(1);
+    //     if (flags == -ENOENT || (flags > 0 && !(flags & PROC_RUNNING))) {
+    //         // When the init process stops, userland has successfully been shut down.
+    //         return;
+    //     }
+    //     thread_yield();
+    // }
 
-    // If init didn't stop by this point we're probably out of luck.
-    logk(LOG_FATAL, "Init process did not stop at shutdown");
-    panic_abort();
+    // // If init didn't stop by this point we're probably out of luck.
+    // logk(LOG_FATAL, "Init process did not stop at shutdown");
+    // panic_abort();
 }
 
 

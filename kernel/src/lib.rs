@@ -39,6 +39,7 @@ pub mod filesystem;
 pub mod ktest;
 pub mod kparam;
 pub mod mem;
+pub mod process;
 pub mod util;
 
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]

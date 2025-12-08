@@ -10,9 +10,7 @@
 #include "cpu/segmentation.h"
 #include "isr_ctx.h"
 #include "log.h"
-#include "process/internal.h"
 #include "process/process.h"
-#include "process/types.h"
 #include "scheduler/cpu.h"
 #include "scheduler/isr.h"
 #if !CONFIG_NOMMU
@@ -75,10 +73,10 @@ void sched_lower_from_isr() {
     isr_ctx_switch_set(&thread->user_isr_ctx);
     assert_dev_drop(!(thread->user_isr_ctx.flags & ISR_CTX_FLAG_KERNEL));
 
-    if (atomic_load(&process->flags) & PROC_EXITING) {
-        // Request a context switch to a different thread.
-        sched_request_switch_from_isr();
-    }
+    // if (atomic_load(&process->flags) & PROC_EXITING) {
+    //     // Request a context switch to a different thread.
+    //     sched_request_switch_from_isr();
+    // }
 }
 
 // Check whether the current thread is in a signal handler.
@@ -94,12 +92,12 @@ bool sched_signal_enter(size_t handler_vaddr, size_t return_vaddr, int signum) {
     sched_thread_t *thread = sched_current_thread();
 
     // Ensure the user has enough stack.
-    size_t usp   = thread->user_isr_ctx.regs.rsp;
-    size_t usize = sizeof(size_t) * 20;
-    if ((proc_map_contains_raw(thread->process, usp - usize, usize) & VMM_FLAG_RW) != VMM_FLAG_RW) {
-        // Not enough stack that the process owns.
-        return false;
-    }
+    size_t usp                     = thread->user_isr_ctx.regs.rsp;
+    size_t usize                   = sizeof(size_t) * 20;
+    // if ((proc_map_contains_raw(thread->process, usp - usize, usize) & VMM_FLAG_RW) != VMM_FLAG_RW) {
+    //     // Not enough stack that the process owns.
+    //     return false;
+    // }
     thread->user_isr_ctx.regs.rsp -= usize;
 
     // Save context to user's stack.
@@ -131,10 +129,10 @@ bool sched_signal_exit() {
     // Ensure the user still has the stack.
     size_t usp   = thread->user_isr_ctx.regs.rsp;
     size_t usize = sizeof(size_t) * 20;
-    if ((proc_map_contains_raw(thread->process, usp, usize) & VMM_FLAG_RW) != VMM_FLAG_RW) {
-        // If this happens, the process probably corrupted it's own stack.
-        return false;
-    }
+    // if ((proc_map_contains_raw(thread->process, usp, usize) & VMM_FLAG_RW) != VMM_FLAG_RW) {
+    //     // If this happens, the process probably corrupted it's own stack.
+    //     return false;
+    // }
 
 // Restore user's state.
 #if !CONFIG_NOMMU

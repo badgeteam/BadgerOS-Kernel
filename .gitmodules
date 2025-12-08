@@ -1,6 +1,3 @@
-[submodule "lib/kbelf"]
-	path = kernel/lib/kbelf
-	url = https://github.com/robotman2412/KiloElfLoader
 [submodule "kernel/lib/opensbi"]
 	path = kernel/lib/opensbi
 	url = https://github.com/riscv-software-src/opensbi
