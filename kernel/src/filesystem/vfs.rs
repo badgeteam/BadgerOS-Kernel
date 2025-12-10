@@ -27,6 +27,7 @@ use crate::{
         mutex::{Mutex, SharedMutexGuard},
     },
     filesystem::fifo::FifoShared,
+    process::usercopy::{UserSlice, UserSliceMut},
 };
 
 /// A file that is stored in a [`Vfs`].
@@ -45,7 +46,7 @@ pub struct VfsFile {
 
 impl VfsFile {
     /// Implementation of append-mode writes.
-    fn append_write(&self, wdata: &[u8]) -> EResult<usize> {
+    fn append_write(&self, wdata: UserSlice<'_, u8>) -> EResult<usize> {
         let mut guard = self.vnode.mtx.lock();
         let ops = &mut guard.ops;
         let old_size = ops.get_size(&self.vnode);
@@ -58,7 +59,7 @@ impl VfsFile {
     }
 
     /// Implementation of non-append writes.
-    fn regular_write(&self, wdata: &[u8]) -> EResult<usize> {
+    fn regular_write(&self, wdata: UserSlice<'_, u8>) -> EResult<usize> {
         let mut guard = self.vnode.mtx.lock_shared();
         let mut offset = self.offset.load(Ordering::Relaxed);
         let mut size = guard.ops.get_size(&self.vnode);
@@ -147,7 +148,7 @@ impl File for VfsFile {
         Ok(new_off)
     }
 
-    fn write(&self, wdata: &[u8]) -> EResult<usize> {
+    fn write(&self, wdata: UserSlice<'_, u8>) -> EResult<usize> {
         if !self.allow_write {
             Err(Errno::EBADF)
         } else if self.vnode.vfs.is_read_only() {
@@ -159,7 +160,7 @@ impl File for VfsFile {
         }
     }
 
-    fn read(&self, rdata: &mut [u8]) -> EResult<usize> {
+    fn read(&self, mut rdata: UserSliceMut<'_, u8>) -> EResult<usize> {
         if !self.allow_read {
             return Err(Errno::EBADF);
         }
@@ -184,7 +185,7 @@ impl File for VfsFile {
         // Perform read on vnode ops.
         guard
             .ops
-            .read(&self.vnode, offset, &mut rdata[0..readlen])?;
+            .read(&self.vnode, offset, rdata.subslice_mut(0..readlen))?;
         Ok(readlen)
     }
 
@@ -316,9 +317,9 @@ pub trait VNodeOps: Any {
     }
 
     /// Write data to the file.
-    fn write(&self, arc_self: &Arc<VNode>, offset: u64, wdata: &[u8]) -> EResult<()>;
+    fn write(&self, arc_self: &Arc<VNode>, offset: u64, wdata: UserSlice<'_, u8>) -> EResult<()>;
     /// Read data from the file.
-    fn read(&self, arc_self: &Arc<VNode>, offset: u64, rdata: &mut [u8]) -> EResult<()>;
+    fn read(&self, arc_self: &Arc<VNode>, offset: u64, rdata: UserSliceMut<'_, u8>) -> EResult<()>;
     /// Resize the file.
     fn resize(&mut self, arc_self: &Arc<VNode>, new_size: u64) -> EResult<()>;
 
@@ -370,6 +371,18 @@ pub trait VNodeOps: Any {
 
     /// Called in the [`Drop`] implementation of [`VNode`].
     fn close(&mut self, _vnode_self: &VNode) {}
+}
+
+impl dyn VNodeOps + '_ {
+    /// Write data to the file.
+    pub fn writek(&self, arc_self: &Arc<VNode>, offset: u64, wdata: &[u8]) -> EResult<()> {
+        self.write(arc_self, offset, UserSlice::new_kernel(wdata))
+    }
+
+    /// Read data from the file.
+    pub fn readk(&self, arc_self: &Arc<VNode>, offset: u64, rdata: &mut [u8]) -> EResult<()> {
+        self.read(arc_self, offset, UserSliceMut::new_kernel_mut(rdata))
+    }
 }
 
 #[rustfmt::skip]

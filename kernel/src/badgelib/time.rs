@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 use crate::{
-    bindings::{self, spinlock::Spinlock},
+    bindings::{self, raw::timespec_t, spinlock::Spinlock},
     cpu,
 };
 
@@ -26,6 +26,15 @@ impl Timespec {
         Self {
             sec: micros / 1000000,
             nsec: (micros % 1000000) as u32 * 1000,
+        }
+    }
+}
+
+impl Into<timespec_t> for Timespec {
+    fn into(self) -> timespec_t {
+        timespec_t {
+            sec: self.sec,
+            nsec: self.nsec,
         }
     }
 }

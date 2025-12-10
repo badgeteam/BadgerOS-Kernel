@@ -4,6 +4,7 @@
 #pragma once
 
 #include "badge_strings.h"
+#include "cpu/isr.h"
 #include "cpulocal.h"
 #include "device/class/union.h"
 #include "device/device.h"
@@ -25,6 +26,7 @@
 #include "panic.h"
 #include "process/process.h"
 #include "rawprint.h"
+#include "scheduler/cpu.h"
 #include "scheduler/scheduler.h"
 #include "semaphore.h"
 #include "signal.h"

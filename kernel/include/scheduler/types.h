@@ -35,8 +35,6 @@
 #define THREAD_KERNEL     (1 << 3)
 // The thread is a kernel thread or a user thread running in kernel mode.
 #define THREAD_PRIVILEGED (1 << 4)
-// The user thread is running a signal handler.
-#define THREAD_SIGHANDLER (1 << 5)
 // The thread should be added to the front of the queue.
 #define THREAD_STARTNOW   (1 << 6)
 // The thread should be suspended.
@@ -68,6 +66,10 @@ struct sched_thread {
     size_t         kernel_stack_bottom;
     // Highest address of the kernel stack.
     size_t         kernel_stack_top;
+    // Lowest address of the user stack.
+    size_t         user_stack_bottom;
+    // Highest address of the user stack.
+    size_t         user_stack_top;
     // Priority of this thread.
     int            priority;
     // Time usage information.

@@ -25,6 +25,7 @@ use crate::{
     },
     cpu,
     filesystem::{VNodeMtxInner, vfs::mflags},
+    process::usercopy::{UserSlice, UserSliceMut},
 };
 
 use super::{
@@ -250,30 +251,29 @@ impl VNodeOps for RamVNode {
         }
     }
 
-    fn write(&self, _arc_self: &Arc<VNode>, offset: u64, wdata: &[u8]) -> EResult<()> {
+    fn write(&self, _arc_self: &Arc<VNode>, offset: u64, wdata: UserSlice<'_, u8>) -> EResult<()> {
         let offset: usize = offset.try_into().map_err(|_| Errno::EIO)?;
         let inode = unsafe { self.inode.as_mut_unchecked() };
         let regular = inode.data.as_regular_mut().ok_or(Errno::EINVAL)?;
         if offset.checked_add(wdata.len()).ok_or(Errno::EIO)? > regular.len() {
             return Err(Errno::EIO);
         }
-        for i in 0..wdata.len() {
-            regular[i + offset] = wdata[i];
-        }
-        Ok(())
+        Ok(wdata.read_multiple(offset, &mut regular[offset..offset + wdata.len()])?)
     }
 
-    fn read(&self, _arc_self: &Arc<VNode>, offset: u64, rdata: &mut [u8]) -> EResult<()> {
+    fn read(
+        &self,
+        _arc_self: &Arc<VNode>,
+        offset: u64,
+        mut rdata: UserSliceMut<'_, u8>,
+    ) -> EResult<()> {
         let offset: usize = offset.try_into().map_err(|_| Errno::EIO)?;
         let inode = unsafe { self.inode.as_ref_unchecked() };
         let regular = inode.data.as_regular().ok_or(Errno::EINVAL)?;
         if offset.checked_add(rdata.len()).ok_or(Errno::EIO)? > regular.len() {
             return Err(Errno::EIO);
         }
-        for i in 0..rdata.len() {
-            rdata[i] = regular[i + offset];
-        }
-        Ok(())
+        Ok(rdata.write_multiple(0, &regular[offset..offset + rdata.len()])?)
     }
 
     fn resize(&mut self, _arc_self: &Arc<VNode>, new_size: u64) -> EResult<()> {

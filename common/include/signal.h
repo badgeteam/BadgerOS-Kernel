@@ -3,6 +3,11 @@
 
 #pragma once
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <sys/types.h>
+
 #define SIGHUP    1
 #define SIGINT    2
 #define SIGQUIT   3
@@ -37,6 +42,59 @@
 
 #define SIG_COUNT 32
 
+
+
+// Information associated with a received signal.
+typedef struct {
+    // Signal number.
+    int   si_signo;
+    // Signal code.
+    int   si_code;
+    // Sending process ID.
+    pid_t si_pid;
+    // Real user ID of sending process.
+    uid_t si_uid;
+    // Memory location which caused the signal.
+    void *si_addr;
+    // Exit value or signal.
+    int   si_status;
+} siginfo_t;
+
+// Set of signals.
+typedef uint32_t sigset_t;
+
+// Describes the actions to take for a signal.
+struct sigaction {
+    union {
+        // Old-style signal handler.
+        void (*sa_handler)(int signo);
+        // New-style signal handler.
+        void (*sa_sigaction)(int signo, siginfo_t *info, void *ucontext);
+        void *sa_handler_ptr;
+    };
+    // Signal mask to temporarily apply.
+    sigset_t sa_mask;
+    int      sa_flags;
+    void    *sa_return_trampoline;
+};
+
+// User context saved on the stack by the kernel.
+typedef struct {
+    siginfo_t siginfo;
+    sigset_t  prev_sigmask;
+    struct {
+#ifdef __riscv
+        size_t t0, t1;
+        size_t t2, a0, a1, a2, a3, a4, a5, a6, a7;
+        size_t t3, t4, t5, t6;
+        size_t pc;
+        size_t s0;
+        size_t ra;
+#endif
+#ifdef __x86_64__
+#endif
+    } regs;
+} ucontext_t;
 
 #ifdef BADGEROS_KERNEL
 

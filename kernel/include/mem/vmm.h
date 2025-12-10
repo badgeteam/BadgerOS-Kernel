@@ -37,6 +37,8 @@ typedef struct {
 
 // Allocator for virtual address ranges.
 typedef struct {
+    vpn_t range_start;
+    vpn_t range_end;
     vpn_t free_space;
     void *free_list;
 } vma_alloc_t;
@@ -94,12 +96,13 @@ errno_t vmm_create_user_ctx(vmm_ctx_t *ctx_out);
 void    vmm_destroy_user_ctx(vmm_ctx_t ctx);
 
 // Map a range of memory for the kernel at any virtual address.
-// Returns the virtual page number where it was mapped.
 errno_t     vmm_map_k(vpn_t *virt_base_out, vpn_t virt_len, ppn_t phys_base, uint32_t flags);
-// Map a range of memory for a user page table at a specific virtual address.
+// Map a range of memory for a kernel page table at a specific virtual address.
 errno_t     vmm_map_k_at(vpn_t virt_base, vpn_t virt_len, ppn_t phys_base, uint32_t flags);
 // Unmap a range of kernel memory.
 void        vmm_unmap_k(vpn_t virt_base, vpn_t virt_len);
+// Map a range of memory for a user page table at any vitual address.
+errno_t     vmm_map_u(vmm_ctx_t *ctx, vpn_t *virt_base_out, vpn_t virt_len, ppn_t phys_base, uint32_t flags);
 // Map a range of memory for a user page table at a specific virtual address.
 errno_t     vmm_map_u_at(vmm_ctx_t *ctx, vpn_t virt_base, vpn_t virt_len, ppn_t phys_base, uint32_t flags);
 // Unmap a range of user memory.

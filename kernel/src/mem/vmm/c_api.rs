@@ -7,6 +7,7 @@ use core::ffi::c_void;
 use crate::bindings::{
     self,
     error::Errno,
+    isr_ctx::isr_ctx_get,
     raw::{errno_t, virt2phys_t},
 };
 
@@ -22,12 +23,12 @@ unsafe extern "C" fn vmm_init() {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn vmm_ctxswitch_from_isr() {
     unsafe {
-        // let proc = bindings::raw::proc_current();
-        // if proc.is_null() {
-        mmu::set_page_table(kernel_mm().pagetable.root_ppn(), 0);
-        // } else {
-        //     mmu::set_page_table((*proc).memmap.mem_ctx.pagetable.root_ppn, 0);
-        // }
+        let ctx = (*isr_ctx_get()).mem_ctx as *const Memmap;
+        if ctx.is_null() {
+            mmu::set_page_table(kernel_mm().pagetable.root_ppn(), 0);
+        } else {
+            mmu::set_page_table((*ctx).root_ppn(), 0);
+        }
         mmu::vmem_fence(None, None);
     }
 }
@@ -94,6 +95,27 @@ pub unsafe extern "C" fn vmm_map_k_at(
 pub unsafe extern "C" fn vmm_unmap_k(virt_base: VPN, virt_len: VPN) {
     unsafe {
         kernel_mm().unmap(virt_base..virt_base + virt_len);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vmm_map_u(
+    vmm_ctx: *mut Memmap,
+    virt_base_out: *mut VPN,
+    virt_len: VPN,
+    phys_base: PPN,
+    flags: u32,
+) -> errno_t {
+    unsafe {
+        match (*vmm_ctx).map_fixed(phys_base, None, virt_len, flags) {
+            Ok(vpn) => {
+                if !virt_base_out.is_null() {
+                    *virt_base_out = vpn;
+                }
+                0
+            }
+            Err(e) => -(e as errno_t),
+        }
     }
 }
 

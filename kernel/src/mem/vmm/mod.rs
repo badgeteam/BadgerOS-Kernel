@@ -11,7 +11,7 @@ use core::{
 };
 
 use alloc::vec::Vec;
-use pagetable::{OwnedPTE, PAGING_LEVELS};
+use pagetable::{OwnedPTE, PAGING_LEVELS, canon_half_pages};
 
 use crate::{
     badgelib::{irq::IrqGuard, rcu},
@@ -101,12 +101,17 @@ pub struct Memmap {
     pagetable: PageTable,
     vma_alloc: Mutex<VmaAlloc>,
     // TODO: Metadata storage for e.g. file mmap()s.
+    // TODO: Support for valid PTEs that are PROT_NONE.
 }
 
 unsafe impl Send for Memmap {}
 unsafe impl Sync for Memmap {}
 
 impl Memmap {
+    pub fn root_ppn(&self) -> PPN {
+        self.pagetable.root_ppn()
+    }
+
     /// Create a new user memory map.
     pub fn new_user() -> EResult<Self> {
         let mut pagetable = PageTable::new()?;
@@ -115,7 +120,7 @@ impl Memmap {
         Ok(Self {
             is_kernel: false,
             pagetable,
-            vma_alloc: Mutex::new(VmaAlloc::new()),
+            vma_alloc: Mutex::new(VmaAlloc::new(canon_half_pages() / 2..canon_half_pages())?),
         })
     }
 
@@ -188,6 +193,16 @@ impl Memmap {
     }
 
     // TODO: Mapping function for files.
+
+    /// Reserve a range of memory without mapping anything.
+    pub fn reserve(&self, vpn: Option<VPN>, size: VPN) -> EResult<VPN> {
+        if let Some(vpn) = vpn {
+            self.vma_alloc.lock().steal(vpn..vpn + size);
+            Ok(vpn)
+        } else {
+            self.vma_alloc.lock().alloc(size)
+        }
+    }
 
     /// Create a new mapping at a fixed physical address.
     /// Assumes that the range encompases existing physical memory.
@@ -397,6 +412,14 @@ impl Memmap {
             vpn += 1 << mmu::BITS_PER_LEVEL * pte.order as u32;
         }
     }
+
+    /// Clear all mappings from this user memory map.
+    pub unsafe fn clear(&self) {
+        assert!(!self.is_kernel);
+        let mut guard = self.vma_alloc.lock();
+        guard.free(canon_half_pages() / 2..canon_half_pages());
+        unsafe { self.pagetable.clear_lower_half() };
+    }
 }
 
 impl Drop for Memmap {
@@ -412,7 +435,7 @@ pub struct Virt2Phys {
     pub page_vaddr: VPN,
     /// Physical address of page start.
     pub page_paddr: PPN,
-    /// Size of the mapping in pages.
+    /// Size of the mapping in bytes.
     pub size: usize,
     /// Physical address.
     pub paddr: usize,
@@ -476,15 +499,13 @@ pub unsafe fn init() {
             *tmp = Some(Memmap {
                 is_kernel: true,
                 pagetable: PageTable::new()?,
-                vma_alloc: Mutex::new(VmaAlloc::new()),
+                vma_alloc: Mutex::new(VmaAlloc::new(
+                    // 1/4 through 3/4 of the higher half is available for miscellaneous mappings.
+                    pagetable::higher_half_vpn() + pagetable::canon_half_pages() / 4
+                        ..pagetable::higher_half_vpn() + pagetable::canon_half_pages() * 3 / 4,
+                )?),
             });
             let kernel_mm = kernel_mm();
-
-            // 1/4 through 3/4 of the higher half is available for miscellaneous mappings.
-            kernel_mm.vma_alloc.lock().free(
-                pagetable::higher_half_vpn() + pagetable::canon_half_pages() / 4
-                    ..pagetable::higher_half_vpn() + pagetable::canon_half_pages() * 3 / 4,
-            );
 
             // Kernel RX.
             logkf_unlocked!(LogLevel::Debug, "Mapping kernel RX");

@@ -324,7 +324,7 @@ pub unsafe fn page_free(block: PPN) {
         let refcount = (*page_meta).refcount.fetch_sub(1, Ordering::Relaxed);
         assert!(refcount >= 1);
         if refcount == 1 {
-            mark_one_free(block, order);
+            mark_one_free(block >> order << order, order);
         }
     }
 }

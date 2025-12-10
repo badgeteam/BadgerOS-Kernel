@@ -15,6 +15,8 @@
 #include "rawprint.h"
 #include "scheduler/cpu.h"
 #include "scheduler/types.h"
+
+#include <stddef.h>
 #if !CONFIG_NOMMU
 #include "mem/vmm.h"
 #endif
@@ -99,12 +101,11 @@ void riscv_trap_handler() {
     }
 
     // Check for custom trap handler.
-    if (!fault2 && (kctx->flags & ISR_CTX_FLAG_NOEXC) && kctx->noexc_cb(kctx, kctx->noexc_cookie)) {
+    if ((kctx->flags & ISR_CTX_FLAG_NOEXC) && kctx->noexc_cb(kctx, kctx->noexc_cookie)) {
         isr_ctx_swap(kctx);
         return;
     }
 
-    /*
     if (!fault2 && !(kctx->flags & ISR_CTX_FLAG_KERNEL)) {
         switch (trapno) {
                 // Unknown trap? The kernel must have messed up, don't handle it.
@@ -146,7 +147,6 @@ void riscv_trap_handler() {
                 return;
         }
     }
-    */
 
     // Unhandled trap.
     claim_panic();

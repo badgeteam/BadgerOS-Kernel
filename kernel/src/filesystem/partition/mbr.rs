@@ -46,19 +46,19 @@ impl MbrDriver {
     pub fn detect_nopgt(drive: BlockDevice) -> EResult<Option<VolumeInfo>> {
         // Look for signature bytes.
         let mut signature = [0u8; 2];
-        drive.read_bytes(0x1fe, &mut signature)?;
+        drive.readk_bytes(0x1fe, &mut signature)?;
         if signature != [0x55, 0xaa] {
             return Ok(None);
         }
 
         // Read the reserved bytes, as they can indicate read-only disks.
         let mut readonly_marker = [0u8; 2];
-        drive.read_bytes(0x1bc, &mut readonly_marker)?;
+        drive.readk_bytes(0x1bc, &mut readonly_marker)?;
         let glob_readonly = readonly_marker == [0x5a, 0x5a];
 
         // Read raw MBR entries.
         let mut raw_parts: [MbrEntry; 4] = Default::default();
-        drive.read_bytes(0x1be, cast_slice_mut(&mut raw_parts))?;
+        drive.readk_bytes(0x1be, cast_slice_mut(&mut raw_parts))?;
 
         // Convert individual partitions.
         let mut parts = Vec::new();

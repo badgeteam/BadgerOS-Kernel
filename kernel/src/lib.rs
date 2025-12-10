@@ -40,6 +40,7 @@ pub mod ktest;
 pub mod kparam;
 pub mod mem;
 pub mod process;
+pub mod scheduler;
 pub mod util;
 
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
@@ -80,19 +81,19 @@ unsafe impl GlobalAlloc for BadgerOSMalloc {
 pub fn badgeros_rust_panic(info: &PanicInfo) -> ! {
     unsafe {
         bindings::raw::claim_panic();
-        logk_unlocked(LogLevel::Fatal, "Rust code panicked!");
 
         if let Some(loc) = info.location() {
             logkf_unlocked!(
                 LogLevel::Fatal,
-                "At {}:{}:{}",
+                "{}:{}:{}: {}",
                 loc.file(),
                 loc.line(),
-                loc.column()
+                loc.column(),
+                info.message()
             );
+        } else {
+            logkf_unlocked(LogLevel::Fatal, &info.message());
         }
-
-        logkf_unlocked(LogLevel::Fatal, &info.message());
 
         bindings::raw::panic_abort_unchecked()
     }

@@ -24,6 +24,7 @@ use crate::{
         Stat,
         media::{Media, MediaType},
     },
+    process::usercopy::UserSlice,
 };
 
 use super::{File, MakeFileSpec};
@@ -365,14 +366,14 @@ pub extern "C" fn fs_seek(file: file_t, mode: seek_mode_t, offset: i64) -> errno
 pub extern "C" fn fs_write(file: file_t, wdata: *const c_void, wdata_len: usize) -> errno_size_t {
     let file = unsafe { file_as_ref(file) }.unwrap();
     let wdata = unsafe { &*slice_from_raw_parts(wdata as *const u8, wdata_len) };
-    Errno::extract_usize(file.write(wdata))
+    Errno::extract_usize(file.write(UserSlice::new_kernel(wdata)))
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn fs_read(file: file_t, rdata: *mut c_void, rdata_len: usize) -> errno_size_t {
     let file = unsafe { file_as_ref(file) }.unwrap();
     let rdata = unsafe { &mut *slice_from_raw_parts_mut(rdata as *mut u8, rdata_len) };
-    Errno::extract_usize(file.read(rdata))
+    Errno::extract_usize(file.read(UserSlice::new_kernel_mut(rdata)))
 }
 
 #[unsafe(no_mangle)]

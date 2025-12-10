@@ -19,6 +19,7 @@ use crate::{
     },
     filesystem::{VNodeMtxInner, fatfs::spec::attr2, vfs::vnflags},
     mem::vmm::zeroes,
+    process::usercopy::{UserSlice, UserSliceMut},
 };
 
 use super::NAME_MAX;
@@ -65,6 +66,16 @@ struct FatVNode {
 }
 
 impl FatVNode {
+    /// Write data to the file.
+    pub fn writek(&self, arc_self: &Arc<VNode>, offset: u64, wdata: &[u8]) -> EResult<()> {
+        self.write(arc_self, offset, UserSlice::new_kernel(wdata))
+    }
+
+    /// Read data from the file.
+    pub fn readk(&self, arc_self: &Arc<VNode>, offset: u64, rdata: &mut [u8]) -> EResult<()> {
+        self.read(arc_self, offset, UserSliceMut::new_kernel_mut(rdata))
+    }
+
     /// Get the on-disk offset of some byte of the file.
     /// Primarily used for dirents.
     fn disk_offset_of(&self, arc_self: &Arc<VNode>, offset: u32) -> u64 {
@@ -96,7 +107,7 @@ impl FatVNode {
         while offset > 0 {
             offset -= 32;
             let mut dirent = [0u8; 32];
-            self.read(arc_self, offset as u64, &mut dirent)?;
+            self.readk(arc_self, offset as u64, &mut dirent)?;
             let mut dirent = LfnEnt::from(dirent);
             if dirent.attr != attr::LONG_NAME {
                 break;
@@ -151,7 +162,7 @@ impl FatVNode {
         let mut offset = 0u32;
         while offset < self.len {
             let mut raw_dirent = [0u8; 32];
-            self.read(arc_self, offset as u64, &mut raw_dirent)?;
+            self.readk(arc_self, offset as u64, &mut raw_dirent)?;
             let raw_dirent = Dirent::from(raw_dirent);
             if raw_dirent.name[0] == 0 {
                 // No more allocated dirents.
@@ -233,7 +244,7 @@ impl FatVNode {
         // Check whether this is the last dirent.
         let is_last = if dirent_off + 32 < self.len {
             let mut tmp = [0u8];
-            self.read(arc_self, dirent_off as u64 + 32, &mut tmp)?;
+            self.readk(arc_self, dirent_off as u64 + 32, &mut tmp)?;
             tmp[0] == 0
         } else {
             false
@@ -241,7 +252,7 @@ impl FatVNode {
 
         // Mark this dirent as free.
         let erase_val = [if is_last { 0u8 } else { 0xe5u8 }];
-        self.write(arc_self, dirent_off as u64, &erase_val)?;
+        self.writek(arc_self, dirent_off as u64, &erase_val)?;
 
         // Mark preceding LFN entries as free.
         let mut lfn_off = dirent_off;
@@ -250,7 +261,7 @@ impl FatVNode {
 
             // Read the previous dirent.
             let mut raw_lfn = [0u8; 32];
-            self.read(arc_self, lfn_off as u64, &mut raw_lfn)?;
+            self.readk(arc_self, lfn_off as u64, &mut raw_lfn)?;
             let mut lfn = LfnEnt::from(raw_lfn);
             lfn.from_le();
 
@@ -260,7 +271,7 @@ impl FatVNode {
             }
 
             // If it is an LFN entry, erase it.
-            self.write(arc_self, lfn_off as u64, &erase_val)?;
+            self.writek(arc_self, lfn_off as u64, &erase_val)?;
         }
 
         Ok(())
@@ -277,7 +288,7 @@ impl FatVNode {
         let mut found_count = 0u32;
         for i in 0..cur_cap {
             let mut tmp = [0xffu8];
-            self.read(arc_self, i as u64 * 32, &mut tmp)?;
+            self.readk(arc_self, i as u64 * 32, &mut tmp)?;
             if tmp[0] == 0xe5 {
                 found_count += 1;
                 last_free = i;
@@ -408,7 +419,7 @@ impl FatVNode {
             .name
             .iter()
             .fold(0u8, |sum, &byte| sum.rotate_right(1).wrapping_add(byte));
-        self.write(arc_self, dirent_off as u64, &dirent_bytes)?;
+        self.writek(arc_self, dirent_off as u64, &dirent_bytes)?;
 
         if use_lfn {
             // Write the preceding LFN entries.
@@ -437,7 +448,7 @@ impl FatVNode {
                 // Write the new LFN entry.
                 lfn_ent.to_le();
                 let lfn_bytes: [u8; 32] = lfn_ent.into();
-                self.write(arc_self, (dirent_off - i * 32 - 32) as u64, &lfn_bytes)?;
+                self.writek(arc_self, (dirent_off - i * 32 - 32) as u64, &lfn_bytes)?;
             }
         }
 
@@ -486,15 +497,15 @@ impl FatVNode {
             dirent.to_le();
             fatfs
                 .media
-                .write(disk_off, &Into::<[u8; 32]>::into(dirent))?;
+                .writek(disk_off, &Into::<[u8; 32]>::into(dirent))?;
 
             // Make the `..` entry.
             if let Some(dirent_disk_off) = *self.dirent_disk_off.lock_shared() {
                 // Copy that of this directory.
                 let mut dirent = [0u8; 32];
-                fatfs.media.read(dirent_disk_off, &mut dirent)?;
+                fatfs.media.readk(dirent_disk_off, &mut dirent)?;
                 dirent[..11].copy_from_slice(b"..         ");
-                fatfs.media.write(disk_off + 32, &dirent)?;
+                fatfs.media.writek(disk_off + 32, &dirent)?;
             } else {
                 // This is the root directory; use a hardcoded value.
                 let mut dirent = Dirent {
@@ -513,7 +524,7 @@ impl FatVNode {
                 };
                 dirent.to_le();
                 let dirent = Into::<[u8; 32]>::into(dirent);
-                fatfs.media.write(disk_off + 32, &dirent)?;
+                fatfs.media.writek(disk_off + 32, &dirent)?;
             }
         }
 
@@ -544,7 +555,7 @@ impl FatVNode {
 }
 
 impl VNodeOps for FatVNode {
-    fn write(&self, arc_self: &Arc<VNode>, offset: u64, wdata: &[u8]) -> EResult<()> {
+    fn write(&self, arc_self: &Arc<VNode>, offset: u64, wdata: UserSlice<'_, u8>) -> EResult<()> {
         let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
         if offset.checked_add(wdata.len() as u64).ok_or(Errno::EIO)? > self.len as u64 {
             return Err(Errno::EIO);
@@ -555,7 +566,7 @@ impl VNodeOps for FatVNode {
         }
     }
 
-    fn read(&self, arc_self: &Arc<VNode>, offset: u64, rdata: &mut [u8]) -> EResult<()> {
+    fn read(&self, arc_self: &Arc<VNode>, offset: u64, rdata: UserSliceMut<'_, u8>) -> EResult<()> {
         let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
         if offset.checked_add(rdata.len() as u64).ok_or(Errno::EIO)? > self.len as u64 {
             return Err(Errno::EIO);
@@ -596,10 +607,10 @@ impl VNodeOps for FatVNode {
                         let first_cluster = (extra_chain.get(0).unwrap() + 2).to_le_bytes();
                         fatfs
                             .media
-                            .write(dirent_disk_offset + 0x1a, &first_cluster[0..2])?;
+                            .writek(dirent_disk_offset + 0x1a, &first_cluster[0..2])?;
                         fatfs
                             .media
-                            .write(dirent_disk_offset + 0x14, &first_cluster[2..4])?;
+                            .writek(dirent_disk_offset + 0x14, &first_cluster[2..4])?;
                     }
 
                     // Update the FAT entries.
@@ -641,7 +652,7 @@ impl VNodeOps for FatVNode {
         {
             // Update length, but only for regular files.
             let len = new_size.to_le_bytes();
-            fatfs.media.write(dirent_disk_offset + 0x1c, &len)?;
+            fatfs.media.writek(dirent_disk_offset + 0x1c, &len)?;
         }
 
         // Erase new bytes.
@@ -650,7 +661,7 @@ impl VNodeOps for FatVNode {
             let mut offset = old_size;
             while offset < new_size {
                 let len = zeroes.len().min((new_size - offset) as usize);
-                self.write(arc_self, offset as u64, &zeroes[..len])?;
+                self.writek(arc_self, offset as u64, &zeroes[..len])?;
                 offset += len as u32;
             }
         }
@@ -707,7 +718,7 @@ impl VNodeOps for FatVNode {
 
         // Get the FAT dirent.
         let mut fat_ent = [0u8; size_of::<Dirent>()];
-        fatfs.media.read(ent.dirent_disk_off, &mut fat_ent)?;
+        fatfs.media.readk(ent.dirent_disk_off, &mut fat_ent)?;
         let mut fat_ent = Dirent::from(fat_ent);
         fat_ent.from_le();
         let first_cluster =
@@ -730,7 +741,11 @@ impl VNodeOps for FatVNode {
             let chain = chain.as_mut().unwrap();
             for i in 0..chain.len() * cluster_size / 32 {
                 let mut name = [0u8; 11];
-                chain.read(&fatfs, i as u64 * 32, &mut name)?;
+                chain.read(
+                    &fatfs,
+                    i as u64 * 32,
+                    UserSliceMut::new_kernel_mut(&mut name),
+                )?;
                 if name[0] == 0 {
                     break;
                 } else if name[0] != 0xe5 && name != *b".          " && name != *b"..         " {
@@ -849,7 +864,7 @@ impl VNodeOps for FatVNode {
 
         // New dirent conv.
         let mut new_dent = [0u8; 32];
-        self.read(arc_self, new_dent_off as u64, &mut new_dent)?;
+        self.readk(arc_self, new_dent_off as u64, &mut new_dent)?;
         let mut new_dent = Dirent::from(new_dent);
         new_dent.from_le();
         let dirent = Self::convert_dirent(
@@ -874,7 +889,7 @@ impl VNodeOps for FatVNode {
         // Read the dirent, if present.
         let mut dirent = [0u8; 32];
         if let Some(dirent_disk_off) = *guard {
-            fatfs.media.read(dirent_disk_off, &mut dirent)?;
+            fatfs.media.readk(dirent_disk_off, &mut dirent)?;
         }
         let mut dirent = Dirent::from(dirent);
         dirent.from_le();
@@ -1329,7 +1344,7 @@ impl FatFs {
             FatType::Fat12 => {
                 let mut bytes = [0u8; 2];
                 self.media
-                    .read(fat_offset + (cluster as u64 * 3 / 2), &mut bytes)?;
+                    .readk(fat_offset + (cluster as u64 * 3 / 2), &mut bytes)?;
 
                 if cluster & 1 == 0 {
                     bytes[0] = value as u8;
@@ -1340,18 +1355,18 @@ impl FatFs {
                 }
 
                 self.media
-                    .write(fat_offset + (cluster as u64 * 3 / 2), &bytes)?;
+                    .writek(fat_offset + (cluster as u64 * 3 / 2), &bytes)?;
             }
             FatType::Fat16 => {
                 let bytes = (value as u16).to_le_bytes();
                 self.media
-                    .write(fat_offset + (cluster as u64 * 2), &bytes)?;
+                    .writek(fat_offset + (cluster as u64 * 2), &bytes)?;
             }
             FatType::Fat32 => {
                 // FAT requires preserving the upper bits, but nothing actually uses them so IDC.
                 let bytes = value.to_le_bytes();
                 self.media
-                    .write(fat_offset + (cluster as u64 * 4), &bytes)?;
+                    .writek(fat_offset + (cluster as u64 * 4), &bytes)?;
             }
         }
         Ok(())
@@ -1404,7 +1419,7 @@ impl FatFs {
                 let _guard = self.fat12_mutex.lock_shared();
                 let mut bytes = [0u8; 2];
                 self.media
-                    .read(fat_offset + (cluster as u64 * 3 / 2), &mut bytes)?;
+                    .readk(fat_offset + (cluster as u64 * 3 / 2), &mut bytes)?;
                 let tmp = if cluster & 1 == 0 {
                     bytes[0] as u16 | ((bytes[1] as u16 & 0x0f) << 8)
                 } else {
@@ -1420,7 +1435,7 @@ impl FatFs {
                 // Read FAT16 entry.
                 let mut bytes = [0u8; 2];
                 self.media
-                    .read(fat_offset + (cluster as u64 * 2), &mut bytes)?;
+                    .readk(fat_offset + (cluster as u64 * 2), &mut bytes)?;
                 let tmp = u16::from_le_bytes(bytes);
                 if tmp >= 0xfff7 {
                     tmp as u32 + 0x0fff_0000
@@ -1432,7 +1447,7 @@ impl FatFs {
                 // Read FAT32 entry.
                 let mut bytes = [0u8; 4];
                 self.media
-                    .read(fat_offset + (cluster as u64 * 4), &mut bytes)?;
+                    .readk(fat_offset + (cluster as u64 * 4), &mut bytes)?;
                 u32::from_le_bytes(bytes) & 0x0fff_ffff
             }
         };
@@ -1534,7 +1549,7 @@ impl VfsOps for FatFs {
         // Read FAT dirent from disk.
         let mut dirent = [0u8; size_of::<Dirent>()];
         self.media
-            .read(cached_dirent.dirent_disk_off, &mut dirent)?;
+            .readk(cached_dirent.dirent_disk_off, &mut dirent)?;
         let mut dirent = Dirent::from(dirent);
 
         // Read the cluster chain.
@@ -1602,7 +1617,7 @@ impl VfsOps for FatFs {
 
         // New dirent conv.
         let mut new_dent = [0u8; 32];
-        new_ops.read(new_dir, new_dent_off as u64, &mut new_dent)?;
+        new_ops.readk(new_dir, new_dent_off as u64, &mut new_dent)?;
         let mut new_dent = Dirent::from(new_dent);
         new_dent.from_le();
         let dirent = FatVNode::convert_dirent(
@@ -1626,7 +1641,7 @@ impl VfsDriver for FatFsDriver {
     fn detect(&self, media: &Media) -> EResult<bool> {
         // Read the BPB.
         let mut bpb = [0u8; size_of::<Bpb>()];
-        media.read(0, &mut bpb)?;
+        media.readk(0, &mut bpb)?;
         let mut bpb = Bpb::from(bpb);
         bpb.from_le();
 
@@ -1641,7 +1656,7 @@ impl VfsDriver for FatFsDriver {
 
         // Checked signature #2: FAT BPB signature bytes.
         let mut tmp = [0u8; 2];
-        media.read(510, &mut tmp)?;
+        media.readk(510, &mut tmp)?;
         if tmp != [0x55, 0xaa] {
             return Ok(false);
         }
@@ -1654,7 +1669,7 @@ impl VfsDriver for FatFsDriver {
         // Read the BPB.
         let media = media.ok_or(Errno::ENODEV)?;
         let mut bpb = [0u8; size_of::<Bpb>()];
-        media.read(0, &mut bpb)?;
+        media.readk(0, &mut bpb)?;
         let mut bpb = Bpb::from(bpb);
         bpb.from_le();
 
@@ -1673,14 +1688,14 @@ impl VfsDriver for FatFsDriver {
 
         // Read the header.
         let sector_count = if bpb.sector_count_32 != 0 {
-            media.read(size_of::<Bpb>() as u64, &mut header32)?;
-            media.read(
+            media.readk(size_of::<Bpb>() as u64, &mut header32)?;
+            media.readk(
                 size_of::<Bpb>() as u64 + size_of::<Header32>() as u64,
                 &mut header32,
             )?;
             bpb.sector_count_32
         } else {
-            media.read(size_of::<Bpb>() as u64, &mut header16)?;
+            media.readk(size_of::<Bpb>() as u64, &mut header16)?;
             bpb.sector_count_16 as u32
         };
         let mut header16 = Header16::from(header16);

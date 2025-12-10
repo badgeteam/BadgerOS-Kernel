@@ -15,6 +15,7 @@ test = false
 
 [dependencies]
 bytemuck = "1.23.0"
+bytemuck_derive = "1.10.2"
 chrono = { version="0.4.41", default-features=false }
 compile-time = "0.2.0"
 crc = "3.3.0"

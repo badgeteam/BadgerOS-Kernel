@@ -16,15 +16,6 @@
 #define SYSCALL_DEF_V(no, enum, name, ...) SYSCALL_DEF(no, enum, name, void, __VA_ARGS__)
 #endif
 
-// Fast syscall definition.
-#ifndef SYSCALL_DEF_F
-#define SYSCALL_DEF_F(no, enum, name, returns, ...) SYSCALL_DEF(no, enum, name, returns, __VA_ARGS__)
-#endif
-
-// Fast syscall definition (returning void).
-#ifndef SYSCALL_DEF_FV
-#define SYSCALL_DEF_FV(no, enum, name, ...) SYSCALL_DEF_F(no, enum, name, void, __VA_ARGS__)
-#endif
 
 
 
@@ -66,20 +57,17 @@ SYSCALL_DEF_V(8, SYSCALL_PROC_EXIT, syscall_proc_exit, int code)
 // If the memory was not large enough, it it not modified.
 SYSCALL_DEF(9, SYSCALL_PROC_GETARGS, syscall_proc_getargs, size_t, size_t cap, void *memory)
 
-// Create a "pre-start" child process that inherits this process' file descriptors and environment variables.
-// The child process is created in a halted state and it is killed if the parent exits before the child is resumed.
-// Returns process ID of new child on success, or a (negative) errno on failure.
-SYSCALL_DEF(10, SYSCALL_PROC_PCREATE, syscall_proc_pcreate, int, char const *binary, int argc, char const *const *argv)
+// Create a copy of the running process and return its PID (to the parent) or -1 (to the child).
+SYSCALL_DEF(10, SYSCALL_PROC_FORK, syscall_proc_fork, int)
 
-// Destroy a "pre-start" child process.
-// Usually used in case of errors.
-SYSCALL_DEF(11, SYSCALL_PROC_PDESTROY, syscall_proc_pdestroy, bool, int child)
+// Execute the program at `path`, replacing the calling program's code and data in the process.
+SYSCALL_DEF(11, SYSCALL_PROC_EXEC, syscall_proc_exec, int, char const *path, char const *const *argv, char const *const *envp)
 
-// Starts a "pre-start" child process, thereby converting it into a running child process.
-SYSCALL_DEF(12, SYSCALL_PROC_PSTART, syscall_proc_pstart, bool, int child)
+// Reserved for POSIX spawn.
+// SYSCALL_DEF(12, SYSCALL_PROC_SPAWN, int, ...)
 
 // Set the signal handler for a specific signal number.
-SYSCALL_DEF(13, SYSCALL_PROC_SIGHANDLER, syscall_proc_sighandler, void *, int signum, void *newhandler)
+SYSCALL_DEF(13, SYSCALL_PROC_SIGACTION, syscall_proc_sigaction, int, int signum, struct sigaction const *newhandler, struct sigaction *oldhandler)
 
 // Return from a signal handler.
 SYSCALL_DEF_V(14, SYSCALL_PROC_SIGRET, syscall_proc_sigret)
@@ -94,65 +82,65 @@ SYSCALL_DEF(15, SYSCALL_PROC_WAITPID, syscall_proc_waitpid, int, int pid, int *w
 // Open a file, optionally relative to a directory.
 // If `at` is -1, `path` is relative to the working directory.
 // Returns -errno on error, file descriptor number on success.
-SYSCALL_DEF(16, SYSCALL_FS_OPEN, syscall_fs_open, long, long at, char const *path, size_t path_len, int oflags)
+SYSCALL_DEF(16, SYSCALL_FS_OPEN, syscall_fs_open, int, int at, char const *path, int oflags)
 
 // Flush and close a file.
-SYSCALL_DEF(17, SYSCALL_FS_CLOSE, syscall_fs_close, int, long fd)
+SYSCALL_DEF(17, SYSCALL_FS_CLOSE, syscall_fs_close, int, int fd)
 
 // Read bytes from a file.
 // Returns 0 on EOF, -errno on error, read count on success.
-SYSCALL_DEF(18, SYSCALL_FS_READ, syscall_fs_read, long, long fd, void *read_buf, long read_len)
+SYSCALL_DEF(18, SYSCALL_FS_READ, syscall_fs_read, int64_t, int fd, void *read_buf, long read_len)
 
 // Write bytes to a file.
 // Returns -errno on error, write count on success.
-SYSCALL_DEF(19, SYSCALL_FS_WRITE, syscall_fs_write, long, long fd, void const *write_buf, long write_len)
+SYSCALL_DEF(19, SYSCALL_FS_WRITE, syscall_fs_write, int64_t, int fd, void const *write_buf, long write_len)
 
 // Read directory entries from a directory handle.
 // See `dirent_t` for the format.
 // Returns -errno on error, read count on success.
-SYSCALL_DEF(20, SYSCALL_FS_GETDENTS, syscall_fs_getdents, long, long fd, void *read_buf, long read_len)
+SYSCALL_DEF(20, SYSCALL_FS_GETDENTS, syscall_fs_getdents, int64_t, int fd, void *read_buf, long read_len)
 
 // Rename and/or move a file to another path, optionally relative to one or two directories.
 // If `*_at` is -1, the respective `*_path` is relative to the working directory.
 // Returns -errno on error, 0 on success.
-SYSCALL_DEF(21, SYSCALL_FS_RENAME, syscall_fs_rename, int, syscall_fs_rename_args_t *args)
-
+SYSCALL_DEF(21, SYSCALL_FS_RENAME, syscall_fs_rename, int, int old_at, char const *old_path, int new_at, char const *new_path, uint32_t flags)
+    
 // Get file status given file handler or path, optionally following the final symlink.
 // If `path` is specified, it is interpreted as relative to the working directory.
 // If both `path` and `fd` are specified, `path` is relative to the directory that `fd` describes.
 // If only `fd` is specified, the inode referenced by `fd` is stat'ed.
 // If `follow_link` is false, the last symlink in the path is not followed.
-SYSCALL_DEF(22, SYSCALL_FS_STAT, syscall_fs_stat, int, long fd, char const *path, size_t path_len, bool follow_link, stat_t *stat_out)
+SYSCALL_DEF(22, SYSCALL_FS_STAT, syscall_fs_stat, int, int fd, char const *path, bool follow_link, stat_t *stat_out)
 
 // Create a new directory.
 // If `at` is -1, `path` is relative to the working directory.
 // Returns -errno on error, 0 on success.
-SYSCALL_DEF(47, SYSCALL_FS_MKDIR, syscall_fs_mkdir, int, long at, char const *path, size_t path_len)
+SYSCALL_DEF(47, SYSCALL_FS_MKDIR, syscall_fs_mkdir, int, int at, char const *path)
 
 // Delete a directory if it is empty.
 // If `at` is -1, `path` is relative to the working directory.
 // Returns -errno on error, 0 on success.
-SYSCALL_DEF(48, SYSCALL_FS_RMDIR, syscall_fs_rmdir, int, long at, char const *path, size_t path_len)
+SYSCALL_DEF(48, SYSCALL_FS_RMDIR, syscall_fs_rmdir, int, int at, char const *path)
 
 // Create a new link to an existing inode.
 // If `*_at` is -1, the respective `*_path` is relative to the working directory.
 // Returns -errno on error, 0 on success.
-SYSCALL_DEF(49, SYSCALL_FS_LINK, syscall_fs_link, int, syscall_fs_rename_args_t *args)
+SYSCALL_DEF(49, SYSCALL_FS_LINK, syscall_fs_link, int, int old_at, char const *old_path, int new_at, char const *new_path, uint32_t flags)
 
 // Remove a link to an inode. If it is the last link, the file is deleted.
 // If `at` is -1, `path` is relative to the working directory.
 // Returns -errno on error, 0 on success.
-SYSCALL_DEF(50, SYSCALL_FS_UNLINK, syscall_fs_unlink, int, long at, char const *path, size_t path_len)
+SYSCALL_DEF(50, SYSCALL_FS_UNLINK, syscall_fs_unlink, int, int at, char const *path)
 
 // Create a new FIFO / named pipe.
 // If `at` is -1, `path` is relative to the working directory.
 // Returns -errno on error, 0 on success.
-SYSCALL_DEF(51, SYSCALL_FS_MKFIFO, syscall_fs_mkfifo, int, long at, char const *path, size_t path_len)
+SYSCALL_DEF(51, SYSCALL_FS_MKFIFO, syscall_fs_mkfifo, int, int at, char const *path)
 
 // Create a new pipe.
 // `fds[0]` will be written with the pointer to the read end, `fds[1]` the write end.
 // Returns -errno on error, 0 on success.
-SYSCALL_DEF(52, SYSCALL_FS_PIPE, syscall_fs_pipe, int, long fds[2], int flags)
+SYSCALL_DEF(52, SYSCALL_FS_PIPE, syscall_fs_pipe, int, int fds[2], int flags)
 
 
 
@@ -166,7 +154,7 @@ SYSCALL_DEF(23, SYSCALL_MEM_MAP, syscall_mem_map, void *, void *address, size_t 
 
 // Unmap a range of memory previously allocated with `SYSCALL_MEM_MAP`.
 // Returns whether a range of memory was unmapped.
-SYSCALL_DEF(25, SYSCALL_MEM_UNMAP, syscall_mem_unmap, bool, void *address, size_t size)
+SYSCALL_DEF_V(25, SYSCALL_MEM_UNMAP, syscall_mem_unmap, void *address, size_t size)
 
 
 
@@ -188,5 +176,3 @@ SYSCALL_DEF_V(46, SYSCALL_TEMP_WRITE, syscall_temp_write, char const *message, s
 
 #undef SYSCALL_DEF
 #undef SYSCALL_DEF_V
-#undef SYSCALL_DEF_F
-#undef SYSCALL_DEF_FV

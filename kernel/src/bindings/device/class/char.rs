@@ -2,10 +2,13 @@ use core::ffi::c_void;
 
 use alloc::vec::Vec;
 
-use crate::bindings::{
-    device::{AbstractDevice, BaseDriver, Device, DeviceFilters},
-    error::{EResult, Errno},
-    raw::{self, dev_class_t_DEV_CLASS_CHAR, device_char_t},
+use crate::{
+    bindings::{
+        device::{AbstractDevice, BaseDriver, Device, DeviceFilters},
+        error::{EResult, Errno},
+        raw::{self, dev_class_t_DEV_CLASS_CHAR, device_char_t},
+    },
+    process::usercopy::{UserSlice, UserSliceMut},
 };
 
 /// Specialization for character devices.
@@ -22,18 +25,18 @@ impl CharDevice {
     }
 
     /// Read bytes from the device.
-    pub fn read(&self, rdata: &mut [u8]) -> EResult<usize> {
+    pub fn read(&self, rdata: UserSliceMut<'_, u8>) -> EResult<usize> {
         Errno::check_usize(unsafe {
             raw::device_char_read(
                 self.as_raw_ptr(),
-                rdata.as_ptr() as *mut c_void,
+                rdata.as_mut_ptr() as *mut c_void,
                 rdata.len(),
             )
         })
     }
 
     /// Write bytes to the device.
-    pub fn write(&self, wdata: &[u8]) -> EResult<usize> {
+    pub fn write(&self, wdata: UserSlice<'_, u8>) -> EResult<usize> {
         Errno::check_usize(unsafe {
             raw::device_char_write(
                 self.as_raw_ptr(),
@@ -47,16 +50,19 @@ impl CharDevice {
 /// Character device driver functions.
 pub trait CharDriver: BaseDriver {
     /// Read bytes from the device.
-    fn read(&self, rdata: &mut [u8]) -> EResult<usize>;
+    fn read(&self, rdata: UserSliceMut<'_, u8>) -> EResult<usize>;
     /// Write bytes to the device.
-    fn write(&self, wdata: &[u8]) -> EResult<usize>;
+    fn write(&self, wdata: UserSlice<'_, u8>) -> EResult<usize>;
 }
 
 /// Helper macro for filling in character driver fields.
 #[macro_export]
 macro_rules! char_driver_struct {
     ($type: ty, $match_: expr, $add: expr) => {{
-        use crate::bindings::{device::class::char::*, error::*, raw::*};
+        use crate::{
+            bindings::{device::class::char::*, error::*, raw::*},
+            process::usercopy::{UserSlice, UserSliceMut},
+        };
         use ::core::{
             ffi::c_void,
             ptr::{slice_from_raw_parts, slice_from_raw_parts_mut},
@@ -75,9 +81,9 @@ macro_rules! char_driver_struct {
                     wdata_len: usize,
                 ) -> errno_size_t {
                     let ptr = unsafe { &mut *((*device).base.cookie as *mut $type) };
-                    Errno::extract_usize(
-                        ptr.write(unsafe { &*slice_from_raw_parts(wdata as *const u8, wdata_len) }),
-                    )
+                    Errno::extract_usize(ptr.write(UserSlice::new_kernel(unsafe {
+                        &*slice_from_raw_parts(wdata as *const u8, wdata_len)
+                    })))
                 }
                 Some(write_wrapper)
             },
@@ -88,9 +94,9 @@ macro_rules! char_driver_struct {
                     rdata_len: usize,
                 ) -> errno_size_t {
                     let ptr = unsafe { &mut *((*device).base.cookie as *mut $type) };
-                    Errno::extract_usize(ptr.read(unsafe {
+                    Errno::extract_usize(ptr.read(UserSliceMut::new_kernel_mut(unsafe {
                         &mut *slice_from_raw_parts_mut(rdata as *mut u8, rdata_len)
-                    }))
+                    })))
                 }
                 Some(read_wrapper)
             },

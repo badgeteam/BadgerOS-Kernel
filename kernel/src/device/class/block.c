@@ -8,6 +8,8 @@
 #include "assertions.h"
 #include "badge_strings.h"
 #include "cpu/interrupt.h"
+#include "cpu/mmu.h"
+#include "isr_ctx.h"
 #include "log.h"
 #include "mutex.h"
 #include "radixtree.h"
@@ -77,13 +79,23 @@ errno_t device_block_scan_parts(device_block_t *device) {
 // Write device blocks.
 // The alignment for DMA is handled by this function.
 errno_t device_block_write_blocks(device_block_t *device, uint64_t start, uint64_t count, void const *data) {
-    return device_block_write_bytes(device, start << device->block_size_exp, count << device->block_size_exp, data);
+    return device_block_write_bytes(
+        device,
+        start << device->block_size_exp,
+        count << device->block_size_exp,
+        (void const __user *)data
+    );
 }
 
 // Read device blocks.
 // The alignment for DMA is handled by this function.
 errno_t device_block_read_blocks(device_block_t *device, uint64_t start, uint64_t count, void *data) {
-    return device_block_read_bytes(device, start << device->block_size_exp, count << device->block_size_exp, data);
+    return device_block_read_bytes(
+        device,
+        start << device->block_size_exp,
+        count << device->block_size_exp,
+        (void __user *)data
+    );
 }
 
 // Erase blocks.
@@ -111,9 +123,9 @@ static errno_t iterate_block_ranges(
     device_block_t *device,
     uint64_t        start_byte,
     uint64_t        byte_count,
-    void (*callback)(uint8_t *subblock_data, size_t subblock_len, size_t byte_offset, void *cookie),
-    void *cookie,
-    bool  mark_dirty
+    bool (*callback)(uint8_t *subblock_data, size_t subblock_len, size_t byte_offset, void __user *cookie),
+    void __user *cookie,
+    bool         mark_dirty
 ) {
     driver_block_t const *const driver = (void *)device->base.driver;
     assert_dev_keep(irq_disable());
@@ -197,7 +209,12 @@ static errno_t iterate_block_ranges(
         }
 
         // Run the callback function with the acquired cache entry.
-        callback(value + sub_offset, sub_size, byte_offset, cookie);
+        if (callback(value + sub_offset, sub_size, byte_offset, cookie)) {
+            // Access fault.
+            rcu_crit_exit();
+            irq_enable();
+            return -EFAULT;
+        }
         byte_offset += sub_size;
         start_byte  += sub_size;
         byte_count  -= sub_size;
@@ -209,14 +226,17 @@ static errno_t iterate_block_ranges(
 }
 
 // Implementation of `device_block_write_bytes` after caching.
-static void write_bytes_cb(uint8_t *subblock_data, size_t subblock_len, size_t byte_offset, void *cookie) {
-    uint8_t const *wdata = cookie;
-    mem_copy(subblock_data, wdata + byte_offset, subblock_len);
+static bool write_bytes_cb(uint8_t *subblock_data, size_t subblock_len, size_t byte_offset, void __user *cookie) {
+    uint8_t const __user *wdata = cookie;
+    mmu_enable_sum();
+    bool faulted = isr_noexc_mem_copy(subblock_data, (void const *)(wdata + byte_offset), subblock_len);
+    mmu_disable_sum();
+    return faulted;
 }
 
 // Write block device bytes.
 // The alignment for DMA is handled by this function.
-errno_t device_block_write_bytes(device_block_t *device, uint64_t offset, uint64_t size, void const *data) {
+errno_t device_block_write_bytes(device_block_t *device, uint64_t offset, uint64_t size, void const __user *data) {
     if (offset + size < offset || offset + size > device->block_count << device->block_size_exp) {
         logkf(
             LOG_WARN,
@@ -237,22 +257,24 @@ errno_t device_block_write_bytes(device_block_t *device, uint64_t offset, uint64
         return res;
     }
 
-    errno_t res = iterate_block_ranges(device, offset, size, write_bytes_cb, (void *)data, true);
+    errno_t res = iterate_block_ranges(device, offset, size, write_bytes_cb, (void __user *)data, true);
 
     mutex_release_shared(&device->base.driver_mtx);
     return res;
 }
 
 // Implementation of `device_block_read_bytes` after caching.
-static void read_bytes_cb(uint8_t *subblock_data, size_t subblock_len, size_t byte_offset, void *cookie) {
-    uint8_t *rdata = cookie;
-    mem_copy(rdata + byte_offset, subblock_data, subblock_len);
+static bool read_bytes_cb(uint8_t *subblock_data, size_t subblock_len, size_t byte_offset, void __user *cookie) {
+    uint8_t __user *rdata = cookie;
+    mmu_enable_sum();
+    bool faulted = isr_noexc_mem_copy((void *)(rdata + byte_offset), subblock_data, subblock_len);
+    mmu_disable_sum();
+    return faulted;
 }
 
 // Read block device bytes.
 // The alignment for DMA is handled by this function.
-errno_t device_block_read_bytes(device_block_t *device, uint64_t offset, uint64_t size, void *data0) {
-    uint8_t *data = data0;
+errno_t device_block_read_bytes(device_block_t *device, uint64_t offset, uint64_t size, void __user *data) {
     if (offset + size < offset || offset + size > device->block_count << device->block_size_exp) {
         logkf(
             LOG_WARN,
@@ -273,7 +295,7 @@ errno_t device_block_read_bytes(device_block_t *device, uint64_t offset, uint64_
         return res;
     }
 
-    errno_t res = iterate_block_ranges(device, offset, size, read_bytes_cb, (void *)data, false);
+    errno_t res = iterate_block_ranges(device, offset, size, read_bytes_cb, data, false);
 
     mutex_release_shared(&device->base.driver_mtx);
     return res;

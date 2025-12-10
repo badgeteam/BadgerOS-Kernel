@@ -15,6 +15,7 @@ use crate::{
         thread::Waitlist,
     },
     cpu::irq,
+    process::usercopy::{UserSlice, UserSliceMut},
 };
 
 use super::{File, SeekMode, Stat, VNode};
@@ -119,7 +120,7 @@ impl FifoShared {
 
     /// Handle a file read for a FIFO.
     /// WARNING: May sporadically return 0 in a blocking multi-read scenario.
-    fn read(&self, nonblock: bool, rdata: &mut [u8]) -> EResult<usize> {
+    fn read(&self, nonblock: bool, rdata: UserSliceMut<'_, u8>) -> EResult<usize> {
         let _noirq = unsafe { IrqGuard::new() };
 
         let buffer = if nonblock {
@@ -141,7 +142,7 @@ impl FifoShared {
             buffer.unwrap_or_else(|| self.buffer.lock_shared())
         };
 
-        let mut res = try { buffer.as_ref().ok_or(Errno::EAGAIN)?.read(rdata) };
+        let mut res = try { buffer.as_ref().ok_or(Errno::EAGAIN)?.read(rdata)? };
         if res == Ok(0) && nonblock {
             res = Err(Errno::EAGAIN)
         };
@@ -154,7 +155,12 @@ impl FifoShared {
 
     /// Handle a file write for a FIFO.
     /// Raises EPIPE if `enforce_open` is true and the read end is closed.
-    fn write(&self, nonblock: bool, wdata: &[u8], enforce_open: bool) -> EResult<usize> {
+    fn write(
+        &self,
+        nonblock: bool,
+        wdata: UserSlice<'_, u8>,
+        enforce_open: bool,
+    ) -> EResult<usize> {
         let _noirq = unsafe { IrqGuard::new() };
         if enforce_open && self.read_count.load(Ordering::Relaxed) == 0 {
             return Err(Errno::EPIPE);
@@ -179,7 +185,7 @@ impl FifoShared {
             buffer.unwrap_or_else(|| self.buffer.lock_shared())
         };
 
-        let mut res = try { buffer.as_ref().ok_or(Errno::EAGAIN)?.write(wdata) };
+        let mut res = try { buffer.as_ref().ok_or(Errno::EAGAIN)?.write(wdata)? };
         if res == Ok(0) && nonblock {
             res = Err(Errno::EAGAIN)
         };
@@ -230,18 +236,14 @@ impl File for Fifo {
         Err(Errno::ESPIPE)
     }
 
-    fn write(&self, mut wdata: &[u8]) -> EResult<usize> {
+    fn write(&self, mut wdata: UserSlice<'_, u8>) -> EResult<usize> {
         let mut wlen = self.shared.write(self.is_nonblock, wdata, false)?;
-        {
-            let range = wlen..wdata.len();
-            wdata = &wdata[range];
-        }
+        wdata = wdata.subslice(wlen..wdata.len());
         while wdata.len() > 0 {
             match self.shared.write(self.is_nonblock, wdata, true) {
                 Ok(res) => {
                     wlen += res;
-                    let range = res..wdata.len();
-                    wdata = &wdata[range];
+                    wdata = wdata.subslice(res..wdata.len());
                 }
                 Err(Errno::EPIPE) => return Err(Errno::EPIPE),
                 Err(_) => break,
@@ -250,18 +252,14 @@ impl File for Fifo {
         Ok(wlen)
     }
 
-    fn read(&self, mut rdata: &mut [u8]) -> EResult<usize> {
+    fn read(&self, mut rdata: UserSliceMut<'_, u8>) -> EResult<usize> {
         let mut rlen = self.shared.read(self.is_nonblock, rdata)?;
-        {
-            let range = rlen..rdata.len();
-            rdata = &mut rdata[range];
-        }
+        rdata = rdata.subslice_mut(rlen..rdata.len());
         while rdata.len() > 0
             && let Ok(res) = self.shared.read(true, rdata)
         {
             rlen += res;
-            let range = res..rdata.len();
-            rdata = &mut rdata[range];
+            rdata = rdata.subslice_mut(res..rdata.len());
         }
         Ok(rlen)
     }

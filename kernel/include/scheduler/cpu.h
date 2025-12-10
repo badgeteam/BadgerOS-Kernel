@@ -6,6 +6,7 @@
 #include "attributes.h"
 #include "scheduler/scheduler.h"
 #include "scheduler/types.h"
+#include "signal.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -21,13 +22,9 @@ void sched_raise_from_isr(sched_thread_t *thread, bool syscall, void *entry_poin
 // Resumes the userland thread where it left off.
 void sched_lower_from_isr();
 
-// Check whether the current thread is in a signal handler.
-// Returns signal number, or 0 if not in a signal handler.
-bool sched_is_sighandler();
-
 // Enters a signal handler in the current thread.
 // Returns false if there isn't enough resources to do so.
-bool sched_signal_enter(size_t handler_vaddr, size_t return_vaddr, int signum);
+bool sched_signal_enter(size_t handler_vaddr, size_t return_vaddr, siginfo_t siginfo);
 
 // Exits a signal handler in the current thread.
 // Returns false if the process cannot be resumed.

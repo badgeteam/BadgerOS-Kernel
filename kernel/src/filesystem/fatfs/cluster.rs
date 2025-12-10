@@ -15,6 +15,7 @@ use alloc::{collections::TryReserveError, vec::Vec};
 use crate::{
     LogLevel,
     bindings::error::{EResult, Errno},
+    process::usercopy::{UserSlice, UserSliceMut},
 };
 
 use super::FatFs;
@@ -366,7 +367,12 @@ impl ClusterChain {
     }
 
     /// Helper function to write to media using this cluster chain.
-    pub(super) fn write(&self, fatfs: &FatFs, offset: u64, wdata: &[u8]) -> EResult<()> {
+    pub(super) fn write(
+        &self,
+        fatfs: &FatFs,
+        offset: u64,
+        wdata: UserSlice<'_, u8>,
+    ) -> EResult<()> {
         // Calculate the range of clusters that need to be accessed.
         let first_cluster = (offset >> fatfs.cluster_size_exp) as u32;
         let index = match self
@@ -398,7 +404,7 @@ impl ClusterChain {
             // Actually access the media.
             fatfs.media.write(
                 data_start + fatfs.data_offset,
-                &wdata[(access_start - offset) as usize..(access_end - offset) as usize],
+                wdata.subslice((access_start - offset) as usize..(access_end - offset) as usize),
             )?;
         }
 
@@ -406,7 +412,12 @@ impl ClusterChain {
     }
 
     /// Helper function to read from media using this cluster chain.
-    pub(super) fn read(&self, fatfs: &FatFs, offset: u64, rdata: &mut [u8]) -> EResult<()> {
+    pub(super) fn read(
+        &self,
+        fatfs: &FatFs,
+        offset: u64,
+        mut rdata: UserSliceMut<'_, u8>,
+    ) -> EResult<()> {
         // Calculate the range of clusters that need to be accessed.
         let first_cluster = (offset >> fatfs.cluster_size_exp) as u32;
         let index = match self
@@ -438,7 +449,8 @@ impl ClusterChain {
             // Actually access the media.
             fatfs.media.read(
                 data_start + fatfs.data_offset,
-                &mut rdata[(access_start - offset) as usize..(access_end - offset) as usize],
+                rdata
+                    .subslice_mut((access_start - offset) as usize..(access_end - offset) as usize),
             )?;
         }
 

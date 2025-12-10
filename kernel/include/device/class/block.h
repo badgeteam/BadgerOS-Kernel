@@ -6,6 +6,7 @@
 #pragma once
 
 #include "device/device.h"
+#include "process/process.h"
 #include "radixtree.h"
 
 #include <malloc.h>
@@ -97,9 +98,9 @@ typedef struct {
     // Erase blocks.
     errno_t (*erase_blocks)(device_block_t *device, uint64_t start, uint64_t count);
     // [optional] Write device bytes.
-    errno_t (*write_bytes)(device_block_t *device, uint64_t start, uint64_t count, void const *data);
+    errno_t (*write_bytes)(device_block_t *device, uint64_t start, uint64_t count, void const __user *data);
     // [optional] Read device bytes.
-    errno_t (*read_bytes)(device_block_t *device, uint64_t start, uint64_t count, void *data);
+    errno_t (*read_bytes)(device_block_t *device, uint64_t start, uint64_t count, void __user *data);
     // [optional] Erase bytes.
     errno_t (*erase_bytes)(device_block_t *device, uint64_t start, uint64_t count);
     // [optional] Sync disk's write caches for bytes.
@@ -136,10 +137,10 @@ errno_t device_block_read_blocks(device_block_t *device, uint64_t start, uint64_
 errno_t device_block_erase_blocks(device_block_t *device, uint64_t start, uint64_t count);
 // Write block device bytes.
 // The alignment for DMA is handled by this function.
-errno_t device_block_write_bytes(device_block_t *device, uint64_t offset, uint64_t size, void const *data);
+errno_t device_block_write_bytes(device_block_t *device, uint64_t offset, uint64_t size, void const __user *data);
 // Read block device bytes.
 // The alignment for DMA is handled by this function.
-errno_t device_block_read_bytes(device_block_t *device, uint64_t offset, uint64_t size, void *data);
+errno_t device_block_read_bytes(device_block_t *device, uint64_t offset, uint64_t size, void __user *data);
 // Erase block device bytes.
 errno_t device_block_erase_bytes(device_block_t *device, uint64_t offset, uint64_t size);
 

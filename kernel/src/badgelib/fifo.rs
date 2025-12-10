@@ -9,7 +9,10 @@ use core::{
 
 use alloc::{boxed::Box, vec::Vec};
 
-use crate::bindings::error::EResult;
+use crate::{
+    bindings::error::EResult,
+    process::usercopy::{AccessResult, UserSlice, UserSliceMut},
+};
 
 /// FIFO data buffer.
 pub struct Fifo {
@@ -44,7 +47,16 @@ impl Fifo {
     }
 
     /// Read data from the buffer.
-    pub fn read(&self, rdata: &mut [u8]) -> usize {
+    #[inline(always)]
+    pub fn readk(&self, rdata: &mut [u8]) -> usize {
+        unsafe {
+            self.read(UserSliceMut::new_kernel_mut(rdata))
+                .unwrap_unchecked()
+        }
+    }
+
+    /// Read data from the buffer.
+    pub fn read(&self, mut rdata: UserSliceMut<'_, u8>) -> AccessResult<usize> {
         let ptr = unsafe { self.data.as_ref_unchecked() };
         let cap = ptr.len();
 
@@ -67,24 +79,20 @@ impl Fifo {
             }
         }
         if recv_cap == 0 {
-            return 0;
+            return Ok(0);
         }
 
         // Copy data out of the FIFO's buffer.
         let start_off = rx;
         let end_off = rx.wrapping_add(recv_cap) % cap;
-        if end_off > start_off {
-            for i in start_off..end_off {
-                rdata[i - start_off] = ptr[i];
+        let res: AccessResult<()> = try {
+            if end_off > start_off {
+                rdata.write_multiple(0, &ptr[start_off..end_off])?;
+            } else {
+                rdata.write_multiple(0, &ptr[start_off..cap])?;
+                rdata.write_multiple(cap - start_off, &ptr[..end_off])?;
             }
-        } else {
-            for i in start_off..cap {
-                rdata[i - start_off] = ptr[i];
-            }
-            for i in 0..end_off {
-                rdata[i - (cap - start_off)] = ptr[i];
-            }
-        }
+        };
 
         // Mark the read as completed.
         while let Err(_) = self.read_commit.compare_exchange(
@@ -93,12 +101,20 @@ impl Fifo {
             Ordering::Relaxed,
             Ordering::Relaxed,
         ) {}
+        // Make sure to propagate the EFAULT that could be raised.
+        res?;
 
-        recv_cap
+        Ok(recv_cap)
+    }
+
+    /// Read data from the buffer.
+    #[inline(always)]
+    pub fn writek(&self, rdata: &[u8]) -> usize {
+        unsafe { self.write(UserSlice::new_kernel(rdata)).unwrap_unchecked() }
     }
 
     /// Write data to the buffer.
-    pub fn write(&self, wdata: &[u8]) -> usize {
+    pub fn write(&self, wdata: UserSlice<'_, u8>) -> AccessResult<usize> {
         let ptr = unsafe { self.data.as_mut_unchecked() };
         let cap = ptr.len();
 
@@ -122,24 +138,20 @@ impl Fifo {
             }
         }
         if send_cap == 0 {
-            return 0;
+            return Ok(0);
         }
 
         // Copy the data into the FIFO's buffer.
         let start_off = tx;
         let end_off = start_off.wrapping_add(send_cap) % cap;
-        if end_off > start_off {
-            for i in start_off..end_off {
-                ptr[i] = wdata[i - start_off];
+        let res: AccessResult<()> = try {
+            if end_off > start_off {
+                wdata.read_multiple(0, &mut ptr[start_off..end_off])?;
+            } else {
+                wdata.read_multiple(0, &mut ptr[start_off..cap])?;
+                wdata.read_multiple(cap - start_off, &mut ptr[..end_off])?;
             }
-        } else {
-            for i in start_off..cap {
-                ptr[i] = wdata[i - start_off];
-            }
-            for i in 0..end_off {
-                ptr[i] = wdata[i - (cap - start_off)];
-            }
-        }
+        };
 
         // Mark the write as completed.
         while let Err(_) = self.write_commit.compare_exchange(
@@ -148,8 +160,10 @@ impl Fifo {
             Ordering::Release,
             Ordering::Relaxed,
         ) {}
+        // Make sure to propagate the EFAULT that could be raised.
+        res?;
 
-        send_cap
+        Ok(send_cap)
     }
 
     /// Get the amount of available read data.

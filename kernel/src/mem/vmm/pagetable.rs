@@ -441,7 +441,7 @@ impl PageTable {
                 0..PTE_PER_PAGE
             };
             for i in range {
-                let pte = PTE::unpack(read_pte(pgtable_ppn, i), level);
+                let pte = PTE::unpack(xchg_pte(pgtable_ppn, i, INVALID_PTE), level);
                 assert!(level > 0 || !pte.valid || pte.leaf);
                 if pte.valid && !pte.leaf {
                     Self::drop_impl(pte.ppn, level - 1);
@@ -452,12 +452,19 @@ impl PageTable {
             phys_page_free(pgtable_ppn);
         }
     }
+
+    /// Clear everything in the lower half of this page table.
+    pub unsafe fn clear_lower_half(&self) {
+        unsafe {
+            Self::drop_impl(self.root_ppn, PAGING_LEVELS as u8 - 1);
+        }
+    }
 }
 
 impl Drop for PageTable {
     fn drop(&mut self) {
         unsafe {
-            Self::drop_impl(self.root_ppn, PAGING_LEVELS as u8 - 1);
+            self.clear_lower_half();
         }
     }
 }

@@ -65,7 +65,7 @@ impl GptDriver {
     pub fn gpt_header_crc32(drive: BlockDevice, header_lba: u64, header_len: u32) -> EResult<u32> {
         #[allow(invalid_value)]
         let mut buf: [u8; 512] = unsafe { MaybeUninit::uninit().assume_init() };
-        drive.read_bytes(
+        drive.readk_bytes(
             header_lba << drive.block_size_exp(),
             &mut buf[..header_len as usize],
         )?;
@@ -82,7 +82,7 @@ impl GptDriver {
     /// Helper function that tries to get a GPT header.
     pub fn get_gpt_header(drive: BlockDevice, header_lba: u64) -> EResult<Option<GptHeader>> {
         let mut raw_header = [GptHeader::default()];
-        drive.read_bytes(
+        drive.readk_bytes(
             header_lba << drive.block_size_exp(),
             cast_slice_mut(&mut raw_header),
         )?;
@@ -147,22 +147,22 @@ impl GptDriver {
         part_ent_len: u32,
     ) -> EResult<Option<Partition>> {
         let mut type_ = [0u8; 16];
-        drive.read_bytes(part_ent_offset, &mut type_)?;
+        drive.readk_bytes(part_ent_offset, &mut type_)?;
         let type_ = Uuid::from_bytes_le(type_);
         if type_.as_u128() == 0 {
             return Ok(None);
         }
 
         let mut uuid = [0u8; 16];
-        drive.read_bytes(part_ent_offset + 16, &mut uuid)?;
+        drive.readk_bytes(part_ent_offset + 16, &mut uuid)?;
         let uuid = Uuid::from_bytes_le(uuid);
 
         let mut offset = [0u8; 8];
-        drive.read_bytes(part_ent_offset + 32, &mut offset)?;
+        drive.readk_bytes(part_ent_offset + 32, &mut offset)?;
         let offset = u64::from_le_bytes(offset) << drive.block_size_exp();
 
         let mut size = [0u8; 8];
-        drive.read_bytes(part_ent_offset + 40, &mut size)?;
+        drive.readk_bytes(part_ent_offset + 40, &mut size)?;
         let size = u64::from_le_bytes(size) << drive.block_size_exp();
 
         // Attributes field ignored.
@@ -170,7 +170,7 @@ impl GptDriver {
         let max_name_len = part_ent_len as usize - 56;
         let mut name = Vec::<u8>::try_with_capacity(max_name_len)?;
         name.resize(max_name_len, 0);
-        drive.read_bytes(part_ent_offset + 56, &mut name)?;
+        drive.readk_bytes(part_ent_offset + 56, &mut name)?;
         let name = util::parse_utf16_le(&name)?;
 
         Ok(Some(Partition {

@@ -7,6 +7,7 @@ use crate::{
         raw::driver_char_t,
     },
     char_driver_struct,
+    process::usercopy::{UserSlice, UserSliceMut},
 };
 
 struct DevNull {}
@@ -20,11 +21,11 @@ impl DevNull {
 impl BaseDriver for DevNull {}
 
 impl CharDriver for DevNull {
-    fn read(&self, _buf: &mut [u8]) -> EResult<usize> {
+    fn read(&self, _buf: UserSliceMut<'_, u8>) -> EResult<usize> {
         Ok(0)
     }
 
-    fn write(&self, _buf: &[u8]) -> EResult<usize> {
+    fn write(&self, _buf: UserSlice<'_, u8>) -> EResult<usize> {
         Ok(_buf.len())
     }
 }

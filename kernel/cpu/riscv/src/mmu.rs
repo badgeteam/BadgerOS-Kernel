@@ -180,3 +180,15 @@ pub fn vmem_fence(vaddr: Option<usize>, asid: Option<usize>) {
         }
     }
 }
+
+#[inline(always)]
+/// Enable kernel access to user memory.
+pub unsafe fn enable_sum() {
+    unsafe { asm!("csrs sstatus, {mask}", mask = in(reg) 1 << 18) };
+}
+
+#[inline(always)]
+/// Disable kernel access to user memory.
+pub unsafe fn disable_sum() {
+    unsafe { asm!("csrc sstatus, {mask}", mask = in(reg) 1 << 18) };
+}

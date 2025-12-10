@@ -9,6 +9,7 @@ use crate::{
         error::{EResult, Errno},
     },
     mem::vmm::zeroes,
+    process::usercopy::{UserSlice, UserSliceMut},
 };
 
 /// Specifies some type of media a filesystem can be mounted on.
@@ -56,7 +57,7 @@ impl Media {
                 let mut offset = offset;
                 while offset < end {
                     let max = (end - offset).min(zeroes.len() as u64) as usize;
-                    block_device.write_bytes(offset, &zeroes[..max])?;
+                    block_device.writek_bytes(offset, &zeroes[..max])?;
                     offset += max as u64;
                 }
             }
@@ -69,7 +70,13 @@ impl Media {
     }
 
     /// Write data to the media.
-    pub fn write(&self, offset: u64, data: &[u8]) -> EResult<()> {
+    #[inline(always)]
+    pub fn writek(&self, offset: u64, data: &[u8]) -> EResult<()> {
+        self.write(offset, UserSlice::new_kernel(data))
+    }
+
+    /// Write data to the media.
+    pub fn write(&self, offset: u64, data: UserSlice<'_, u8>) -> EResult<()> {
         let offset = offset.checked_add(self.offset).ok_or(Errno::EIO)?;
         let end = offset.checked_add(data.len() as u64).ok_or(Errno::EIO)?;
         if end > self.size {
@@ -81,14 +88,23 @@ impl Media {
             }
             MediaType::Ram(ram) => {
                 let buffer = unsafe { ram.as_mut_unchecked() };
-                buffer[offset as usize..offset as usize + data.len()].copy_from_slice(data);
+                data.read_multiple(
+                    0,
+                    &mut buffer[offset as usize..offset as usize + data.len()],
+                )?;
             }
         }
         Ok(())
     }
 
     /// Read data from the media.
-    pub fn read(&self, offset: u64, data: &mut [u8]) -> EResult<()> {
+    #[inline(always)]
+    pub fn readk(&self, offset: u64, data: &mut [u8]) -> EResult<()> {
+        self.read(offset, UserSliceMut::new_kernel_mut(data))
+    }
+
+    /// Read data from the media.
+    pub fn read(&self, offset: u64, mut data: UserSliceMut<'_, u8>) -> EResult<()> {
         let offset = offset.checked_add(self.offset).ok_or(Errno::EIO)?;
         let end = offset.checked_add(data.len() as u64).ok_or(Errno::EIO)?;
         if end > self.size {
@@ -100,7 +116,7 @@ impl Media {
             }
             MediaType::Ram(ram) => {
                 let buffer = unsafe { ram.as_mut_unchecked() };
-                data.copy_from_slice(&buffer[offset as usize..offset as usize + data.len()]);
+                data.write_multiple(0, &buffer[offset as usize..offset as usize + data.len()])?;
             }
         }
         Ok(())
@@ -108,7 +124,7 @@ impl Media {
 
     /// Write little-endian bytes.
     pub fn write_le<T: ToBytes>(&self, offset: u64, data: T) -> EResult<()> {
-        self.write(offset, data.to_le_bytes().as_ref())
+        self.writek(offset, data.to_le_bytes().as_ref())
     }
 
     /// Read little-endian bytes.
@@ -117,13 +133,13 @@ impl Media {
         T: FromBytes<Bytes = [u8; size_of::<T>()]>,
     {
         let mut tmp = [0u8; _];
-        self.read(offset, &mut tmp)?;
+        self.readk(offset, &mut tmp)?;
         Ok(T::from_le_bytes(&tmp))
     }
 
     /// Write big-endian bytes.
     pub fn write_be<T: ToBytes>(&self, offset: u64, data: T) -> EResult<()> {
-        self.write(offset, data.to_be_bytes().as_ref())
+        self.writek(offset, data.to_be_bytes().as_ref())
     }
 
     /// Read big-endian bytes.
@@ -132,7 +148,7 @@ impl Media {
         T: FromBytes<Bytes = [u8; size_of::<T>()]>,
     {
         let mut tmp = [0u8; _];
-        self.read(offset, &mut tmp)?;
+        self.readk(offset, &mut tmp)?;
         Ok(T::from_be_bytes(&tmp))
     }
 

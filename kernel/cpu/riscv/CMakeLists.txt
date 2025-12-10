@@ -20,15 +20,7 @@ set(cpu_src
     ${CMAKE_CURRENT_LIST_DIR}/src/panic.c
     ${CMAKE_CURRENT_LIST_DIR}/src/sbi_time.c
     ${CMAKE_CURRENT_LIST_DIR}/src/scheduler.c
-    # ${CMAKE_CURRENT_LIST_DIR}/src/usercopy.c
 )
 set(cpu_include ${CMAKE_CURRENT_LIST_DIR}/include)
 set(cpu_link)
 set(cpu_flags)
-set(kbelf_target riscv)
-
-# if(CONFIG_NOMMU)
-#     set(cpu_src ${cpu_src} ${CMAKE_CURRENT_LIST_DIR}/src/memprotect/riscv_pmp.c)
-# else()
-#     set(cpu_src ${cpu_src} ${CMAKE_CURRENT_LIST_DIR}/src/memprotect/mmu.c)
-# endif()

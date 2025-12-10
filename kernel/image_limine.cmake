@@ -35,6 +35,7 @@ add_custom_command(
 
 # Custom target that collects the files for the root filesystem.
 set(root_dir ${CMAKE_CURRENT_LIST_DIR}/../files/root)
+file(GLOB_RECURSE root_files "${root_dir}/*")
 set(root_e2fs ${CMAKE_BINARY_DIR}/root.e2fs)
 add_custom_command(
     OUTPUT ${root_e2fs}
@@ -42,6 +43,8 @@ add_custom_command(
     COMMAND rm -f ${root_e2fs}
     COMMAND dd if=/dev/zero bs=1M count=58 of=${root_e2fs}
     COMMAND fakeroot mkfs.ext2 -i 16384 -d ${root_dir} ${root_e2fs}
+    
+    DEPENDS ${root_files}
 )
 
 # Custom target for building the image.

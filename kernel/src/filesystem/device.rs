@@ -47,11 +47,11 @@ impl File for CharDevFile {
         Err(Errno::ESPIPE)
     }
 
-    fn write(&self, wdata: &[u8]) -> EResult<usize> {
+    fn write(&self, wdata: UserSlice<'_, u8>) -> EResult<usize> {
         self.char_dev.write(wdata)
     }
 
-    fn read(&self, rdata: &mut [u8]) -> EResult<usize> {
+    fn read(&self, rdata: UserSliceMut<'_, u8>) -> EResult<usize> {
         self.char_dev.read(rdata)
     }
 
@@ -142,7 +142,7 @@ impl File for BlockDevFile {
         Ok(new_off)
     }
 
-    fn write(&self, wdata: &[u8]) -> EResult<usize> {
+    fn write(&self, wdata: UserSlice<'_, u8>) -> EResult<usize> {
         if !self.allow_write {
             return Err(Errno::EBADF);
         }
@@ -167,7 +167,7 @@ impl File for BlockDevFile {
         Ok(readlen)
     }
 
-    fn read(&self, rdata: &mut [u8]) -> EResult<usize> {
+    fn read(&self, rdata: UserSliceMut<'_, u8>) -> EResult<usize> {
         if !self.allow_read {
             return Err(Errno::EBADF);
         }

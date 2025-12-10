@@ -25,6 +25,7 @@ use crate::{
         mutex::Mutex,
     },
     filesystem::{MakeFileSpec, NAME_MAX},
+    process::usercopy::{UserSlice, UserSliceMut},
     util::MaybeMut,
 };
 use spec::*;
@@ -89,15 +90,15 @@ impl E2VNode {
             (fileblk >> (e2fs.block_size_exp * level as u32)) % (1u32 << e2fs.block_size_exp);
         let block_ptr = ((u32::from(block_ptr) as u64) << e2fs.block_size_exp) + 4 * index as u64;
         let mut tmp = [0u8; 4];
-        e2fs.media.read(block_ptr, &mut tmp)?;
+        e2fs.media.readk(block_ptr, &mut tmp)?;
 
         let mut block = u32::from_le_bytes(tmp);
         if block == 0 {
             if let MaybeMut::Mut(inode) = &mut inode {
                 block = e2fs.alloc_block(group_hint)?.into();
-                e2fs.media.write(block_ptr, &block.to_le_bytes())?;
+                e2fs.media.writek(block_ptr, &block.to_le_bytes())?;
                 inode.realsize += 1u32 << (e2fs.block_size_exp - 9);
-                e2fs.media.write(
+                e2fs.media.writek(
                     self.inode_offset + offset_of!(Inode, realsize) as u64,
                     &inode.realsize.to_le_bytes(),
                 )?;
@@ -167,11 +168,11 @@ impl E2VNode {
             let x = e2fs.alloc_block(group_hint)?;
             (*inode).data_blocks[index] = x.into();
             inode.realsize += 1u32 << (e2fs.block_size_exp - 9);
-            e2fs.media.write(
+            e2fs.media.writek(
                 self.inode_offset + offset_of!(Inode, data_blocks) as u64 + index as u64 * 4,
                 &inode.data_blocks[index].to_le_bytes(),
             )?;
-            e2fs.media.write(
+            e2fs.media.writek(
                 self.inode_offset + offset_of!(Inode, realsize) as u64,
                 &inode.realsize.to_le_bytes(),
             )?;
@@ -199,14 +200,14 @@ impl E2VNode {
             (fileblk >> (e2fs.block_size_exp * level as u32)) % (1u32 << e2fs.block_size_exp);
         let block_ptr = (u32::from(block_ptr) as u64) << e2fs.block_size_exp;
         let mut tmp = [0u8; 4];
-        e2fs.media.read(block_ptr + 4 * index as u64, &mut tmp)?;
+        e2fs.media.readk(block_ptr + 4 * index as u64, &mut tmp)?;
 
         let block = u32::from_le_bytes(tmp);
         if let Some(block) = NonZeroU32::new(block) {
             if self.remove_block_impl(e2fs, level - 1, fileblk, block, inode)? {
                 // The entire block was freed, so free the pointer too.
                 e2fs.free_block(block)?;
-                e2fs.media.write(block_ptr + 4 * index as u64, &[0u8; 4])?;
+                e2fs.media.writek(block_ptr + 4 * index as u64, &[0u8; 4])?;
                 inode.realsize -= 1u32 << (e2fs.block_size_exp - 9);
             }
         }
@@ -214,7 +215,7 @@ impl E2VNode {
         // Check whether this indirection block is now empty.
         for i in 0..(1u32 << (e2fs.block_size_exp - 2)) {
             let mut tmp = [0u8; 4];
-            e2fs.media.read(block_ptr + i as u64 * 4, &mut tmp)?;
+            e2fs.media.readk(block_ptr + i as u64 * 4, &mut tmp)?;
             if u32::from_le_bytes(tmp) != 0 {
                 // There is still at least one block left.
                 return Ok(false);
@@ -274,11 +275,11 @@ impl E2VNode {
             inode.realsize -= 1u32 << (e2fs.block_size_exp - 9);
         }
 
-        e2fs.media.write(
+        e2fs.media.writek(
             self.inode_offset + offset_of!(Inode, data_blocks) as u64 + index as u64 * 4,
             &[0u8; 4],
         )?;
-        e2fs.media.write(
+        e2fs.media.writek(
             self.inode_offset + offset_of!(Inode, realsize) as u64,
             &inode.realsize.to_le_bytes(),
         )?;
@@ -367,7 +368,7 @@ impl E2VNode {
         while offset < self.size {
             // Read dirent header.
             let mut dent = [0u8; size_of::<LinkedDent>()];
-            self.read_impl(&e2fs, offset, &mut dent)?;
+            self.readk_impl(&e2fs, offset, &mut dent)?;
             let dent = LinkedDent::from(dent);
             let dent_end = offset.saturating_add(dent.record_len as u64);
             if dent.record_len % 4 != 0 || dent.record_len < size_of::<LinkedDent>() as u16 {
@@ -395,7 +396,7 @@ impl E2VNode {
                 logkf!(LogLevel::Error, "File name too long");
                 vfs.check_eio_failed();
             }
-            self.read_impl(&e2fs, offset + size_of::<LinkedDent>() as u64, &mut name)?;
+            self.readk_impl(&e2fs, offset + size_of::<LinkedDent>() as u64, &mut name)?;
 
             // Run dirent callback.
             if !cb(&dent, offset, &name[..name_len as usize])? {
@@ -408,7 +409,12 @@ impl E2VNode {
         Ok(())
     }
 
-    fn write_impl(&self, e2fs: &E2Fs, offset: u64, wdata: &[u8]) -> EResult<()> {
+    #[inline(always)]
+    fn writek_impl(&self, e2fs: &E2Fs, offset: u64, wdata: &[u8]) -> EResult<()> {
+        self.write_impl(e2fs, offset, UserSlice::new_kernel(wdata))
+    }
+
+    fn write_impl(&self, e2fs: &E2Fs, offset: u64, wdata: UserSlice<'_, u8>) -> EResult<()> {
         self.iter_blocks(
             e2fs,
             offset,
@@ -417,13 +423,18 @@ impl E2VNode {
             &mut |fileoff, diskoff, len| try {
                 e2fs.media.write(
                     diskoff.unwrap().into(),
-                    &wdata[(fileoff - offset) as usize..(fileoff + len - offset) as usize],
+                    wdata.subslice((fileoff - offset) as usize..(fileoff + len - offset) as usize),
                 )?;
             },
         )
     }
 
-    fn read_impl(&self, e2fs: &E2Fs, offset: u64, rdata: &mut [u8]) -> EResult<()> {
+    #[inline(always)]
+    fn readk_impl(&self, e2fs: &E2Fs, offset: u64, rdata: &mut [u8]) -> EResult<()> {
+        self.read_impl(e2fs, offset, UserSliceMut::new_kernel_mut(rdata))
+    }
+
+    fn read_impl(&self, e2fs: &E2Fs, offset: u64, mut rdata: UserSliceMut<'_, u8>) -> EResult<()> {
         self.iter_blocks(
             e2fs,
             offset,
@@ -433,10 +444,16 @@ impl E2VNode {
                 if let Some(diskoff) = diskoff {
                     e2fs.media.read(
                         diskoff.into(),
-                        &mut rdata[(fileoff - offset) as usize..(fileoff + len - offset) as usize],
+                        rdata.subslice_mut(
+                            (fileoff - offset) as usize..(fileoff + len - offset) as usize,
+                        ),
                     )
                 } else {
-                    rdata[(fileoff - offset) as usize..(fileoff - offset + len) as usize].fill(0);
+                    rdata
+                        .subslice_mut(
+                            (fileoff - offset) as usize..(fileoff - offset + len) as usize,
+                        )
+                        .fill(0)?;
                     Ok(())
                 }
             },
@@ -451,7 +468,7 @@ impl E2VNode {
         self.iter_dirents(&arc_self.vfs, &mut |dent, offset, _name| try {
             let min_record_len = dent.name_len.div_ceil(4) as u16 * 4 + 8;
             if dent.record_len - min_record_len >= length {
-                self.write_impl(
+                self.writek_impl(
                     &e2fs,
                     offset + offset_of!(LinkedDent, record_len) as u64,
                     &min_record_len.to_le_bytes(),
@@ -499,8 +516,8 @@ impl E2VNode {
                 0 // NAME_MAX is 255 anyway.
             },
         };
-        self.write_impl(&e2fs, offset, &Into::<[u8; 8]>::into(dent))?;
-        self.write_impl(&e2fs, offset + 8, name)?;
+        self.writek_impl(&e2fs, offset, &Into::<[u8; 8]>::into(dent))?;
+        self.writek_impl(&e2fs, offset + 8, name)?;
 
         Ok(())
     }
@@ -540,14 +557,14 @@ impl E2VNode {
         {
             // Can merge with previous dirent.
             let record_len = prev_dent.record_len + found.record_len;
-            self.write_impl(
+            self.writek_impl(
                 &e2fs,
                 prev_offset + offset_of!(LinkedDent, record_len) as u64,
                 &record_len.to_le_bytes(),
             )?;
         } else {
             // Mark this dirent as unused.
-            self.write_impl(
+            self.writek_impl(
                 &e2fs,
                 offset + offset_of!(LinkedDent, ino) as u64,
                 &[0u8; 4],
@@ -659,12 +676,12 @@ impl E2VNode {
 }
 
 impl VNodeOps for E2VNode {
-    fn write(&self, arc_self: &Arc<VNode>, offset: u64, wdata: &[u8]) -> EResult<()> {
+    fn write(&self, arc_self: &Arc<VNode>, offset: u64, wdata: UserSlice<'_, u8>) -> EResult<()> {
         let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
         self.write_impl(&e2fs, offset, wdata)
     }
 
-    fn read(&self, arc_self: &Arc<VNode>, offset: u64, rdata: &mut [u8]) -> EResult<()> {
+    fn read(&self, arc_self: &Arc<VNode>, offset: u64, rdata: UserSliceMut<'_, u8>) -> EResult<()> {
         let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
         self.read_impl(&e2fs, offset, rdata)
     }
@@ -699,13 +716,13 @@ impl VNodeOps for E2VNode {
         // Update size in inode.
         let mut inode = self.inode.lock();
         inode.size = new_size as u32;
-        e2fs.media.write(
+        e2fs.media.writek(
             self.inode_offset + offset_of!(Inode, size) as u64,
             &inode.size.to_le_bytes(),
         )?;
         if e2fs.feature_ro_compat & feat::compat_ro::LARGE_FILE != 0 {
             inode.dir_acl = (new_size >> 32) as u32;
-            e2fs.media.write(
+            e2fs.media.writek(
                 self.inode_offset + offset_of!(Inode, dir_acl) as u64,
                 &inode.dir_acl.to_le_bytes(),
             )?;
@@ -891,8 +908,8 @@ impl VNodeOps for E2VNode {
                         name_len: 1,
                         file_type: FileType::Directory as u8,
                     };
-                    ops.write_impl(&e2fs, 0, &Into::<[u8; 8]>::into(dent))?;
-                    ops.write_impl(&e2fs, 8, b".\0\0\0")?;
+                    ops.writek_impl(&e2fs, 0, &Into::<[u8; 8]>::into(dent))?;
+                    ops.writek_impl(&e2fs, 8, b".\0\0\0")?;
 
                     let dent = LinkedDent {
                         ino: self.ino.into(),
@@ -900,8 +917,8 @@ impl VNodeOps for E2VNode {
                         name_len: 2,
                         file_type: FileType::Directory as u8,
                     };
-                    ops.write_impl(&e2fs, 12, &Into::<[u8; 8]>::into(dent))?;
-                    ops.write_impl(&e2fs, 20, b"..\0\0")?;
+                    ops.writek_impl(&e2fs, 12, &Into::<[u8; 8]>::into(dent))?;
+                    ops.writek_impl(&e2fs, 20, b"..\0\0")?;
 
                     // Update link counts.
                     {
@@ -941,7 +958,7 @@ impl VNodeOps for E2VNode {
                     } else {
                         // Long symlinks stored in blocks.
                         ops.inode.lock().realsize = 1u32 << (e2fs.block_size_exp - 9);
-                        ops.write_impl(&e2fs, 0, value)?;
+                        ops.writek_impl(&e2fs, 0, value)?;
                     }
                 }
                 _ => (),
@@ -956,7 +973,7 @@ impl VNodeOps for E2VNode {
         }
 
         // Write the base inode struct.
-        e2fs.media.write(
+        e2fs.media.writek(
             inode_offset,
             &Into::<[u8; _]>::into(*ops.inode.lock_shared()),
         )?;
@@ -1034,7 +1051,7 @@ impl VNodeOps for E2VNode {
             }
             link.copy_from_slice(&block_bytes[..self.size as usize]);
         } else {
-            self.read(arc_self, 0, &mut link)?;
+            self.read(arc_self, 0, UserSliceMut::new_kernel_mut(&mut link))?;
         }
         Ok(link.into())
     }
@@ -1182,18 +1199,18 @@ impl E2Fs {
 
                     // Fetch bytes from the bitmap.
                     let mut tmp = [0u8; size_of::<usize>()];
-                    self.media.read(offset, &mut tmp)?;
+                    self.media.readk(offset, &mut tmp)?;
                     let mut tmp = usize::from_le_bytes(tmp);
 
                     if tmp != usize::MAX {
                         // Mark block as used.
                         let bitpos = tmp.trailing_ones();
                         tmp |= 1usize << bitpos;
-                        self.media.write(offset, &tmp.to_le_bytes())?;
+                        self.media.writek(offset, &tmp.to_le_bytes())?;
 
                         // Update BGDT on disk.
                         guard.free_block_count -= 1;
-                        self.media.write(
+                        self.media.writek(
                             group.disk_offset + offset_of!(BlockGroupDesc, free_block_count) as u64,
                             &guard.free_block_count.to_le_bytes(),
                         )?;
@@ -1274,18 +1291,18 @@ impl E2Fs {
 
                     // Fetch bytes from the bitmap.
                     let mut tmp = [0u8; size_of::<usize>()];
-                    self.media.read(offset, &mut tmp)?;
+                    self.media.readk(offset, &mut tmp)?;
                     let mut tmp = usize::from_le_bytes(tmp);
 
                     if tmp != usize::MAX {
                         // Mark inode as used.
                         let bitpos = tmp.trailing_ones();
                         tmp |= 1usize << bitpos;
-                        self.media.write(offset, &tmp.to_le_bytes())?;
+                        self.media.writek(offset, &tmp.to_le_bytes())?;
 
                         // Update BGDT on disk.
                         guard.free_inode_count -= 1;
-                        self.media.write(
+                        self.media.writek(
                             group.disk_offset + offset_of!(BlockGroupDesc, free_inode_count) as u64,
                             &guard.free_inode_count.to_le_bytes(),
                         )?;
@@ -1401,7 +1418,7 @@ impl E2Fs {
 
         let mut group_desc = [0u8; size_of::<BlockGroupDesc>()];
         let disk_offset = self.bgdt_offset + index as u64 * size_of::<BlockGroupDesc>() as u64;
-        self.media.read(disk_offset, &mut group_desc)?;
+        self.media.readk(disk_offset, &mut group_desc)?;
         let group_desc = BlockGroupDesc::from(group_desc);
 
         let ent = Arc::try_new(E2BlockGroup {
@@ -1425,7 +1442,7 @@ impl E2Fs {
             << self.block_size_exp)
             + index as u64 * self.inode_size as u64;
         let mut inode = [0u8; size_of::<Inode>()];
-        self.media.read(inode_offset, &mut inode)?;
+        self.media.readk(inode_offset, &mut inode)?;
         let inode = Inode::from(inode);
 
         // Inode size field depends on Ext2 revision and whether it's a directory.
@@ -1566,11 +1583,11 @@ impl VfsOps for E2Fs {
         let free_inodes = self.free_inodes.load(Ordering::Relaxed);
 
         self.iter_superblocks(true, &mut |superblock, bgdt| try {
-            self.media.write(
+            self.media.writek(
                 superblock + offset_of!(Superblock, free_block_count) as u64,
                 &free_blocks.to_le_bytes(),
             )?;
-            self.media.write(
+            self.media.writek(
                 superblock + offset_of!(Superblock, free_inode_count) as u64,
                 &free_inodes.to_le_bytes(),
             )?;
@@ -1597,7 +1614,7 @@ impl VfsDriver for E2FsDriver {
     fn detect(&self, media: &Media) -> EResult<bool> {
         // Load the superblock.
         let mut superblock = [0u8; size_of::<Superblock>()];
-        media.read(1024, &mut superblock)?;
+        media.readk(1024, &mut superblock)?;
         let superblock = Superblock::from(superblock);
 
         // Check the magic value.
@@ -1609,7 +1626,7 @@ impl VfsDriver for E2FsDriver {
 
         // Load the superblock.
         let mut superblock = [0u8; size_of::<Superblock>()];
-        media.read(1024, &mut superblock)?;
+        media.readk(1024, &mut superblock)?;
         let superblock = Superblock::from(superblock);
         let block_size_exp = superblock.block_size_exp + 10;
 

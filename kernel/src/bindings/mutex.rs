@@ -99,6 +99,18 @@ impl<T: Clone> Mutex<T, false> {
     }
 }
 
+impl<T: Clone> Clone for Mutex<T, true> {
+    fn clone(&self) -> Self {
+        Self::new((*self.lock_shared()).clone())
+    }
+}
+
+impl<T: Clone> Clone for Mutex<T, false> {
+    fn clone(&self) -> Self {
+        Self::new(self.lock().clone())
+    }
+}
+
 /// Represents a locked mutex.
 pub struct MutexGuard<'a, T: ?Sized, const SHARED: bool> {
     mutex: *mut mutex_t,

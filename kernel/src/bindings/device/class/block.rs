@@ -2,10 +2,13 @@ use core::ffi::c_void;
 
 use alloc::vec::Vec;
 
-use crate::bindings::{
-    device::{AbstractDevice, BaseDriver, Device, DeviceFilters},
-    error::{EResult, Errno},
-    raw::{self, dev_class_t_DEV_CLASS_BLOCK, device_block_t, driver_block_t},
+use crate::{
+    bindings::{
+        device::{AbstractDevice, BaseDriver, Device, DeviceFilters},
+        error::{EResult, Errno},
+        raw::{self, dev_class_t_DEV_CLASS_BLOCK, device_block_t, driver_block_t},
+    },
+    process::usercopy::{UserSlice, UserSliceMut},
 };
 
 unsafe impl Sync for driver_block_t {}
@@ -90,7 +93,20 @@ impl BlockDevice {
 
     /// Write block device bytes.
     /// The alignment for DMA is handled by this function.
-    pub fn write_bytes(&self, offset: u64, data: &[u8]) -> EResult<()> {
+    pub fn writek_bytes(&self, offset: u64, data: &[u8]) -> EResult<()> {
+        Errno::check(unsafe {
+            raw::device_block_write_bytes(
+                self.as_raw_ptr(),
+                offset,
+                data.len() as u64,
+                data.as_ptr() as *const c_void,
+            )
+        })
+    }
+
+    /// Write block device bytes.
+    /// The alignment for DMA is handled by this function.
+    pub fn write_bytes(&self, offset: u64, data: UserSlice<'_, u8>) -> EResult<()> {
         Errno::check(unsafe {
             raw::device_block_write_bytes(
                 self.as_raw_ptr(),
@@ -103,7 +119,20 @@ impl BlockDevice {
 
     /// Read block device bytes.
     /// The alignment for DMA is handled by this function.
-    pub fn read_bytes(&self, offset: u64, data: &mut [u8]) -> EResult<()> {
+    pub fn readk_bytes(&self, offset: u64, data: &mut [u8]) -> EResult<()> {
+        Errno::check(unsafe {
+            raw::device_block_read_bytes(
+                self.as_raw_ptr(),
+                offset,
+                data.len() as u64,
+                data.as_mut_ptr() as *mut c_void,
+            )
+        })
+    }
+
+    /// Read block device bytes.
+    /// The alignment for DMA is handled by this function.
+    pub fn read_bytes(&self, offset: u64, data: UserSliceMut<'_, u8>) -> EResult<()> {
         Errno::check(unsafe {
             raw::device_block_read_bytes(
                 self.as_raw_ptr(),
@@ -157,11 +186,11 @@ pub trait BlockDriver: BaseDriver {
     /// Sync disk's write caches for blocks.
     fn sync_blocks(&self, start: u64, count: u64) -> EResult<()>;
     /// [optional] Write device bytes.
-    fn write_bytes(&self, _offset: u64, _data: &[u8]) -> EResult<()> {
+    fn write_bytes(&self, _offset: u64, _data: UserSlice<'_, u8>) -> EResult<()> {
         Err(Errno::ENOTSUP)
     }
     /// [optional] Read device bytes.
-    fn read_bytes(&self, _offset: u64, _data: &mut [u8]) -> EResult<()> {
+    fn read_bytes(&self, _offset: u64, _data: UserSliceMut<'_, u8>) -> EResult<()> {
         Err(Errno::ENOTSUP)
     }
     /// [optional] Erase bytes.
@@ -178,7 +207,10 @@ pub trait BlockDriver: BaseDriver {
 #[macro_export]
 macro_rules! block_driver_struct {
     ($type: ty, $match_: expr, $add: expr, $blk_node_name: ident) => {{
-        use crate::bindings::{device::class::block::*, error::*, raw::*};
+        use crate::{
+            bindings::{device::class::block::*, error::*, raw::*},
+            process::usercopy::{UserSlice, UserSliceMut},
+        };
         use ::core::{
             ffi::{CStr, c_void},
             ptr::{slice_from_raw_parts, slice_from_raw_parts_mut},
@@ -270,9 +302,12 @@ macro_rules! block_driver_struct {
                     data: *const c_void,
                 ) -> errno_t {
                     let ptr = unsafe { &mut *((*device).base.cookie as *mut $type) };
-                    Errno::extract(ptr.write_bytes(offset, unsafe {
-                        &*slice_from_raw_parts(data as *const u8, len as usize)
-                    }))
+                    Errno::extract(ptr.write_bytes(
+                        offset,
+                        UserSlice::new_kernel(unsafe {
+                            &*slice_from_raw_parts(data as *const u8, len as usize)
+                        }),
+                    ))
                 }
                 Some(write_bytes_wrapper)
             },
@@ -284,9 +319,12 @@ macro_rules! block_driver_struct {
                     data: *mut c_void,
                 ) -> errno_t {
                     let ptr = unsafe { &mut *((*device).base.cookie as *mut $type) };
-                    Errno::extract(ptr.read_bytes(offset, unsafe {
-                        &mut *slice_from_raw_parts_mut(data as *mut u8, len as usize)
-                    }))
+                    Errno::extract(ptr.read_bytes(
+                        offset,
+                        UserSliceMut::new_kernel_mut(unsafe {
+                            &mut *slice_from_raw_parts_mut(data as *mut u8, len as usize)
+                        }),
+                    ))
                 }
                 Some(read_bytes_wrapper)
             },

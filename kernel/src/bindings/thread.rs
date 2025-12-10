@@ -6,6 +6,8 @@ use core::{
 
 use alloc::{boxed::Box, ffi::CString};
 
+use crate::process::Process;
+
 use super::{
     error::EResult,
     raw::{self, SCHED_PRIO_NORMAL, dlist_node_t, dlist_t, tid_t, timestamp_us_t, waitlist_t},
@@ -24,7 +26,30 @@ impl Thread {
     pub fn from_id(id: tid_t) -> Self {
         Self { handle: id }
     }
-    pub fn try_new<T: FnOnce() -> i32 + Send + 'static>(
+    pub unsafe fn try_new_user(
+        process: *const Process,
+        user_entrypoint: usize,
+        user_arg: usize,
+        name: Option<&str>,
+    ) -> EResult<Self> {
+        let name = name.map(|f| CString::from_str(f).unwrap());
+        unsafe {
+            let tid = raw::thread_new_user(
+                name.map(|f| f.as_ptr()).unwrap_or(0 as *const c_char),
+                process as *mut () as *mut raw::process,
+                user_entrypoint,
+                user_arg,
+                SCHED_PRIO_NORMAL as c_int,
+            );
+            if tid <= 0 {
+                Err(core::mem::transmute(-tid))
+            } else {
+                raw::thread_resume(tid);
+                Ok(Self { handle: tid })
+            }
+        }
+    }
+    pub fn try_new_kernel<T: FnOnce() -> i32 + Send + 'static>(
         code: T,
         name: Option<&str>,
     ) -> EResult<Self> {
@@ -47,8 +72,8 @@ impl Thread {
             }
         }
     }
-    pub fn new<T: FnOnce() -> i32 + Send + 'static>(code: T, name: Option<&str>) -> Self {
-        Self::try_new(code, name).unwrap()
+    pub fn new_kernel<T: FnOnce() -> i32 + Send + 'static>(code: T, name: Option<&str>) -> Self {
+        Self::try_new_kernel(code, name).unwrap()
     }
     pub fn join(self) -> i32 {
         unsafe { raw::thread_join(self.handle) as i32 }

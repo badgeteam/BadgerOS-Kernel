@@ -2,6 +2,8 @@ use core::{error::Error, fmt::Display, str};
 
 use alloc::{alloc::AllocError, collections::TryReserveError};
 
+use crate::process::usercopy::AccessFault;
+
 use super::raw;
 
 /// Signal enum that matches those of BadgerOS.
@@ -39,35 +41,6 @@ pub enum Signal {
     SIGIO = raw::SIGIO,
     SIGPWR = raw::SIGPWR,
     SIGSYS = raw::SIGSYS,
-}
-
-/// Represents an error that should be raised as a signal to the process that invoked the syscall.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SignalError {
-    pub signal: Signal,
-    pub cause: usize,
-}
-
-impl Display for SignalError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "Signal {} cause {:x}", self.signal as u32, self.cause)
-    }
-}
-
-impl Error for SignalError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        None
-    }
-
-    fn description(&self) -> &str {
-        "description() is deprecated; use Display"
-    }
-
-    fn cause(&self) -> Option<&dyn Error> {
-        self.source()
-    }
-
-    fn provide<'a>(&'a self, _: &mut core::error::Request<'a>) {}
 }
 
 /// Errno enum that matches those of BadgerOS.
@@ -272,6 +245,20 @@ impl Errno {
         }
     }
     /// Convert an `EResult` into an integer.
+    pub fn extract_i32(res: EResult<i32>) -> i32 {
+        match res {
+            Ok(x) => x as i32,
+            Err(x) => -(x as u32 as i32),
+        }
+    }
+    /// Convert an `EResult` into an integer.
+    pub fn extract_i64(res: EResult<i64>) -> i64 {
+        match res {
+            Ok(x) => x as i64,
+            Err(x) => -(x as u64 as i64),
+        }
+    }
+    /// Convert an `EResult` into an integer.
     pub fn extract_u32(res: EResult<u32>) -> i32 {
         match res {
             Ok(x) => x as i32,
@@ -297,6 +284,13 @@ impl Errno {
         match res {
             Ok(()) => 0,
             Err(x) => -(x as u32 as i32),
+        }
+    }
+    /// Convert an `EResult` into an integer.
+    pub fn extract_isize(res: EResult<isize>) -> isize {
+        match res {
+            Ok(x) => x as isize,
+            Err(x) => -(x as u32 as isize),
         }
     }
     /// Convert an `EResult` into an integer.
@@ -339,6 +333,12 @@ impl From<AllocError> for Errno {
 impl From<TryReserveError> for Errno {
     fn from(_: TryReserveError) -> Self {
         Errno::ENOMEM
+    }
+}
+
+impl From<AccessFault> for Errno {
+    fn from(_: AccessFault) -> Self {
+        Errno::EFAULT
     }
 }
 

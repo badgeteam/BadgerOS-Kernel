@@ -7,6 +7,7 @@ use crate::{
         raw::driver_char_t,
     },
     char_driver_struct,
+    process::usercopy::{UserSlice, UserSliceMut},
 };
 
 struct DevZero {}
@@ -20,13 +21,13 @@ impl DevZero {
 impl BaseDriver for DevZero {}
 
 impl CharDriver for DevZero {
-    fn read(&self, _buf: &mut [u8]) -> EResult<usize> {
-        _buf.fill(0);
-        Ok(_buf.len())
+    fn read(&self, mut buf: UserSliceMut<'_, u8>) -> EResult<usize> {
+        buf.fill(0)?;
+        Ok(buf.len())
     }
 
-    fn write(&self, _buf: &[u8]) -> EResult<usize> {
-        Ok(_buf.len())
+    fn write(&self, buf: UserSlice<'_, u8>) -> EResult<usize> {
+        Ok(buf.len())
     }
 }
 

@@ -14,6 +14,7 @@ use crate::{
         error::{EResult, Errno},
         log::LogLevel,
     },
+    config::PAGE_SIZE,
     mem::vmm::VPN,
 };
 
@@ -21,18 +22,30 @@ use crate::{
 #[derive(Clone)]
 #[repr(C)]
 pub struct VmaAlloc {
+    /// Any pages before this will never be marked free.
+    range_start: VPN,
+    /// Any pages at or after this will never be marked free.
+    range_end: VPN,
+    /// Number of free virtual pages.
     free_page_count: VPN,
     /// TODO: Unbox when C no longer depends on the size of this struct.
     free_list: Box<LinkedList<Range<VPN>>>,
 }
 
 impl VmaAlloc {
+    /// Padding implicitly placed before and after any range allocated by [`Self::alloc`].
+    pub const PADDING: VPN = 65536 / PAGE_SIZE as usize;
+
     /// Create an empty allocator.
-    pub fn new() -> Self {
-        Self {
+    pub fn new(page_range: Range<VPN>) -> EResult<Self> {
+        let mut tmp = Self {
+            range_start: page_range.start,
+            range_end: page_range.end,
             free_page_count: 0,
-            free_list: Box::new(LinkedList::new()),
-        }
+            free_list: Box::try_new(LinkedList::new())?,
+        };
+        tmp.free(page_range);
+        Ok(tmp)
     }
 
     /// The amount of free pages of virtual memory left in total.
@@ -42,6 +55,7 @@ impl VmaAlloc {
 
     /// Mark a new region as free.
     pub fn free(&mut self, pages: Range<VPN>) {
+        let pages = pages.start.max(self.range_start)..pages.end.min(self.range_end);
         if pages.len() == 0 {
             return;
         }
@@ -83,13 +97,13 @@ impl VmaAlloc {
 
         let mut cursor = self.free_list.cursor_front_mut();
         while let Some(next) = cursor.current() {
-            if next.len() == amount {
-                let vpn = next.start;
+            if next.len() == amount + 2 * Self::PADDING {
+                let vpn = next.start + Self::PADDING;
                 cursor.remove_current();
                 return Ok(vpn);
-            } else if next.len() > amount {
-                let vpn = next.start;
-                next.start += amount;
+            } else if next.len() > amount + 2 * Self::PADDING {
+                let vpn = next.start + Self::PADDING;
+                next.start += amount + 2 * Self::PADDING;
                 return Ok(vpn);
             } else {
                 cursor.move_next();

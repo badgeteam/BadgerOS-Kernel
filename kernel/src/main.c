@@ -15,6 +15,7 @@
 #include "malloc.h"
 #include "mem/vmm.h"
 #include "panic.h"
+#include "process/process.h"
 #include "scheduler/scheduler.h"
 #include "set.h"
 #include "time.h"
@@ -166,7 +167,8 @@ static void kernel_init() {
 // When finished, this function returns and the thread should wait for a shutdown event.
 static void userland_init() {
     logk(LOG_INFO, "Kernel initialized");
-    // logk(LOG_INFO, "Starting init process");
+    logk(LOG_INFO, "Starting init process");
+    proc_start_init();
 
     // char const *initbin = "/sbin/init";
     // pid_t       pid     = proc_create(-1, "/sbin/init", 1, &initbin);

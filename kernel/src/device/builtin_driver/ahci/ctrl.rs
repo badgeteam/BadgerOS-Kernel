@@ -162,7 +162,7 @@ impl AhciDriver {
                 }
             }
         }
-        let discover_thread = Thread::new(
+        let discover_thread = Thread::new_kernel(
             move || {
                 for drive in drives {
                     drive.activate();

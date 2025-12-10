@@ -21,7 +21,6 @@
 #include "mem/vmm.h"
 #include "mutex.h"
 #include "nanoprintf.h"
-#include "panic.h"
 #include "set.h"
 #include "spinlock.h"
 #include "time.h"
@@ -667,8 +666,6 @@ __attribute__((always_inline)) static inline dlist_t *device_alloc_irqno(map_t *
 // Any device interrupt pin can be connected to any number of opposite pins, but the resulting graph must be acyclic.
 // If a device has incoming interrupts then it must be an interrupt controller and only such drivers can match.
 errno_t device_link_irq(device_t *child, irqno_t child_pin, device_t *parent, irqno_t parent_pin) {
-    logkf(LOG_DEBUG, "device_link_irq(%{d}, %{d}, %{d}, %{d})", child->id, child_pin, parent->id, parent_pin);
-
     // Enfore both devices are in the tree.
     if (child->state == DEV_STATE_REMOVED || parent->state == DEV_STATE_REMOVED)
         return -EINVAL;
@@ -880,7 +877,10 @@ static errno_t populate_info_file(file_t devnode_dir, device_t *device) {
 
     char const *type;
     switch (device->dev_class) {
-        default: logkf(LOG_WARN, "Unknown device type %{d} in populate_info_file", (int)device->dev_class); break;
+        default:
+            logkf(LOG_WARN, "Unknown device type %{d} in populate_info_file", (int)device->dev_class);
+            type = "unknown";
+            break;
         case DEV_CLASS_UNKNOWN: type = "unknown"; break;
         case DEV_CLASS_BLOCK: type = "block"; break;
         case DEV_CLASS_IRQCTL: type = "irqctl"; break;

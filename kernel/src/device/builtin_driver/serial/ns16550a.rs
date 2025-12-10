@@ -19,6 +19,7 @@ use crate::{
         spinlock::Spinlock,
     },
     char_driver_struct,
+    process::usercopy::{UserSlice, UserSliceMut},
 };
 
 /// Enable for receive data available IRQ.
@@ -196,13 +197,13 @@ impl BaseDriver for Ns16550aDriver {
         // Read all available receive data.
         while regs.lsr.get() & LSR_DATA_READY != 0 {
             // FIFO overflow is ignored.
-            self.rxfifo.write(&[regs.fifo.get()]);
+            self.rxfifo.writek(&[regs.fifo.get()]);
         }
 
         // Write all pending send data that will fit.
         while regs.lsr.get() & LSR_TX_EMPTY != 0 {
             let mut tmp = [0u8];
-            if self.txfifo.read(&mut tmp) == 0 {
+            if self.txfifo.readk(&mut tmp) == 0 {
                 break;
             }
             regs.fifo.set(tmp[0]);
@@ -220,17 +221,17 @@ impl BaseDriver for Ns16550aDriver {
 }
 
 impl CharDriver for Ns16550aDriver {
-    fn read(&self, rdata: &mut [u8]) -> EResult<usize> {
-        Ok(self.rxfifo.read(rdata))
+    fn read(&self, rdata: UserSliceMut<'_, u8>) -> EResult<usize> {
+        Ok(self.rxfifo.read(rdata)?)
     }
 
-    fn write(&self, wdata: &[u8]) -> EResult<usize> {
+    fn write(&self, wdata: UserSlice<'_, u8>) -> EResult<usize> {
         let wcount = self.txfifo.write(wdata);
 
         let _guard = unsafe { IrqGuard::new() };
         self.interrupt(0);
 
-        Ok(wcount)
+        Ok(wcount?)
     }
 }
 

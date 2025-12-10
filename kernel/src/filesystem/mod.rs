@@ -12,6 +12,7 @@ use core::{
 
 use access::Access;
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, string::String, sync::Arc, vec::Vec};
+use bytemuck::{AnyBitPattern, NoUninit};
 use device::{BlockDevFile, CharDevFile};
 use linkflags::LinkFlags;
 use media::Media;
@@ -28,7 +29,7 @@ use crate::{
         },
         error::{EResult, Errno},
         mutex::{Mutex, SharedMutexGuard},
-        raw::{errno_t, file_t},
+        raw::{errno_t, file_t, stat_t},
     },
     filesystem::{
         c_api::ref_as_file,
@@ -36,6 +37,7 @@ use crate::{
         vfs::{VNodeMtxInner, mflags, vnflags},
     },
     logkf,
+    process::usercopy::{UserSlice, UserSliceMut},
 };
 
 pub mod c_api;
@@ -47,6 +49,7 @@ pub mod media;
 pub mod mount_root;
 pub mod partition;
 pub mod ramfs;
+pub mod sysimpl;
 pub mod vfs;
 
 #[repr(u32)]
@@ -193,6 +196,26 @@ pub struct Stat {
     pub ctim: Timespec,
 }
 
+impl Into<stat_t> for Stat {
+    fn into(self) -> stat_t {
+        stat_t {
+            dev: self.dev,
+            ino: self.ino,
+            mode: self.mode,
+            nlink: self.nlink,
+            uid: self.uid,
+            gid: self.gid,
+            rdev: self.rdev,
+            size: self.size,
+            blksize: self.blksize,
+            blocks: self.blocks,
+            atim: self.atim.into(),
+            mtim: self.mtim.into(),
+            ctim: self.ctim.into(),
+        }
+    }
+}
+
 #[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Debug)]
 /// Types of file recognised by [`Dirent`].
@@ -285,15 +308,57 @@ pub trait File: Sync {
     /// Change the position in the file.
     fn seek(&self, mode: SeekMode, offset: i64) -> EResult<u64>;
     /// Write bytes to this file.
-    fn write(&self, wdata: &[u8]) -> EResult<usize>;
+    fn write(&self, wdata: UserSlice<'_, u8>) -> EResult<usize>;
     /// Read bytes from this file.
-    fn read(&self, rdata: &mut [u8]) -> EResult<usize>;
+    fn read(&self, rdata: UserSliceMut<'_, u8>) -> EResult<usize>;
     /// Resize the file to a new length.
     fn resize(&self, size: u64) -> EResult<()>;
     /// Sync the underlying caches to disk.
     fn sync(&self) -> EResult<()>;
     /// Get the underlying vnode (if it exists).
     fn get_vnode(&self) -> Option<Arc<VNode>>;
+}
+
+impl dyn File + '_ {
+    /// Write bytes to this file.
+    #[inline(always)]
+    pub fn writek(&self, wdata: &[u8]) -> EResult<usize> {
+        self.write(UserSlice::new_kernel(wdata))
+    }
+
+    /// Read bytes from this file.
+    #[inline(always)]
+    pub fn readk(&self, rdata: &mut [u8]) -> EResult<usize> {
+        self.read(UserSliceMut::new_kernel_mut(rdata))
+    }
+
+    /// Helper function for [`Self::seek`] with [`SeekMode::Set`] that will return `seek_error` if the desired position is not reached.
+    pub fn seek_strong(&self, offset: u64, seek_error: Errno) -> EResult<()> {
+        let pos = self.seek(SeekMode::Set, offset as i64)?;
+        if pos != offset {
+            return Err(seek_error);
+        }
+        Ok(())
+    }
+
+    /// Write the binary representation of a POD object.
+    #[inline(always)]
+    pub fn write_pod<T: NoUninit>(&self, wdata: &T) -> EResult<usize> {
+        self.write(UserSlice::new_kernel(bytemuck::bytes_of(wdata)))
+    }
+
+    /// Read a POD object from its binary representation.
+    #[inline(always)]
+    pub fn read_pod<T: NoUninit + AnyBitPattern>(&self, short_error: Errno) -> EResult<T> {
+        let mut rdata: T = unsafe { core::mem::zeroed() };
+        if self.read(UserSliceMut::new_kernel_mut(bytemuck::bytes_of_mut(
+            &mut rdata,
+        )))? != size_of::<T>()
+        {
+            return Err(short_error);
+        }
+        Ok(rdata)
+    }
 }
 
 #[derive(Clone)]
