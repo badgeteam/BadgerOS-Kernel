@@ -119,30 +119,30 @@ void riscv_trap_handler() {
 
 #if !CONFIG_NOMMU
                 // With VMEM enabled, only page faults are expected.
-            case RISCV_TRAP_IPAGE:
-            case RISCV_TRAP_LPAGE:
-            case RISCV_TRAP_SPAGE:
+            case RISCV_TRAP_IPAGE: kctx->thread->kernel_isr_ctx.regs.a1 = VMM_FLAG_X; __attribute__((fallthrough));
+            case RISCV_TRAP_LPAGE: kctx->thread->kernel_isr_ctx.regs.a1 = VMM_FLAG_R; __attribute__((fallthrough));
+            case RISCV_TRAP_SPAGE: kctx->thread->kernel_isr_ctx.regs.a1 = VMM_FLAG_W;
 #else
                 // Without VMEM enabled, only access faults are expected.
-            case RISCV_TRAP_IACCESS:
-            case RISCV_TRAP_LACCESS:
-            case RISCV_TRAP_SACCESS:
+            case RISCV_TRAP_IACCESS: kctx->thread->kernel_isr_ctx.regs.a1 = VMM_FLAG_X; __attribute__((fallthrough));
+            case RISCV_TRAP_LACCESS: kctx->thread->kernel_isr_ctx.regs.a1 = VMM_FLAG_R; __attribute__((fallthrough));
+            case RISCV_TRAP_SACCESS: kctx->thread->kernel_isr_ctx.regs.a1 = VMM_FLAG_W;
 #endif
-                // Memory access faults go to the SIGSEGV handler.
-                sched_raise_from_isr(kctx->thread, true, proc_sigsegv_handler);
+                // Memory access faults go to the process page fault handler.
+                sched_raise_from_isr(kctx->thread, false, proc_pagefault_handler);
                 kctx->thread->kernel_isr_ctx.regs.a0 = tval;
                 isr_ctx_swap(kctx);
                 return;
 
             case RISCV_TRAP_IILLEGAL:
                 // Illegal instruction faults go to the SIGILL handler.
-                sched_raise_from_isr(kctx->thread, true, proc_sigill_handler);
+                sched_raise_from_isr(kctx->thread, false, proc_sigill_handler);
                 isr_ctx_swap(kctx);
                 return;
 
             case RISCV_TRAP_EBREAK:
                 // Breakpoints go to the SIGTRAP handler.
-                sched_raise_from_isr(kctx->thread, true, proc_sigtrap_handler);
+                sched_raise_from_isr(kctx->thread, false, proc_sigtrap_handler);
                 isr_ctx_swap(kctx);
                 return;
         }
@@ -218,10 +218,22 @@ void riscv_trap_handler() {
         }
     }
 
+    // Print current thread.
+    if (!fault2 && kctx->thread) {
+        rawprint(" in thread ");
+        rawprintdec(kctx->thread->id, 1);
+        if (kctx->thread->name) {
+            rawputc(' ');
+            rawputc('"');
+            rawprint(kctx->thread->name);
+            rawputc('"');
+        }
+    }
+
     // Print current process.
     if (!fault2 && kctx->thread && !(kctx->thread->flags & THREAD_KERNEL)) {
-        // rawprint(" in process ");
-        // rawprintdec(kctx->thread->process->pid, 1);
+        rawprint(" in process ");
+        rawprintdec(proc_pid(kctx->thread->process), 1);
     }
     rawputc('\n');
     backtrace_from_ptr(kctx->frameptr);

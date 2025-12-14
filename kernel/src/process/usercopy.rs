@@ -3,9 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 use core::{
-    error::Error,
     ffi::{c_char, c_void},
-    fmt::Display,
     marker::PhantomData,
     mem::MaybeUninit,
     ops::Range,
@@ -15,37 +13,44 @@ use core::{
 use bytemuck::Pod;
 
 use crate::{
-    bindings::raw::{isr_noexc_copy_u8, isr_noexc_mem_copy},
+    bindings::{
+        error::Errno,
+        raw::{isr_noexc_copy_u8, isr_noexc_mem_copy},
+    },
     cpu, mem,
 };
 
-pub type AccessResult<T> = Result<T, AccessFault>;
+pub type AccessResult<T> = Result<T, Errno>;
 
-/// Represents an access fault originating from a [`UserSlice`] or [`UserPtr`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct AccessFault;
+#[allow(non_upper_case_globals)]
+pub const AccessFault: Errno = Errno::EFAULT;
 
-impl Display for AccessFault {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str("AccessFault")
-    }
-}
+// TODO: Reinstate `AccessFault` when `try bikeshed _ {}` becomes more stable.
+// /// Represents an access fault originating from a [`UserSlice`] or [`UserPtr`].
+// #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+// pub struct AccessFault;
 
-impl Error for AccessFault {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        None
-    }
+// impl Display for AccessFault {
+//     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+//         f.write_str("AccessFault")
+//     }
+// }
 
-    fn description(&self) -> &str {
-        "description() is deprecated; use Display"
-    }
+// impl Error for AccessFault {
+//     fn source(&self) -> Option<&(dyn Error + 'static)> {
+//         None
+//     }
 
-    fn cause(&self) -> Option<&dyn Error> {
-        self.source()
-    }
+//     fn description(&self) -> &str {
+//         "description() is deprecated; use Display"
+//     }
 
-    fn provide<'a>(&'a self, _request: &mut core::error::Request<'a>) {}
-}
+//     fn cause(&self) -> Option<&dyn Error> {
+//         self.source()
+//     }
+
+//     fn provide<'a>(&'a self, _request: &mut core::error::Request<'a>) {}
+// }
 
 /// Represents a slice of user memory.
 /// Can be safely constructed from a (pointer, length) pair.
@@ -71,7 +76,7 @@ impl<'a, T: Sized + Pod> UserSlice<'a, T, false> {
     }
 
     /// Create a new user-access slice; will validate that the range is user memory.
-    pub fn new(ptr: *const T, length: usize) -> Result<Self, AccessFault> {
+    pub fn new(ptr: *const T, length: usize) -> AccessResult<Self> {
         let vaddr = ptr as usize;
         if !mem::vmm::pagetable::is_canon_user_range(
             vaddr
@@ -100,7 +105,7 @@ impl<'a, T: Sized + Pod> UserSlice<'a, T, true> {
     }
 
     /// Create a new user-access slice; will validate that the range is user memory.
-    pub fn new_mut(ptr: *mut T, length: usize) -> Result<Self, AccessFault> {
+    pub fn new_mut(ptr: *mut T, length: usize) -> AccessResult<Self> {
         let vaddr = ptr as usize;
         if !mem::vmm::pagetable::is_canon_user_range(
             vaddr
@@ -135,9 +140,9 @@ impl<'a, T: Sized + Pod, const MUTABLE: bool> UserSlice<'a, T, MUTABLE> {
     }
 
     /// Try to read multiple elements from the slice.
-    pub fn read_multiple(&self, index: usize, out: &mut [T]) -> Result<(), AccessFault> {
+    pub fn read_multiple(&self, index: usize, out: &mut [T]) -> AccessResult<()> {
         debug_assert!(
-            index + out.len() < self.len(),
+            index + out.len() <= self.len(),
             "UserSlice::read_multiple index {} len {} out of range [0-{})",
             index,
             out.len(),
@@ -154,7 +159,7 @@ impl<'a, T: Sized + Pod, const MUTABLE: bool> UserSlice<'a, T, MUTABLE> {
     }
 
     /// Try to read an element from the slice.
-    pub fn read(&self, index: usize) -> Result<T, AccessFault> {
+    pub fn read(&self, index: usize) -> AccessResult<T> {
         debug_assert!(
             index < self.len(),
             "UserSlice::read index {} out of range [0-{})",
@@ -206,9 +211,9 @@ impl<'a, T: Sized + Pod> UserSlice<'a, T, true> {
     }
 
     /// Try to write multiple elements from the slice.
-    pub fn write_multiple(&mut self, index: usize, data: &[T]) -> Result<(), AccessFault> {
+    pub fn write_multiple(&mut self, index: usize, data: &[T]) -> AccessResult<()> {
         debug_assert!(
-            index + data.len() < self.len(),
+            index + data.len() <= self.len(),
             "UserSlice::write_multiple index {} len {} out of range [0-{})",
             index,
             data.len(),
@@ -225,7 +230,7 @@ impl<'a, T: Sized + Pod> UserSlice<'a, T, true> {
     }
 
     /// Try to write an element to the slice.
-    pub fn write(&mut self, index: usize, data: T) -> Result<(), AccessFault> {
+    pub fn write(&mut self, index: usize, data: T) -> AccessResult<()> {
         debug_assert!(
             index < self.len(),
             "UserSlice::write index {} out of range [0-{})",
@@ -245,7 +250,7 @@ impl<'a, T: Sized + Pod> UserSlice<'a, T, true> {
     }
 
     /// Fill this slice with a certain value.
-    pub fn fill(&mut self, data: T) -> Result<(), AccessFault> {
+    pub fn fill(&mut self, data: T) -> AccessResult<()> {
         unsafe { cpu::mmu::enable_sum() };
         let mut faulted = false;
         unsafe {
@@ -294,7 +299,7 @@ pub struct UserPtr<'a, T: Sized + Pod, const MUTABLE: bool = false> {
 
 impl<'a, T: Sized + Pod> UserPtr<'a, T, false> {
     /// Create a pointer from kernel memory; it is assumed to be safe to access.
-    pub fn new_kernel(ptr: &'a T) -> Result<Self, AccessFault> {
+    pub fn new_kernel(ptr: &'a T) -> AccessResult<Self> {
         Ok(Self {
             ptr: unsafe { NonNull::new_unchecked(ptr as *const T as *mut T) },
             marker: PhantomData,
@@ -302,7 +307,7 @@ impl<'a, T: Sized + Pod> UserPtr<'a, T, false> {
     }
 
     /// Create a new user-access pointer; will validate that the range is user memory.
-    pub fn new(ptr: *const T) -> Result<Self, AccessFault> {
+    pub fn new(ptr: *const T) -> AccessResult<Self> {
         let vaddr = ptr as usize;
         if !mem::vmm::pagetable::is_canon_user_range(
             vaddr..vaddr.checked_add(size_of::<T>()).ok_or(AccessFault)?,
@@ -316,7 +321,7 @@ impl<'a, T: Sized + Pod> UserPtr<'a, T, false> {
     }
 
     /// Create a new nullable user-access pointer; will validate that the range is user memory.
-    pub fn new_nullable(ptr: *const T) -> Result<Option<Self>, AccessFault> {
+    pub fn new_nullable(ptr: *const T) -> AccessResult<Option<Self>> {
         let vaddr = ptr as usize;
         if !mem::vmm::pagetable::is_canon_user_range(
             vaddr..vaddr.checked_add(size_of::<T>()).ok_or(AccessFault)?,
@@ -334,7 +339,7 @@ impl<'a, T: Sized + Pod> UserPtr<'a, T, false> {
 
 impl<'a, T: Sized + Pod> UserPtr<'a, T, true> {
     /// Create a pointer from kernel memory; it is assumed to be safe to access.
-    pub fn new_kernel_mut(ptr: &'a mut T) -> Result<Self, AccessFault> {
+    pub fn new_kernel_mut(ptr: &'a mut T) -> AccessResult<Self> {
         Ok(Self {
             ptr: unsafe { NonNull::new_unchecked(ptr as *const T as *mut T) },
             marker: PhantomData,
@@ -342,7 +347,7 @@ impl<'a, T: Sized + Pod> UserPtr<'a, T, true> {
     }
 
     /// Create a new user-access pointer; will validate that the range is user memory.
-    pub fn new_mut(ptr: *mut T) -> Result<Self, AccessFault> {
+    pub fn new_mut(ptr: *mut T) -> AccessResult<Self> {
         let vaddr = ptr as usize;
         if !mem::vmm::pagetable::is_canon_user_range(
             vaddr..vaddr.checked_add(size_of::<T>()).ok_or(AccessFault)?,
@@ -356,7 +361,7 @@ impl<'a, T: Sized + Pod> UserPtr<'a, T, true> {
     }
 
     /// Create a new nullable user-access pointer; will validate that the range is user memory.
-    pub fn new_nullable_mut(ptr: *mut T) -> Result<Option<Self>, AccessFault> {
+    pub fn new_nullable_mut(ptr: *mut T) -> AccessResult<Option<Self>> {
         let vaddr = ptr as usize;
         if !mem::vmm::pagetable::is_canon_user_range(
             vaddr..vaddr.checked_add(size_of::<T>()).ok_or(AccessFault)?,
@@ -374,7 +379,7 @@ impl<'a, T: Sized + Pod> UserPtr<'a, T, true> {
 
 impl<'a, T: Sized + Pod, const MUTABLE: bool> UserPtr<'a, T, MUTABLE> {
     /// Try to read an element from the slice.
-    pub fn read(&self) -> Result<T, AccessFault> {
+    pub fn read(&self) -> AccessResult<T> {
         let mut tmp = MaybeUninit::uninit();
         unsafe { cpu::mmu::enable_sum() };
         let faulted = unsafe {
@@ -400,7 +405,7 @@ impl<'a, T: Sized + Pod, const MUTABLE: bool> UserPtr<'a, T, MUTABLE> {
 
 impl<'a, T: Sized + Pod> UserPtr<'a, T, true> {
     /// Try to write an element to the slice.
-    pub fn write(&mut self, data: T) -> Result<(), AccessFault> {
+    pub fn write(&mut self, data: T) -> AccessResult<()> {
         unsafe { cpu::mmu::enable_sum() };
         let faulted = unsafe {
             isr_noexc_mem_copy(
@@ -420,7 +425,7 @@ impl<'a, T: Sized + Pod> UserPtr<'a, T, true> {
 }
 
 /// Read a C-string from user memory into a buffer.
-pub fn read_user_cstr(user_cstr: *const c_char, buffer: &mut [u8]) -> Result<usize, AccessFault> {
+pub fn read_user_cstr(user_cstr: *const c_char, buffer: &mut [u8]) -> AccessResult<usize> {
     for i in 0..buffer.len() {
         if !mem::vmm::pagetable::is_canon_user_addr(user_cstr as usize) {
             return Err(AccessFault);

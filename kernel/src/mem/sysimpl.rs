@@ -21,6 +21,7 @@ pub const MAP_SHARED: c_int = 1;
 pub const MAP_PRIVATE: c_int = 2;
 pub const MAP_ANON: c_int = 4;
 pub const MAP_FIXED: c_int = 8;
+pub const MAP_POPULATE: c_int = 16;
 
 /// Map a new range of memory at an arbitrary virtual address.
 /// This may round up to a multiple of the page size.
@@ -53,12 +54,15 @@ pub unsafe extern "C" fn syscall_mem_map(
     if prot & PROT_EXEC != 0 {
         vmm_flags |= vmm::flags::X;
     }
-    if prot & MAP_SHARED != 0 && prot & MAP_PRIVATE == 0 {
+    if flags & MAP_SHARED != 0 && flags & MAP_PRIVATE == 0 {
         vmm_flags |= vmm::flags::SHM;
-    } else if prot & MAP_SHARED == 0 && prot & MAP_PRIVATE != 0 {
+    } else if flags & MAP_SHARED == 0 && flags & MAP_PRIVATE != 0 {
         // VMM has no explicit flag for private mappings.
     } else {
         return -(Errno::EINVAL as isize) as *mut c_void;
+    }
+    if flags & MAP_POPULATE == 0 {
+        vmm_flags |= vmm::flags::LAZY;
     }
 
     let proc = process::current().unwrap();

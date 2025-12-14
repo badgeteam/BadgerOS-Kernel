@@ -2,8 +2,6 @@ use core::{error::Error, fmt::Display, str};
 
 use alloc::{alloc::AllocError, collections::TryReserveError};
 
-use crate::process::usercopy::AccessFault;
-
 use super::raw;
 
 /// Signal enum that matches those of BadgerOS.
@@ -213,6 +211,22 @@ impl Errno {
         }
     }
     /// Create an `EResult` from some integer.
+    pub fn check_i32(errno: i32) -> EResult<i32> {
+        if errno < 0 {
+            Err(unsafe { core::mem::transmute(-errno) })
+        } else {
+            Ok(errno as i32)
+        }
+    }
+    /// Create an `EResult` from some integer.
+    pub fn check_i64(errno: i64) -> EResult<i64> {
+        if errno < 0 {
+            Err(unsafe { core::mem::transmute((-errno) as u32) })
+        } else {
+            Ok(errno as i64)
+        }
+    }
+    /// Create an `EResult` from some integer.
     pub fn check_u32(errno: i32) -> EResult<u32> {
         if errno < 0 {
             Err(unsafe { core::mem::transmute(-errno) })
@@ -226,6 +240,14 @@ impl Errno {
             Err(unsafe { core::mem::transmute((-errno) as u32) })
         } else {
             Ok(errno as u64)
+        }
+    }
+    /// Create an `EResult` from some integer.
+    pub fn check_isize(errno: isize) -> EResult<isize> {
+        if errno < 0 {
+            Err(unsafe { core::mem::transmute((-errno) as u32) })
+        } else {
+            Ok(errno as isize)
         }
     }
     /// Create an `EResult` from some integer.
@@ -333,12 +355,6 @@ impl From<AllocError> for Errno {
 impl From<TryReserveError> for Errno {
     fn from(_: TryReserveError) -> Self {
         Errno::ENOMEM
-    }
-}
-
-impl From<AccessFault> for Errno {
-    fn from(_: AccessFault) -> Self {
-        Errno::EFAULT
     }
 }
 

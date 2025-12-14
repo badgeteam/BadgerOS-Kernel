@@ -13,6 +13,7 @@ use super::{
     raw::{self, SCHED_PRIO_NORMAL, dlist_node_t, dlist_t, tid_t, timestamp_us_t, waitlist_t},
 };
 
+#[derive(Debug)]
 pub struct Thread {
     handle: tid_t,
 }
@@ -23,6 +24,8 @@ unsafe extern "C" fn rust_thread_trampoline(arg: *mut c_void) -> i32 {
 }
 
 impl Thread {
+    /// Create a thread from it ID.
+    /// Re-use of the ID (i.e. multiple references) may cause [`Self::join`] to fail.
     pub fn from_id(id: tid_t) -> Self {
         Self { handle: id }
     }
@@ -35,7 +38,9 @@ impl Thread {
         let name = name.map(|f| CString::from_str(f).unwrap());
         unsafe {
             let tid = raw::thread_new_user(
-                name.map(|f| f.as_ptr()).unwrap_or(0 as *const c_char),
+                name.as_ref()
+                    .map(|f| f.as_ptr())
+                    .unwrap_or(0 as *const c_char),
                 process as *mut () as *mut raw::process,
                 user_entrypoint,
                 user_arg,
@@ -58,7 +63,9 @@ impl Thread {
             let arg = Box::into_raw(Box::new(closure));
             let name = name.map(|f| CString::from_str(f).unwrap());
             let tid = raw::thread_new_kernel(
-                name.map(|f| f.as_ptr()).unwrap_or(0 as *const c_char),
+                name.as_ref()
+                    .map(|f| f.as_ptr())
+                    .unwrap_or(0 as *const c_char),
                 Some(rust_thread_trampoline),
                 arg as *mut c_void,
                 SCHED_PRIO_NORMAL as c_int,
@@ -80,6 +87,9 @@ impl Thread {
     }
     pub fn detach(self) {
         // This will drop, which will call the detach function.
+    }
+    pub fn tid(&self) -> tid_t {
+        self.handle
     }
     pub fn into_tid(self) -> tid_t {
         let tid = self.handle;

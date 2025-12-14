@@ -2,7 +2,11 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::sync::atomic::{AtomicI32, AtomicI64, AtomicU32, Ordering};
+use core::{
+    ops::Deref,
+    sync::atomic::{AtomicI32, AtomicI64, AtomicU32, Ordering},
+    usize,
+};
 
 use alloc::{collections::btree_map::BTreeMap, ffi::CString, sync::Arc, vec::Vec};
 use signal::Sigtab;
@@ -14,6 +18,7 @@ use crate::{
         error::{EResult, Errno},
         log::LogLevel,
         mutex::Mutex,
+        raw::{process_t, sched_get_thread, thread_fork, thread_resume},
         thread::Thread,
     },
     filesystem::{self, File, SeekMode, mode, oflags, sysimpl::AT_FDCWD},
@@ -138,7 +143,7 @@ impl Process {
             memmap: Memmap::new_user()?,
             files: Mutex::new(BTreeMap::new()),
             argv: Vec::try_with_capacity(1)?,
-            tid_counter: AtomicI64::new(1),
+            tid_counter: AtomicI64::new(0),
             threads: Mutex::new(BTreeMap::new()),
             flags: AtomicU32::new(0),
             wait_status: AtomicI32::new(0),
@@ -161,7 +166,7 @@ impl Process {
     pub fn fork(&self) -> EResult<Arc<Process>> {
         let pid = PID_COUNTER.fetch_add(1, Ordering::Relaxed);
 
-        let proc = Process {
+        let child = Process {
             pid,
             flags: AtomicU32::new(0),
             wait_status: AtomicI32::new(0),
@@ -172,8 +177,31 @@ impl Process {
             tid_counter: AtomicI64::new(self.tid_counter.load(Ordering::Relaxed)),
             threads: Mutex::new(BTreeMap::new()),
         };
+        let child = Arc::try_new(child)?;
+        PROCESSES.lock().insert(pid, child.clone());
 
-        todo!()
+        let thread = unsafe {
+            let tid = Errno::check_i32(thread_fork(
+                self.threads.lock_shared().get(&0).unwrap().tid(),
+                child.as_ref() as *const Process as *mut process_t,
+            ))?;
+            let thread_struct = sched_get_thread(tid);
+            // TODO: Portable impl for this after sched rewrite.
+            (*thread_struct).user_isr_ctx.regs.pc += 4;
+            (*thread_struct).user_isr_ctx.regs.a0 = 0;
+            thread_resume(tid);
+            Thread::from_id(tid)
+        };
+        child.threads.lock().insert(0, thread);
+
+        logkf!(
+            LogLevel::Debug,
+            "Process {} forked into {}",
+            self.pid,
+            child.pid
+        );
+
+        Ok(child)
     }
 
     /// Kill this process.

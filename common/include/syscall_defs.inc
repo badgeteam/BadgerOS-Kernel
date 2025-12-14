@@ -58,7 +58,7 @@ SYSCALL_DEF_V(8, SYSCALL_PROC_EXIT, syscall_proc_exit, int code)
 SYSCALL_DEF(9, SYSCALL_PROC_GETARGS, syscall_proc_getargs, size_t, size_t cap, void *memory)
 
 // Create a copy of the running process and return its PID (to the parent) or -1 (to the child).
-SYSCALL_DEF(10, SYSCALL_PROC_FORK, syscall_proc_fork, int)
+SYSCALL_DEF(10, SYSCALL_PROC_FORK, syscall_proc_fork, int64_t)
 
 // Execute the program at `path`, replacing the calling program's code and data in the process.
 SYSCALL_DEF(11, SYSCALL_PROC_EXEC, syscall_proc_exec, int, char const *path, char const *const *argv, char const *const *envp)
@@ -150,7 +150,7 @@ SYSCALL_DEF(52, SYSCALL_FS_PIPE, syscall_fs_pipe, int, int fds[2], int flags)
 // Map a new range of memory at an arbitrary virtual address.
 // This may round up to a multiple of the page size.
 // Alignment may be less than `align` if the kernel doesn't support it.
-SYSCALL_DEF(23, SYSCALL_MEM_MAP, syscall_mem_map, void *, void *address, size_t size, size_t align, int flags)
+SYSCALL_DEF(23, SYSCALL_MEM_MAP, syscall_mem_map, void *, void *address, size_t size, int prot, int flags)
 
 // Unmap a range of memory previously allocated with `SYSCALL_MEM_MAP`.
 // Returns whether a range of memory was unmapped.

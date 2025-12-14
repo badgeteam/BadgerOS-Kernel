@@ -393,19 +393,18 @@ impl PageTable {
         let canon_pages = canon_half_pages();
 
         let max_vpn = canon_pages * 2;
-        min_vpn &= canon_pages - 1;
 
         while min_vpn < max_vpn {
             let pte = self.walk(min_vpn);
-            if pte.valid || !ignore_invalid_ptes {
+            if pte.valid || (!ignore_invalid_ptes && !pte.is_null()) {
                 let canon_vpn = if min_vpn >= canon_pages {
-                    min_vpn.wrapping_sub(canon_pages)
+                    min_vpn.wrapping_sub(2 * canon_pages)
                 } else {
                     min_vpn
                 };
                 return Some((canon_vpn, pte));
             }
-            min_vpn += 1 << BITS_PER_LEVEL * pte.order as u32;
+            min_vpn += 1 << (BITS_PER_LEVEL * pte.order as u32);
         }
 
         None

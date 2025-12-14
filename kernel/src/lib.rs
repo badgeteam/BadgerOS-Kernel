@@ -10,7 +10,6 @@
 #![feature(negative_impls)]
 #![feature(ptr_metadata)]
 #![feature(box_vec_non_null)]
-#![feature(vec_into_raw_parts)]
 #![feature(try_with_capacity)]
 #![feature(str_from_utf16_endian)]
 #![feature(ascii_char)]

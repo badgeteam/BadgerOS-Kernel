@@ -71,6 +71,8 @@ sched_thread_t *sched_get_thread(tid_t thread);
 // Create a new suspended userland thread.
 // If `kernel_stack_bottom` is NULL, the scheduler will allocate a stack.
 tid_t   thread_new_user(char const *name, process_t *process, size_t user_entrypoint, size_t user_arg, int priority);
+// Create a new user thread with a cloned user context.
+tid_t   thread_fork(tid_t thread, process_t *new_process);
 // Create new suspended kernel thread.
 // If `stack_bottom` is NULL, the scheduler will allocate a stack.
 tid_t   thread_new_kernel(char const *name, sched_entry_t entry_point, void *arg, int priority);

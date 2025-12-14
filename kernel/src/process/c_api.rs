@@ -14,9 +14,10 @@ use crate::{
             SIGILL, SIGSEGV, SIGSYS, SIGTRAP, isr_context_switch, sched_lower_from_isr, siginfo_t,
         },
     },
+    config::PAGE_SIZE,
     cpu::irq,
     mem::vmm::Memmap,
-    process::current,
+    process::{PID, current},
 };
 
 use super::{Process, signal};
@@ -31,6 +32,12 @@ unsafe extern "C" fn proc_memmap(proc: &Process) -> &Memmap {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn proc_flags(proc: &Process) -> &AtomicU32 {
     &proc.flags
+}
+
+/// Needed by C because the process struct is not representable in C.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn proc_pid(proc: &Process) -> PID {
+    proc.pid()
 }
 
 /// Start the init process.
@@ -56,15 +63,21 @@ pub fn get_user_pc() -> usize {
 
 /// Called when SIGSEGV is raised by a trap.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn proc_sigsegv_handler() {
-    signal::run_handler(siginfo_t {
-        si_signo: SIGSEGV as c_int,
-        si_code: 0,
-        si_pid: current().unwrap().pid(),
-        si_uid: 0,
-        si_addr: get_user_pc() as *mut c_void, // TODO: Context switching refactor needed to fix this.
-        si_status: 0,
-    });
+unsafe extern "C" fn proc_pagefault_handler(vaddr: usize, access: u32) {
+    let proc = current().unwrap();
+    let retry = proc.memmap.page_fault(vaddr / PAGE_SIZE as usize, access);
+
+    if !retry {
+        signal::run_handler(siginfo_t {
+            si_signo: SIGSEGV as c_int,
+            si_code: 0,
+            si_pid: proc.pid(),
+            si_uid: 0,
+            si_addr: get_user_pc() as *mut c_void, // TODO: Context switching refactor needed to fix this.
+            si_status: 0,
+        });
+    }
+
     unsafe {
         irq::disable();
         sched_lower_from_isr();

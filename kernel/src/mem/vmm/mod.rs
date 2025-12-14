@@ -4,6 +4,7 @@
 
 use core::{
     cell::UnsafeCell,
+    ffi::c_void,
     fmt::Debug,
     ops::Range,
     ptr::{slice_from_raw_parts, slice_from_raw_parts_mut},
@@ -15,11 +16,14 @@ use pagetable::{OwnedPTE, PAGING_LEVELS, canon_half_pages};
 
 use crate::{
     badgelib::{irq::IrqGuard, rcu},
-    bindings::{error::EResult, log::LogLevel, mutex::Mutex},
+    bindings::{error::EResult, log::LogLevel, mutex::Mutex, raw::memcpy},
     config::PAGE_SIZE,
-    cpu::mmu::{self, BITS_PER_LEVEL},
+    cpu::{
+        self,
+        mmu::{self, BITS_PER_LEVEL},
+    },
     mem::{
-        pmm::{self, PPN},
+        pmm::{self, PPN, PageUsage},
         vmm::{pagetable::PageTable, vma_alloc::VmaAlloc},
     },
 };
@@ -42,6 +46,8 @@ pub mod flags {
 
     /// Allow creation of I/O PTE even though the page may be RAM.
     pub(super) const HHDM: u32 = 1 << 30;
+    /// Implicitly create a demand-paged mapping.
+    pub const LAZY: u32 = 1 << 31;
 }
 
 /// Unsigned integer that can store a virtual page number.
@@ -52,6 +58,9 @@ pub type VPN = usize;
 
 /// Naturally aligned slice that is a page or more of zeroes.
 static mut ZEROES: *const [u8] = unsafe { core::mem::zeroed() };
+
+/// Cache of the physical page number of [`ZEROES`].
+static mut ZEROES_PPN: PPN = 0;
 
 /// The kernel memory map.
 static mut KERNEL_MM: UnsafeCell<Option<Memmap>> = UnsafeCell::new(None);
@@ -163,12 +172,12 @@ impl Memmap {
         assert!(!self.is_kernel);
         // This function doesn't change the effective contents of this memmap, but must ensure no concurrent modifications happen;
         // it cannot lock the page table spinlock constantly, so this guard effectively prevents concurrent modifications.
-        let _guard = self.vma_alloc.lock();
+        let guard = self.vma_alloc.lock();
 
         let new_mm = Self::new_user()?;
 
-        let mut prev_vpn = 0;
-        while let Some((vpn, mut pte)) = self.pagetable.find_first(prev_vpn, false) {
+        let mut min_vpn = 0;
+        while let Some((vpn, mut pte)) = self.pagetable.find_first(min_vpn, false) {
             if !pagetable::is_canon_user_page(vpn) {
                 break;
             }
@@ -183,11 +192,11 @@ impl Memmap {
                 unsafe { new_mm.pagetable.map(vpn, OwnedPTE::from_raw_ref(pte)) }?;
             }
 
-            prev_vpn = vpn;
+            min_vpn = vpn + (1 << pte.order);
         }
 
         // TODO: Fallible clone of this structure.
-        *new_mm.vma_alloc.lock() = self.vma_alloc.lock_shared().clone();
+        *new_mm.vma_alloc.lock() = guard.clone();
 
         Ok(new_mm)
     }
@@ -307,15 +316,31 @@ impl Memmap {
         let mut to_free = Vec::new();
         to_free.try_reserve(size)?;
 
-        let mem = PhysPtr::new(
-            (VPN::BITS - size.leading_zeros() - 1) as u8,
-            pmm::PageUsage::KernelAnon,
-        )?;
-        let mut offset = 0;
-        while offset < size {
-            let order = pagetable::calc_superpage(vpn + offset, mem.ppn() + offset, size - offset);
-            ptes.push(OwnedPTE::new_ram(mem.clone(), offset, order, flags));
-            offset += 1 << mmu::BITS_PER_LEVEL * order as u32;
+        if flags & (flags::LAZY | flags::W) == flags::LAZY | flags::W {
+            // Demand paging implemented by doing CoW of the page of zeroes.
+            let zeroes = unsafe { PhysPtr::from_ref_ppn(ZEROES_PPN) };
+            ptes.reserve_exact(size);
+            for _ in 0..size {
+                ptes.push(OwnedPTE::new_ram(
+                    zeroes.clone(),
+                    0,
+                    0,
+                    (flags & !flags::W) | flags::COW,
+                ))
+            }
+        } else {
+            // Immediately map memory.
+            let mem = PhysPtr::new(
+                (VPN::BITS - size.leading_zeros() - 1) as u8,
+                pmm::PageUsage::KernelAnon,
+            )?;
+            let mut offset = 0;
+            while offset < size {
+                let order =
+                    pagetable::calc_superpage(vpn + offset, mem.ppn() + offset, size - offset);
+                ptes.push(OwnedPTE::new_ram(mem.clone(), offset, order, flags));
+                offset += 1 << mmu::BITS_PER_LEVEL * order as u32;
+            }
         }
 
         unsafe { self.map_impl(ptes, &mut to_free, vpn, size)? };
@@ -326,6 +351,14 @@ impl Memmap {
         rcu::rcu_sync();
 
         Ok(vpn)
+    }
+
+    /// Change the protection attributes for a region.
+    pub unsafe fn protect(&self, vpn: VPN, new_flags: u32) -> EResult<()> {
+        // Inhibit concurrent changes to the mappings.
+        let _guard = self.vma_alloc.lock();
+
+        todo!()
     }
 
     /// Common implementation of all mapping functions.
@@ -419,6 +452,51 @@ impl Memmap {
         let mut guard = self.vma_alloc.lock();
         guard.free(canon_half_pages() / 2..canon_half_pages());
         unsafe { self.pagetable.clear_lower_half() };
+    }
+
+    /// Check page faults for lazy mappings given required access permissions `access`.
+    /// Called when a page fault happens on this memmap.
+    /// Returns `true` if the fault should be ignored and the faulting operation retried.
+    pub fn page_fault(&self, vpn: VPN, access: u32) -> bool {
+        // Inhibit concurrent changes to the mappings.
+        let _guard = self.vma_alloc.lock();
+
+        let mapping = self.pagetable.walk(vpn);
+        if mapping.flags & access == access {
+            // TLB was likely outdated; retry.
+            cpu::mmu::vmem_fence(Some(vpn * PAGE_SIZE as usize), None);
+            return true;
+        }
+
+        if mapping.valid && mapping.flags & flags::COW != 0 && access == flags::W {
+            // Write access to copy-on-write page.
+            let res: EResult<()> = try {
+                let page = PhysPtr::new(0, PageUsage::UserAnon)?;
+                unsafe {
+                    let ppn = page.ppn();
+                    let old = self.pagetable.map(
+                        vpn,
+                        OwnedPTE::new_ram(page, 0, 0, (mapping.flags & !flags::COW) | flags::W),
+                    )?;
+
+                    // Copy contents of the old page.
+                    memcpy(
+                        (ppn * PAGE_SIZE as usize + HHDM_OFFSET) as *mut c_void,
+                        (old.ppn() * PAGE_SIZE as usize + HHDM_OFFSET) as *const c_void,
+                        PAGE_SIZE as usize,
+                    );
+
+                    // Ensure other threads aren't referencing the stale mapping before dropping it.
+                    cpu::mmu::vmem_fence(Some(vpn * PAGE_SIZE as usize), None);
+                    rcu::rcu_sync();
+                    drop(old);
+                }
+            };
+            // If successfully updated, retry the operation.
+            return res.is_ok();
+        }
+
+        false
     }
 }
 
@@ -565,6 +643,7 @@ pub unsafe fn init() {
             let zeroes_paddr = kernel_mm
                 .virt2phys(zeroes_vpn * PAGE_SIZE as usize)
                 .page_paddr;
+            ZEROES_PPN = zeroes_paddr / PAGE_SIZE as usize;
             (&mut *slice_from_raw_parts_mut(
                 (zeroes_paddr + HHDM_OFFSET) as *mut u8,
                 PAGE_SIZE as usize,

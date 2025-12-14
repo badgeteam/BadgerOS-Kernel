@@ -55,9 +55,9 @@ pub unsafe extern "C" fn syscall_proc_getargs(cap: usize, memory: *mut c_void) -
 
 /// Create a copy of the running process and return its PID (to the parent) or -1 (to the child).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn syscall_proc_fork() -> c_int {
+pub unsafe extern "C" fn syscall_proc_fork() -> i64 {
     let proc = current().unwrap();
-    todo!()
+    Errno::extract_i64(try { proc.fork()?.pid() })
 }
 
 /// Execute the program at `path`, replacing the calling program's code and data in the process.

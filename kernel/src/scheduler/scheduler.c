@@ -9,6 +9,7 @@
 #include "cpu/interrupt.h"
 #include "cpu/isr.h"
 #include "cpulocal.h"
+#include "errno.h"
 #include "housekeeping.h"
 #include "interrupt.h"
 #include "isr_ctx.h"
@@ -631,6 +632,90 @@ tid_t thread_new_user(char const *name, process_t *process, size_t user_entrypoi
             free(thread->name);
         }
         sched_free_user_stack(process, thread->user_stack_bottom);
+        sched_free_kernel_stack(thread->kernel_stack_bottom);
+        free(thread);
+        return -ENOMEM;
+    }
+
+    return thread->id;
+}
+
+// Create a new user thread with a cloned user context.
+tid_t thread_fork(tid_t tid, process_t *new_process) {
+    // Copy attributes from old thread.
+    irq_disable();
+    spinlock_take_shared(&threads_lock);
+
+    sched_thread_t *old_thread = find_thread(tid);
+    if (!old_thread) {
+        spinlock_release_shared(&threads_lock);
+        irq_enable();
+        return -ENOENT;
+    }
+    isr_ctx_t user_ctx = old_thread->user_isr_ctx;
+    int       priority = old_thread->priority;
+    char     *name     = NULL;
+    if (old_thread->name) {
+        size_t name_len = cstr_length(old_thread->name);
+        name            = malloc(name_len + 1);
+        if (!name) {
+            spinlock_release_shared(&threads_lock);
+            irq_enable();
+            return -ENOMEM;
+        }
+        cstr_copy(name, name_len + 1, old_thread->name);
+    }
+
+    spinlock_release_shared(&threads_lock);
+    irq_enable();
+
+    // Allocate thread.
+    sched_thread_t *thread = malloc(sizeof(sched_thread_t));
+    if (!thread) {
+        free(name);
+        return -ENOMEM;
+    }
+    mem_set(thread, 0, sizeof(sched_thread_t));
+
+    thread->kernel_stack_bottom = sched_alloc_kernel_stack();
+    if (!thread->kernel_stack_bottom) {
+        free(name);
+        free(thread);
+        return -ENOMEM;
+    }
+
+    thread->name                   = name;
+    thread->priority               = priority;
+    thread->process                = new_process;
+    thread->id                     = atomic_fetch_add(&tid_counter, 1);
+    thread->blocking_lock          = SPINLOCK_T_INIT;
+    thread->kernel_stack_top       = thread->kernel_stack_bottom + CONFIG_STACK_SIZE;
+    thread->kernel_isr_ctx.flags   = ISR_CTX_FLAG_KERNEL;
+    thread->kernel_isr_ctx.thread  = thread;
+    thread->kernel_isr_ctx.mem_ctx = proc_memmap(new_process);
+    thread->user_isr_ctx           = user_ctx;
+    thread->user_isr_ctx.thread    = thread;
+    thread->user_isr_ctx.mem_ctx   = proc_memmap(new_process);
+
+    // Ugly workaround allowed because sched rewrite is very soon anyway.
+    thread->user_isr_ctx.user_isr_stack = thread->kernel_stack_top;
+#ifdef __riscv
+#if __riscv_xlen == 64
+    asm("sd gp, %0" ::"m"(thread->kernel_isr_ctx.regs.gp));
+#else
+    asm("sw gp, %0" ::"m"(thread->kernel_isr_ctx.regs.gp));
+#endif
+#endif
+
+    irq_disable();
+    spinlock_take(&threads_lock);
+    bool success = array_lencap_insert(&threads, sizeof(void *), &threads_len, &threads_cap, &thread, threads_len);
+    spinlock_release(&threads_lock);
+    irq_enable();
+    if (!success) {
+        if (thread->name) {
+            free(thread->name);
+        }
         sched_free_kernel_stack(thread->kernel_stack_bottom);
         free(thread);
         return -ENOMEM;
