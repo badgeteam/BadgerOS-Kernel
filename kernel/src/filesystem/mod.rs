@@ -36,7 +36,6 @@ use crate::{
         fifo::{Fifo, FifoShared},
         vfs::{VNodeMtxInner, mflags, vnflags},
     },
-    logkf,
     process::usercopy::{UserSlice, UserSliceMut},
 };
 
@@ -773,7 +772,7 @@ pub fn open(at: Option<&dyn File>, path: &[u8], mut oflags: OFlags) -> EResult<A
         // Append requires write.
         return Err(Errno::EINVAL);
     } else if oflags & oflags::READ_WRITE == 0 {
-        // Neither read nor write requested.
+        // Neither read nor write requested; assume the user would like to read.
         oflags |= oflags::READ_ONLY;
     } else if oflags & oflags::EXCLUSIVE != 0 && oflags & oflags::CREATE == 0 {
         // Exclusive without create can never succeed.

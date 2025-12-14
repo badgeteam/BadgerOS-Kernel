@@ -7,16 +7,22 @@ use core::{
     ptr::null_mut,
 };
 
-use crate::bindings::{
-    error::{EResult, Errno},
-    raw::{
-        SIGKILL, SIGSEGV, SIGSTOP, rawputc, sched_signal_exit, sigaction, sigaction__bindgen_ty_1,
-        siginfo_t, thread_exit,
+use alloc::{ffi::CString, vec::Vec};
+
+use crate::{
+    bindings::{
+        error::{EResult, Errno},
+        raw::{
+            SIGKILL, SIGSEGV, SIGSTOP, rawputc, sched_signal_exit, sigaction,
+            sigaction__bindgen_ty_1, siginfo_t, thread_exit,
+        },
     },
+    filesystem::PATH_MAX,
+    process::usercopy,
 };
 
 use super::{
-    PID,
+    Cmdline, PID,
     c_api::get_user_pc,
     current,
     signal::{SIG_COUNT, SIG_DFL, run_handler},
@@ -57,7 +63,7 @@ pub unsafe extern "C" fn syscall_proc_getargs(cap: usize, memory: *mut c_void) -
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn syscall_proc_fork() -> i64 {
     let proc = current().unwrap();
-    Errno::extract_i64(try { proc.fork()?.pid() })
+    Errno::extract_i64(try { proc.fork()?.pid })
 }
 
 /// Execute the program at `path`, replacing the calling program's code and data in the process.
@@ -67,7 +73,38 @@ pub unsafe extern "C" fn syscall_proc_exec(
     argv: *const *const c_char,
     envp: *const *const c_char,
 ) -> c_int {
-    todo!()
+    // TODO: Implement envp.
+    let res = Errno::extract(
+        try {
+            let proc = current().unwrap();
+
+            let path = usercopy::copy_user_cstr(path)?;
+
+            let mut argv = UserPtr::new(argv)?;
+            let mut argbuf = Vec::<CString>::new();
+            loop {
+                let ptr = argv.read()?;
+                if ptr.is_null() {
+                    break;
+                }
+                argbuf.try_reserve(1).map_err(Into::into)?;
+                argbuf.push(usercopy::copy_user_cstr(ptr)?);
+                argv = UserPtr::new(argv.as_ptr().wrapping_add(1))?;
+            }
+
+            proc.exec(Cmdline {
+                binary: path,
+                argv: argbuf,
+            })?;
+        },
+    );
+
+    if res == 0 {
+        // TODO: Perhaps a future sched could avoid the need for this.
+        unsafe { thread_exit(0) };
+    }
+
+    res
 }
 
 /// Set the signal handler for a specific signal number.

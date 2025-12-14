@@ -44,5 +44,11 @@ int main(int argc, char **argv, char **envp) {
     *lazy = 1;
     printf("Result: %d\n", *lazy);
 
+    printf("Exec'ing /sbin/test2\n");
+
+    int exec_res = syscall_proc_exec("/sbin/test2", (char const *const[]){NULL}, NULL);
+
+    printf("exec() returned %d\n", exec_res);
+
     return 0;
 }

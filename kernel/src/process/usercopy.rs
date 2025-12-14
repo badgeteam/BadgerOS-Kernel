@@ -10,12 +10,12 @@ use core::{
     ptr::NonNull,
 };
 
-use bytemuck::Pod;
+use alloc::{ffi::CString, vec::Vec};
 
 use crate::{
     bindings::{
-        error::Errno,
-        raw::{isr_noexc_copy_u8, isr_noexc_mem_copy},
+        error::{EResult, Errno},
+        raw::{isr_noexc_copy_u8, isr_noexc_mem_copy, sigaction, stat_t},
     },
     cpu, mem,
 };
@@ -25,32 +25,55 @@ pub type AccessResult<T> = Result<T, Errno>;
 #[allow(non_upper_case_globals)]
 pub const AccessFault: Errno = Errno::EFAULT;
 
-// TODO: Reinstate `AccessFault` when `try bikeshed _ {}` becomes more stable.
-// /// Represents an access fault originating from a [`UserSlice`] or [`UserPtr`].
-// #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-// pub struct AccessFault;
+/*
+TODO: Reinstate `AccessFault` when `try bikeshed _ {}` becomes more stable.
+/// Represents an access fault originating from a [`UserSlice`] or [`UserPtr`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct AccessFault;
 
-// impl Display for AccessFault {
-//     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-//         f.write_str("AccessFault")
-//     }
-// }
+impl Display for AccessFault {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("AccessFault")
+    }
+}
 
-// impl Error for AccessFault {
-//     fn source(&self) -> Option<&(dyn Error + 'static)> {
-//         None
-//     }
+impl Error for AccessFault {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        None
+    }
 
-//     fn description(&self) -> &str {
-//         "description() is deprecated; use Display"
-//     }
+    fn description(&self) -> &str {
+        "description() is deprecated; use Display"
+    }
 
-//     fn cause(&self) -> Option<&dyn Error> {
-//         self.source()
-//     }
+    fn cause(&self) -> Option<&dyn Error> {
+        self.source()
+    }
 
-//     fn provide<'a>(&'a self, _request: &mut core::error::Request<'a>) {}
-// }
+    fn provide<'a>(&'a self, _request: &mut core::error::Request<'a>) {}
+}
+*/
+
+/// Anything deemed safe for copying between user and kernel memory.
+pub unsafe trait UserCopyable: Sized {}
+unsafe impl UserCopyable for bool {}
+unsafe impl UserCopyable for u8 {}
+unsafe impl UserCopyable for i8 {}
+unsafe impl UserCopyable for u16 {}
+unsafe impl UserCopyable for i16 {}
+unsafe impl UserCopyable for u32 {}
+unsafe impl UserCopyable for i32 {}
+unsafe impl UserCopyable for u64 {}
+unsafe impl UserCopyable for i64 {}
+unsafe impl UserCopyable for u128 {}
+unsafe impl UserCopyable for i128 {}
+unsafe impl UserCopyable for usize {}
+unsafe impl UserCopyable for isize {}
+unsafe impl<T: UserCopyable> UserCopyable for *mut T {}
+unsafe impl<T: UserCopyable> UserCopyable for *const T {}
+unsafe impl<T: UserCopyable, const L: usize> UserCopyable for [T; L] {}
+unsafe impl UserCopyable for stat_t {}
+unsafe impl UserCopyable for sigaction {}
 
 /// Represents a slice of user memory.
 /// Can be safely constructed from a (pointer, length) pair.
@@ -59,13 +82,13 @@ pub type UserSliceMut<'a, T> = UserSlice<'a, T, true>;
 /// Represents a slice of user memory.
 /// Can be safely constructed from a (pointer, length) pair.
 #[derive(Clone, Copy)]
-pub struct UserSlice<'a, T: Sized + Pod, const MUTABLE: bool = false> {
+pub struct UserSlice<'a, T: UserCopyable, const MUTABLE: bool = false> {
     ptr: NonNull<T>,
     length: usize,
     marker: PhantomData<&'a T>,
 }
 
-impl<'a, T: Sized + Pod> UserSlice<'a, T, false> {
+impl<'a, T: UserCopyable> UserSlice<'a, T, false> {
     /// Create a slice from kernel memory; it is assumed to be safe to access.
     pub fn new_kernel(kernel_slice: &'a [T]) -> Self {
         Self {
@@ -94,7 +117,7 @@ impl<'a, T: Sized + Pod> UserSlice<'a, T, false> {
     }
 }
 
-impl<'a, T: Sized + Pod> UserSlice<'a, T, true> {
+impl<'a, T: UserCopyable> UserSlice<'a, T, true> {
     /// Create a slice from kernel memory; it is assumed to be safe to access.
     pub fn new_kernel_mut(kernel_slice: &'a mut [T]) -> Self {
         Self {
@@ -123,7 +146,7 @@ impl<'a, T: Sized + Pod> UserSlice<'a, T, true> {
     }
 }
 
-impl<'a, T: Sized + Pod, const MUTABLE: bool> UserSlice<'a, T, MUTABLE> {
+impl<'a, T: UserCopyable, const MUTABLE: bool> UserSlice<'a, T, MUTABLE> {
     /// Get a subslice from this one.
     pub fn subslice(&self, range: Range<usize>) -> UserSlice<'a, T, false> {
         assert!(
@@ -194,7 +217,7 @@ impl<'a, T: Sized + Pod, const MUTABLE: bool> UserSlice<'a, T, MUTABLE> {
     }
 }
 
-impl<'a, T: Sized + Pod> UserSlice<'a, T, true> {
+impl<'a, T: UserCopyable> UserSlice<'a, T, true> {
     /// Get a subslice from this one.
     pub fn subslice_mut(&mut self, range: Range<usize>) -> UserSlice<'a, T, true> {
         assert!(
@@ -275,7 +298,7 @@ impl<'a, T: Sized + Pod> UserSlice<'a, T, true> {
     }
 }
 
-impl<'a, T: Sized + Pod> Into<UserSlice<'a, T, false>> for UserSlice<'a, T, true> {
+impl<'a, T: UserCopyable> Into<UserSlice<'a, T, false>> for UserSlice<'a, T, true> {
     fn into(self) -> UserSlice<'a, T, false> {
         UserSlice {
             ptr: self.ptr,
@@ -292,12 +315,12 @@ pub type UserPtrMut<'a, T> = UserPtr<'a, T, true>;
 /// Represents an object in user memory.
 /// Can be safely constructed from a pointer.
 #[derive(Clone, Copy)]
-pub struct UserPtr<'a, T: Sized + Pod, const MUTABLE: bool = false> {
+pub struct UserPtr<'a, T: UserCopyable, const MUTABLE: bool = false> {
     ptr: NonNull<T>,
     marker: PhantomData<&'a T>,
 }
 
-impl<'a, T: Sized + Pod> UserPtr<'a, T, false> {
+impl<'a, T: UserCopyable> UserPtr<'a, T, false> {
     /// Create a pointer from kernel memory; it is assumed to be safe to access.
     pub fn new_kernel(ptr: &'a T) -> AccessResult<Self> {
         Ok(Self {
@@ -337,7 +360,7 @@ impl<'a, T: Sized + Pod> UserPtr<'a, T, false> {
     }
 }
 
-impl<'a, T: Sized + Pod> UserPtr<'a, T, true> {
+impl<'a, T: UserCopyable> UserPtr<'a, T, true> {
     /// Create a pointer from kernel memory; it is assumed to be safe to access.
     pub fn new_kernel_mut(ptr: &'a mut T) -> AccessResult<Self> {
         Ok(Self {
@@ -377,7 +400,7 @@ impl<'a, T: Sized + Pod> UserPtr<'a, T, true> {
     }
 }
 
-impl<'a, T: Sized + Pod, const MUTABLE: bool> UserPtr<'a, T, MUTABLE> {
+impl<'a, T: UserCopyable, const MUTABLE: bool> UserPtr<'a, T, MUTABLE> {
     /// Try to read an element from the slice.
     pub fn read(&self) -> AccessResult<T> {
         let mut tmp = MaybeUninit::uninit();
@@ -403,7 +426,7 @@ impl<'a, T: Sized + Pod, const MUTABLE: bool> UserPtr<'a, T, MUTABLE> {
     }
 }
 
-impl<'a, T: Sized + Pod> UserPtr<'a, T, true> {
+impl<'a, T: UserCopyable> UserPtr<'a, T, true> {
     /// Try to write an element to the slice.
     pub fn write(&mut self, data: T) -> AccessResult<()> {
         unsafe { cpu::mmu::enable_sum() };
@@ -424,21 +447,56 @@ impl<'a, T: Sized + Pod> UserPtr<'a, T, true> {
     }
 }
 
-/// Read a C-string from user memory into a buffer.
-pub fn read_user_cstr(user_cstr: *const c_char, buffer: &mut [u8]) -> AccessResult<usize> {
+/// Read a C-string from user memory into a preallocated buffer.
+pub fn read_user_cstr(mut user_cstr: *const c_char, buffer: &mut [u8]) -> AccessResult<usize> {
+    unsafe { cpu::mmu::enable_sum() };
+
     for i in 0..buffer.len() {
         if !mem::vmm::pagetable::is_canon_user_addr(user_cstr as usize) {
+            unsafe { cpu::mmu::disable_sum() };
             return Err(AccessFault);
         }
         let mut c = 0;
         let faulted = unsafe { isr_noexc_copy_u8(&raw mut c, user_cstr as *const u8) };
         if faulted {
+            unsafe { cpu::mmu::disable_sum() };
             return Err(AccessFault);
         }
         if c == 0 {
-            return Ok(i);
+            break;
         }
         buffer[i] = c;
+        user_cstr = user_cstr.wrapping_add(1);
     }
+
+    unsafe { cpu::mmu::disable_sum() };
     return Ok(buffer.len());
+}
+
+/// Read a C-string from user memory into a new [`CString`].
+pub fn copy_user_cstr(mut user_cstr: *const c_char) -> EResult<CString> {
+    unsafe { cpu::mmu::enable_sum() };
+    let mut res = Vec::new();
+
+    loop {
+        if !mem::vmm::pagetable::is_canon_user_addr(user_cstr as usize) {
+            unsafe { cpu::mmu::disable_sum() };
+            return Err(AccessFault);
+        }
+        let mut c = 0;
+        let faulted = unsafe { isr_noexc_copy_u8(&raw mut c, user_cstr as *const u8) };
+        if faulted {
+            unsafe { cpu::mmu::disable_sum() };
+            return Err(AccessFault);
+        }
+        if c == 0 {
+            break;
+        }
+        res.try_reserve(1)?;
+        res.push(c);
+        user_cstr = user_cstr.wrapping_add(1);
+    }
+
+    unsafe { cpu::mmu::disable_sum() };
+    Ok(unsafe { CString::from_vec_unchecked(res) })
 }

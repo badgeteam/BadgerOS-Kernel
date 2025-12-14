@@ -104,7 +104,7 @@ pub fn run_handler(siginfo: siginfo_t) {
         }
         return;
     } else if handler == SIG_IGN {
-        if siginfo.si_pid != proc.pid() {
+        if siginfo.si_pid != proc.pid {
             // Sent by another process, allowed to ignore.
             return;
         }

@@ -68,13 +68,13 @@ pub unsafe extern "C" fn syscall_mem_map(
     let proc = process::current().unwrap();
     let vpn = unsafe {
         if prot & PROT_READ != 0 {
-            proc.memmap.map_ram(
+            proc.memmap().map_ram(
                 fixed.then_some(address / PAGE_SIZE as usize),
                 size.div_ceil(PAGE_SIZE as usize),
                 vmm_flags,
             )
         } else {
-            proc.memmap.reserve(
+            proc.memmap().reserve(
                 fixed.then_some(address / PAGE_SIZE as usize),
                 size.div_ceil(PAGE_SIZE as usize),
             )
@@ -98,5 +98,5 @@ pub unsafe extern "C" fn syscall_mem_unmap(address: *mut c_void, size: usize) {
             .saturating_add(size)
             .div_ceil(PAGE_SIZE as usize)
             .min(vmm::pagetable::canon_half_pages());
-    unsafe { proc.memmap.unmap(range) };
+    unsafe { proc.memmap().unmap(range) };
 }

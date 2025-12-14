@@ -25,7 +25,7 @@ use super::{Process, signal};
 /// Needed by C because the process struct is not representable in C.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn proc_memmap(proc: &Process) -> &Memmap {
-    &proc.memmap
+    proc.memmap()
 }
 
 /// Needed by C because the process struct is not representable in C.
@@ -37,7 +37,7 @@ unsafe extern "C" fn proc_flags(proc: &Process) -> &AtomicU32 {
 /// Needed by C because the process struct is not representable in C.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn proc_pid(proc: &Process) -> PID {
-    proc.pid()
+    proc.pid
 }
 
 /// Start the init process.
@@ -65,13 +65,13 @@ pub fn get_user_pc() -> usize {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn proc_pagefault_handler(vaddr: usize, access: u32) {
     let proc = current().unwrap();
-    let retry = proc.memmap.page_fault(vaddr / PAGE_SIZE as usize, access);
+    let retry = proc.memmap().page_fault(vaddr / PAGE_SIZE as usize, access);
 
     if !retry {
         signal::run_handler(siginfo_t {
             si_signo: SIGSEGV as c_int,
             si_code: 0,
-            si_pid: proc.pid(),
+            si_pid: proc.pid,
             si_uid: 0,
             si_addr: get_user_pc() as *mut c_void, // TODO: Context switching refactor needed to fix this.
             si_status: 0,
@@ -91,7 +91,7 @@ unsafe extern "C" fn proc_sigill_handler() {
     signal::run_handler(siginfo_t {
         si_signo: SIGILL as c_int,
         si_code: 0,
-        si_pid: current().unwrap().pid(),
+        si_pid: current().unwrap().pid,
         si_uid: 0,
         si_addr: get_user_pc() as *mut c_void,
         si_status: 0,
@@ -109,7 +109,7 @@ unsafe extern "C" fn proc_sigtrap_handler() {
     signal::run_handler(siginfo_t {
         si_signo: SIGTRAP as c_int,
         si_code: 0,
-        si_pid: current().unwrap().pid(),
+        si_pid: current().unwrap().pid,
         si_uid: 0,
         si_addr: get_user_pc() as *mut c_void,
         si_status: 0,
@@ -126,7 +126,7 @@ unsafe extern "C" fn proc_sigsys_handler() {
     signal::run_handler(siginfo_t {
         si_signo: SIGSYS as c_int,
         si_code: 0,
-        si_pid: current().unwrap().pid(),
+        si_pid: current().unwrap().pid,
         si_uid: 0,
         si_addr: get_user_pc() as *mut c_void,
         si_status: 0,
