@@ -4,7 +4,7 @@
 
 use core::{
     ffi::{c_char, c_int, c_void},
-    ptr::null_mut,
+    ptr::null,
 };
 
 use alloc::{ffi::CString, vec::Vec};
@@ -12,10 +12,7 @@ use alloc::{ffi::CString, vec::Vec};
 use crate::{
     bindings::{
         error::{EResult, Errno},
-        raw::{
-            SIGKILL, SIGSEGV, SIGSTOP, rawputc, sched_signal_exit, sigaction,
-            sigaction__bindgen_ty_1, siginfo_t, thread_exit,
-        },
+        raw::{rawputc, sched_signal_exit, thread_exit},
     },
     filesystem::PATH_MAX,
     process::usercopy,
@@ -25,7 +22,15 @@ use super::{
     Cmdline, PID,
     c_api::get_user_pc,
     current,
-    signal::{SIG_COUNT, SIG_DFL, run_handler},
+    signal::{self},
+    uapi::{
+        signal::{
+            __sa_handler_union, NSIG, SIG_DFL, Signal, sigaction,
+            siginfo::{__si_field_union, __sigfault___first_union, __sigfault_struct},
+            siginfo_t,
+        },
+        sigset::sigset_t,
+    },
     usercopy::{UserPtr, UserSlice},
 };
 
@@ -115,7 +120,10 @@ pub unsafe extern "C" fn syscall_proc_sigaction(
     old_act: *mut sigaction,
 ) -> c_int {
     let proc = current().unwrap();
-    if signum < 0 || signum >= SIG_COUNT || signum == SIGSTOP as c_int || signum == SIGKILL as c_int
+    if signum < 0
+        || signum >= NSIG
+        || signum == Signal::SIGSTOP as c_int
+        || signum == Signal::SIGKILL as c_int
     {
         return -(Errno::EINVAL as c_int);
     }
@@ -131,12 +139,12 @@ pub unsafe extern "C" fn syscall_proc_sigaction(
                 act.read()?
             } else {
                 sigaction {
-                    __bindgen_anon_1: sigaction__bindgen_ty_1 {
-                        sa_handler_ptr: SIG_DFL as *mut c_void,
+                    __sa_handler: __sa_handler_union {
+                        sa_handler: SIG_DFL as *const fn(i32),
                     },
-                    sa_mask: 0,
                     sa_flags: 0,
-                    sa_return_trampoline: null_mut(),
+                    sa_restorer: null(),
+                    sa_mask: sigset_t { __sig: [0; _] },
                 }
             };
         },
@@ -147,13 +155,17 @@ pub unsafe extern "C" fn syscall_proc_sigaction(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn syscall_proc_sigret() {
     if !unsafe { sched_signal_exit() } {
-        run_handler(siginfo_t {
-            si_signo: SIGSEGV as c_int,
+        signal::run_handler(siginfo_t {
+            si_signo: Signal::SIGSEGV as c_int,
+            si_errno: 0,
             si_code: 0,
-            si_pid: current().unwrap().pid,
-            si_uid: 0,
-            si_addr: get_user_pc() as *mut c_void,
-            si_status: 0,
+            __si_fields: __si_field_union {
+                __sigfault: __sigfault_struct {
+                    si_addr: get_user_pc() as *mut c_void,
+                    si_addr_lsb: 0,
+                    __first: __sigfault___first_union { si_pkey: 0 },
+                },
+            },
         });
     }
 }

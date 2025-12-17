@@ -9,7 +9,6 @@
 #include "device/class/union.h"
 #include "device/device.h"
 #include "device/dtb/dtb.h"
-#include "errno.h"
 #include "filesystem.h"
 #include "interrupt.h"
 #include "isr_ctx.h"
@@ -29,5 +28,4 @@
 #include "scheduler/cpu.h"
 #include "scheduler/scheduler.h"
 #include "semaphore.h"
-#include "signal.h"
 #include "usercopy.h"

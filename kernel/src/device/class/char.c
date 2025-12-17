@@ -5,7 +5,7 @@
 
 #include "device/class/char.h"
 
-#include "errno.h"
+#include "badgeros-abi/errno.h"
 
 
 

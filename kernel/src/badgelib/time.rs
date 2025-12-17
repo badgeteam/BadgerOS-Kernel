@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: MIT
 
 use crate::{
-    bindings::{self, raw::timespec_t, spinlock::Spinlock},
+    bindings::{self, spinlock::Spinlock},
     cpu,
+    process::uapi::timespec::timespec,
 };
 
 // TODO: Replace this code with the chrono crate where possible.
@@ -30,11 +31,11 @@ impl Timespec {
     }
 }
 
-impl Into<timespec_t> for Timespec {
-    fn into(self) -> timespec_t {
-        timespec_t {
-            sec: self.sec,
-            nsec: self.nsec,
+impl Into<timespec> for Timespec {
+    fn into(self) -> timespec {
+        timespec {
+            tv_sec: self.sec as i64,
+            tv_nsec: self.nsec as i64,
         }
     }
 }

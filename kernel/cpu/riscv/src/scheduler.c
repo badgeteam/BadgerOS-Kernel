@@ -5,12 +5,12 @@
 
 #include "assertions.h"
 #include "badge_strings.h"
+#include "badgeros-abi/signal.h"
 #include "cpulocal.h"
 #include "isr_ctx.h"
 #include "process/process.h"
 #include "scheduler/cpu.h"
 #include "scheduler/isr.h"
-#include "signal.h"
 #if !CONFIG_NOMMU
 #include "cpu/mmu.h"
 #endif
@@ -88,34 +88,50 @@ bool sched_signal_enter(size_t handler_vaddr, size_t return_vaddr, siginfo_t sig
     sched_thread_t *thread = sched_current_thread();
 
     // Save context to user's stack.
-    ucontext_t stackframe;
-    thread->user_isr_ctx.regs.sp -= sizeof(stackframe);
+    ucontext_t uctx;
+    uctx.uc_stack.ss_sp = (void *)thread->user_isr_ctx.regs.sp;
 
-    stackframe.siginfo = siginfo;
-    stackframe.regs.t0 = thread->user_isr_ctx.regs.t0;
-    stackframe.regs.t1 = thread->user_isr_ctx.regs.t1;
-    stackframe.regs.t2 = thread->user_isr_ctx.regs.t2;
-    stackframe.regs.a0 = thread->user_isr_ctx.regs.a0;
-    stackframe.regs.a1 = thread->user_isr_ctx.regs.a1;
-    stackframe.regs.a2 = thread->user_isr_ctx.regs.a2;
-    stackframe.regs.a3 = thread->user_isr_ctx.regs.a3;
-    stackframe.regs.a4 = thread->user_isr_ctx.regs.a4;
-    stackframe.regs.a5 = thread->user_isr_ctx.regs.a5;
-    stackframe.regs.a6 = thread->user_isr_ctx.regs.a6;
-    stackframe.regs.a7 = thread->user_isr_ctx.regs.a7;
-    stackframe.regs.t3 = thread->user_isr_ctx.regs.t3;
-    stackframe.regs.t4 = thread->user_isr_ctx.regs.t4;
-    stackframe.regs.t5 = thread->user_isr_ctx.regs.t5;
-    stackframe.regs.t6 = thread->user_isr_ctx.regs.t6;
-    stackframe.regs.pc = thread->user_isr_ctx.regs.pc;
-    stackframe.regs.s0 = thread->user_isr_ctx.regs.s0;
-    stackframe.regs.ra = thread->user_isr_ctx.regs.ra;
+    uctx.uc_mcontext.gregs[REGNO_RA]  = thread->user_isr_ctx.regs.ra;
+    uctx.uc_mcontext.gregs[REGNO_SP]  = thread->user_isr_ctx.regs.sp;
+    uctx.uc_mcontext.gregs[REGNO_GP]  = thread->user_isr_ctx.regs.gp;
+    uctx.uc_mcontext.gregs[REGNO_TP]  = thread->user_isr_ctx.regs.tp;
+    uctx.uc_mcontext.gregs[REGNO_T0]  = thread->user_isr_ctx.regs.t0;
+    uctx.uc_mcontext.gregs[REGNO_T1]  = thread->user_isr_ctx.regs.t1;
+    uctx.uc_mcontext.gregs[REGNO_T2]  = thread->user_isr_ctx.regs.t2;
+    uctx.uc_mcontext.gregs[REGNO_S0]  = thread->user_isr_ctx.regs.s0;
+    uctx.uc_mcontext.gregs[REGNO_S1]  = thread->user_isr_ctx.regs.s1;
+    uctx.uc_mcontext.gregs[REGNO_A0]  = thread->user_isr_ctx.regs.a0;
+    uctx.uc_mcontext.gregs[REGNO_A1]  = thread->user_isr_ctx.regs.a1;
+    uctx.uc_mcontext.gregs[REGNO_A2]  = thread->user_isr_ctx.regs.a2;
+    uctx.uc_mcontext.gregs[REGNO_A3]  = thread->user_isr_ctx.regs.a3;
+    uctx.uc_mcontext.gregs[REGNO_A4]  = thread->user_isr_ctx.regs.a4;
+    uctx.uc_mcontext.gregs[REGNO_A5]  = thread->user_isr_ctx.regs.a5;
+    uctx.uc_mcontext.gregs[REGNO_A6]  = thread->user_isr_ctx.regs.a6;
+    uctx.uc_mcontext.gregs[REGNO_A7]  = thread->user_isr_ctx.regs.a7;
+    uctx.uc_mcontext.gregs[REGNO_S2]  = thread->user_isr_ctx.regs.s2;
+    uctx.uc_mcontext.gregs[REGNO_S3]  = thread->user_isr_ctx.regs.s3;
+    uctx.uc_mcontext.gregs[REGNO_S4]  = thread->user_isr_ctx.regs.s4;
+    uctx.uc_mcontext.gregs[REGNO_S5]  = thread->user_isr_ctx.regs.s5;
+    uctx.uc_mcontext.gregs[REGNO_S6]  = thread->user_isr_ctx.regs.s6;
+    uctx.uc_mcontext.gregs[REGNO_S7]  = thread->user_isr_ctx.regs.s7;
+    uctx.uc_mcontext.gregs[REGNO_S8]  = thread->user_isr_ctx.regs.s8;
+    uctx.uc_mcontext.gregs[REGNO_S9]  = thread->user_isr_ctx.regs.s9;
+    uctx.uc_mcontext.gregs[REGNO_S10] = thread->user_isr_ctx.regs.s10;
+    uctx.uc_mcontext.gregs[REGNO_S11] = thread->user_isr_ctx.regs.s11;
+    uctx.uc_mcontext.gregs[REGNO_T3]  = thread->user_isr_ctx.regs.t3;
+    uctx.uc_mcontext.gregs[REGNO_T4]  = thread->user_isr_ctx.regs.t4;
+    uctx.uc_mcontext.gregs[REGNO_T5]  = thread->user_isr_ctx.regs.t5;
+    uctx.uc_mcontext.gregs[REGNO_T6]  = thread->user_isr_ctx.regs.t6;
 
 #if !CONFIG_NOMMU
     mmu_enable_sum();
 #endif
-    size_t *stackptr = (size_t *)thread->user_isr_ctx.regs.sp;
-    bool    faulted  = isr_noexc_mem_copy(stackptr, &stackframe, sizeof(stackframe));
+
+    thread->user_isr_ctx.regs.sp -= sizeof(siginfo);
+    bool faulted                  = isr_noexc_mem_copy((void *)thread->user_isr_ctx.regs.sp, &siginfo, sizeof(siginfo));
+    thread->user_isr_ctx.regs.sp -= sizeof(uctx);
+    faulted                      |= isr_noexc_mem_copy((void *)thread->user_isr_ctx.regs.sp, &uctx, sizeof(uctx));
+
 #if !CONFIG_NOMMU
     mmu_disable_sum();
 #endif
@@ -124,7 +140,7 @@ bool sched_signal_enter(size_t handler_vaddr, size_t return_vaddr, siginfo_t sig
     }
 
     // Set up registers for entering signal handler.
-    thread->user_isr_ctx.regs.s0 = thread->user_isr_ctx.regs.sp + sizeof(stackframe);
+    thread->user_isr_ctx.regs.s0 = thread->user_isr_ctx.regs.sp + sizeof(uctx);
     thread->user_isr_ctx.regs.ra = return_vaddr;
     thread->user_isr_ctx.regs.pc = handler_vaddr;
     thread->user_isr_ctx.regs.a0 = siginfo.si_signo;
@@ -140,13 +156,13 @@ bool sched_signal_enter(size_t handler_vaddr, size_t return_vaddr, siginfo_t sig
 bool sched_signal_exit() {
     sched_thread_t *thread = sched_current_thread();
 
-    ucontext_t stackframe;
+    ucontext_t uctx;
     size_t    *stackptr = (size_t *)thread->user_isr_ctx.regs.sp;
 
 #if !CONFIG_NOMMU
     mmu_enable_sum();
 #endif
-    bool faulted = isr_noexc_mem_copy(&stackframe, stackptr, sizeof(stackframe));
+    bool faulted = isr_noexc_mem_copy(&uctx, stackptr, sizeof(uctx));
 #if !CONFIG_NOMMU
     mmu_disable_sum();
 #endif
@@ -155,27 +171,37 @@ bool sched_signal_exit() {
     }
 
     // Restore user's state.
-    thread->user_isr_ctx.regs.t0 = stackframe.regs.t0;
-    thread->user_isr_ctx.regs.t1 = stackframe.regs.t1;
-    thread->user_isr_ctx.regs.t2 = stackframe.regs.t2;
-    thread->user_isr_ctx.regs.a0 = stackframe.regs.a0;
-    thread->user_isr_ctx.regs.a1 = stackframe.regs.a1;
-    thread->user_isr_ctx.regs.a2 = stackframe.regs.a2;
-    thread->user_isr_ctx.regs.a3 = stackframe.regs.a3;
-    thread->user_isr_ctx.regs.a4 = stackframe.regs.a4;
-    thread->user_isr_ctx.regs.a5 = stackframe.regs.a5;
-    thread->user_isr_ctx.regs.a6 = stackframe.regs.a6;
-    thread->user_isr_ctx.regs.a7 = stackframe.regs.a7;
-    thread->user_isr_ctx.regs.t3 = stackframe.regs.t3;
-    thread->user_isr_ctx.regs.t4 = stackframe.regs.t4;
-    thread->user_isr_ctx.regs.t5 = stackframe.regs.t5;
-    thread->user_isr_ctx.regs.t6 = stackframe.regs.t6;
-    thread->user_isr_ctx.regs.pc = stackframe.regs.pc;
-    thread->user_isr_ctx.regs.s0 = stackframe.regs.s0;
-    thread->user_isr_ctx.regs.ra = stackframe.regs.ra;
-
-    // Restore user's stack pointer.
-    thread->user_isr_ctx.regs.sp += sizeof(stackframe);
+    thread->user_isr_ctx.regs.ra  = uctx.uc_mcontext.gregs[REGNO_RA];
+    thread->user_isr_ctx.regs.sp  = uctx.uc_mcontext.gregs[REGNO_SP];
+    thread->user_isr_ctx.regs.gp  = uctx.uc_mcontext.gregs[REGNO_GP];
+    thread->user_isr_ctx.regs.tp  = uctx.uc_mcontext.gregs[REGNO_TP];
+    thread->user_isr_ctx.regs.t0  = uctx.uc_mcontext.gregs[REGNO_T0];
+    thread->user_isr_ctx.regs.t1  = uctx.uc_mcontext.gregs[REGNO_T1];
+    thread->user_isr_ctx.regs.t2  = uctx.uc_mcontext.gregs[REGNO_T2];
+    thread->user_isr_ctx.regs.s0  = uctx.uc_mcontext.gregs[REGNO_S0];
+    thread->user_isr_ctx.regs.s1  = uctx.uc_mcontext.gregs[REGNO_S1];
+    thread->user_isr_ctx.regs.a0  = uctx.uc_mcontext.gregs[REGNO_A0];
+    thread->user_isr_ctx.regs.a1  = uctx.uc_mcontext.gregs[REGNO_A1];
+    thread->user_isr_ctx.regs.a2  = uctx.uc_mcontext.gregs[REGNO_A2];
+    thread->user_isr_ctx.regs.a3  = uctx.uc_mcontext.gregs[REGNO_A3];
+    thread->user_isr_ctx.regs.a4  = uctx.uc_mcontext.gregs[REGNO_A4];
+    thread->user_isr_ctx.regs.a5  = uctx.uc_mcontext.gregs[REGNO_A5];
+    thread->user_isr_ctx.regs.a6  = uctx.uc_mcontext.gregs[REGNO_A6];
+    thread->user_isr_ctx.regs.a7  = uctx.uc_mcontext.gregs[REGNO_A7];
+    thread->user_isr_ctx.regs.s2  = uctx.uc_mcontext.gregs[REGNO_S2];
+    thread->user_isr_ctx.regs.s3  = uctx.uc_mcontext.gregs[REGNO_S3];
+    thread->user_isr_ctx.regs.s4  = uctx.uc_mcontext.gregs[REGNO_S4];
+    thread->user_isr_ctx.regs.s5  = uctx.uc_mcontext.gregs[REGNO_S5];
+    thread->user_isr_ctx.regs.s6  = uctx.uc_mcontext.gregs[REGNO_S6];
+    thread->user_isr_ctx.regs.s7  = uctx.uc_mcontext.gregs[REGNO_S7];
+    thread->user_isr_ctx.regs.s8  = uctx.uc_mcontext.gregs[REGNO_S8];
+    thread->user_isr_ctx.regs.s9  = uctx.uc_mcontext.gregs[REGNO_S9];
+    thread->user_isr_ctx.regs.s10 = uctx.uc_mcontext.gregs[REGNO_S10];
+    thread->user_isr_ctx.regs.s11 = uctx.uc_mcontext.gregs[REGNO_S11];
+    thread->user_isr_ctx.regs.t3  = uctx.uc_mcontext.gregs[REGNO_T3];
+    thread->user_isr_ctx.regs.t4  = uctx.uc_mcontext.gregs[REGNO_T4];
+    thread->user_isr_ctx.regs.t5  = uctx.uc_mcontext.gregs[REGNO_T5];
+    thread->user_isr_ctx.regs.t6  = uctx.uc_mcontext.gregs[REGNO_T6];
 
     // Successfully returned from signal handler.
     return true;

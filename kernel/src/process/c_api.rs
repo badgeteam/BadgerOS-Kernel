@@ -10,9 +10,7 @@ use core::{
 use crate::{
     bindings::{
         self,
-        raw::{
-            SIGILL, SIGSEGV, SIGSYS, SIGTRAP, isr_context_switch, sched_lower_from_isr, siginfo_t,
-        },
+        raw::{isr_context_switch, sched_lower_from_isr},
     },
     config::PAGE_SIZE,
     cpu::irq,
@@ -20,7 +18,14 @@ use crate::{
     process::{PID, current},
 };
 
-use super::{Process, signal};
+use super::{
+    Process, signal,
+    uapi::signal::{
+        Signal,
+        siginfo::{__si_field_union, __sigfault___first_union, __sigfault_struct},
+        siginfo_t,
+    },
+};
 
 /// Needed by C because the process struct is not representable in C.
 #[unsafe(no_mangle)]
@@ -69,12 +74,16 @@ unsafe extern "C" fn proc_pagefault_handler(vaddr: usize, access: u32) {
 
     if !retry {
         signal::run_handler(siginfo_t {
-            si_signo: SIGSEGV as c_int,
+            si_signo: Signal::SIGSEGV as c_int,
             si_code: 0,
-            si_pid: proc.pid,
-            si_uid: 0,
-            si_addr: get_user_pc() as *mut c_void, // TODO: Context switching refactor needed to fix this.
-            si_status: 0,
+            si_errno: 0,
+            __si_fields: __si_field_union {
+                __sigfault: __sigfault_struct {
+                    si_addr: vaddr as *mut c_void,
+                    si_addr_lsb: 0,
+                    __first: __sigfault___first_union { si_pkey: 0 },
+                },
+            },
         });
     }
 
@@ -89,12 +98,16 @@ unsafe extern "C" fn proc_pagefault_handler(vaddr: usize, access: u32) {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn proc_sigill_handler() {
     signal::run_handler(siginfo_t {
-        si_signo: SIGILL as c_int,
+        si_signo: Signal::SIGILL as c_int,
+        si_errno: 0,
         si_code: 0,
-        si_pid: current().unwrap().pid,
-        si_uid: 0,
-        si_addr: get_user_pc() as *mut c_void,
-        si_status: 0,
+        __si_fields: __si_field_union {
+            __sigfault: __sigfault_struct {
+                si_addr: get_user_pc() as *mut c_void,
+                si_addr_lsb: 0,
+                __first: __sigfault___first_union { si_pkey: 0 },
+            },
+        },
     });
     unsafe {
         irq::disable();
@@ -107,12 +120,16 @@ unsafe extern "C" fn proc_sigill_handler() {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn proc_sigtrap_handler() {
     signal::run_handler(siginfo_t {
-        si_signo: SIGTRAP as c_int,
+        si_signo: Signal::SIGTRAP as c_int,
+        si_errno: 0,
         si_code: 0,
-        si_pid: current().unwrap().pid,
-        si_uid: 0,
-        si_addr: get_user_pc() as *mut c_void,
-        si_status: 0,
+        __si_fields: __si_field_union {
+            __sigfault: __sigfault_struct {
+                si_addr: get_user_pc() as *mut c_void,
+                si_addr_lsb: 0,
+                __first: __sigfault___first_union { si_pkey: 0 },
+            },
+        },
     });
     unsafe {
         irq::disable();
@@ -124,12 +141,16 @@ unsafe extern "C" fn proc_sigtrap_handler() {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn proc_sigsys_handler() {
     signal::run_handler(siginfo_t {
-        si_signo: SIGSYS as c_int,
+        si_signo: Signal::SIGSYS as c_int,
+        si_errno: 0,
         si_code: 0,
-        si_pid: current().unwrap().pid,
-        si_uid: 0,
-        si_addr: get_user_pc() as *mut c_void,
-        si_status: 0,
+        __si_fields: __si_field_union {
+            __sigfault: __sigfault_struct {
+                si_addr: get_user_pc() as *mut c_void,
+                si_addr_lsb: 0,
+                __first: __sigfault___first_union { si_pkey: 0 },
+            },
+        },
     });
     unsafe {
         irq::disable();

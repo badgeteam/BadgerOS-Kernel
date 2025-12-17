@@ -4,43 +4,6 @@ use alloc::{alloc::AllocError, collections::TryReserveError};
 
 use super::raw;
 
-/// Signal enum that matches those of BadgerOS.
-#[repr(u32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Signal {
-    SIGHUP = raw::SIGHUP,
-    SIGINT = raw::SIGINT,
-    SIGQUIT = raw::SIGQUIT,
-    SIGILL = raw::SIGILL,
-    SIGTRAP = raw::SIGTRAP,
-    SIGABRT = raw::SIGABRT,
-    SIGBUS = raw::SIGBUS,
-    SIGFPE = raw::SIGFPE,
-    SIGKILL = raw::SIGKILL,
-    SIGUSR1 = raw::SIGUSR1,
-    SIGSEGV = raw::SIGSEGV,
-    SIGUSR2 = raw::SIGUSR2,
-    SIGPIPE = raw::SIGPIPE,
-    SIGALRM = raw::SIGALRM,
-    SIGTERM = raw::SIGTERM,
-    SIGSTKFLT = raw::SIGSTKFLT,
-    SIGCHLD = raw::SIGCHLD,
-    SIGCONT = raw::SIGCONT,
-    SIGSTOP = raw::SIGSTOP,
-    SIGTSTP = raw::SIGTSTP,
-    SIGTTIN = raw::SIGTTIN,
-    SIGTTOU = raw::SIGTTOU,
-    SIGURG = raw::SIGURG,
-    SIGXCPU = raw::SIGXCPU,
-    SIGXFSZ = raw::SIGXFSZ,
-    SIGVTALRM = raw::SIGVTALRM,
-    SIGPROF = raw::SIGPROF,
-    SIGWINCH = raw::SIGWINCH,
-    SIGIO = raw::SIGIO,
-    SIGPWR = raw::SIGPWR,
-    SIGSYS = raw::SIGSYS,
-}
-
 /// Errno enum that matches those of BadgerOS.
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

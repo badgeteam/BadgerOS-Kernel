@@ -6,12 +6,12 @@
 #include "cpu/driver/riscv_plic.h"
 
 #include "assertions.h"
+#include "badgeros-abi/errno.h"
 #include "cpu/riscv.h"
 #include "device/class/irqctl.h"
 #include "device/dev_addr.h"
 #include "device/device.h"
 #include "device/dtb/dtb.h"
-#include "errno.h"
 #include "list.h"
 #include "log.h"
 #include "map.h"

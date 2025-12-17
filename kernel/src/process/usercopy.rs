@@ -15,7 +15,7 @@ use alloc::{ffi::CString, vec::Vec};
 use crate::{
     bindings::{
         error::{EResult, Errno},
-        raw::{isr_noexc_copy_u8, isr_noexc_mem_copy, sigaction, stat_t},
+        raw::{isr_noexc_copy_u8, isr_noexc_mem_copy},
     },
     cpu, mem,
 };
@@ -72,8 +72,6 @@ unsafe impl UserCopyable for isize {}
 unsafe impl<T: UserCopyable> UserCopyable for *mut T {}
 unsafe impl<T: UserCopyable> UserCopyable for *const T {}
 unsafe impl<T: UserCopyable, const L: usize> UserCopyable for [T; L] {}
-unsafe impl UserCopyable for stat_t {}
-unsafe impl UserCopyable for sigaction {}
 
 /// Represents a slice of user memory.
 /// Can be safely constructed from a (pointer, length) pair.

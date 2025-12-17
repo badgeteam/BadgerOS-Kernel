@@ -4,9 +4,9 @@
 #pragma once
 
 #include "attributes.h"
+#include "badgeros-abi/signal.h"
 #include "scheduler/scheduler.h"
 #include "scheduler/types.h"
-#include "signal.h"
 
 #include <stdbool.h>
 #include <stddef.h>

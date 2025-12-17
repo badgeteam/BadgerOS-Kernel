@@ -1,6 +1,8 @@
 
 # SPDX-License-Identifier: MIT
 
+all: build
+
 CONFIG_PATH        = ../.config/config.mk
 include $(CONFIG_PATH)
 include cpu/$(CONFIG_CPU)/cpu.mk

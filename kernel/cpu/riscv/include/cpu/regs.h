@@ -187,6 +187,38 @@ STRUCT_END(cpu_regs_t)
 typedef cpu_regs_t cpu_regs_t;
 #endif
 
+#define REGNO_PC  0
+#define REGNO_RA  1
+#define REGNO_SP  2
+#define REGNO_GP  3
+#define REGNO_TP  4
+#define REGNO_T0  5
+#define REGNO_T1  6
+#define REGNO_T2  7
+#define REGNO_S0  8
+#define REGNO_S1  9
+#define REGNO_A0  10
+#define REGNO_A1  11
+#define REGNO_A2  12
+#define REGNO_A3  13
+#define REGNO_A4  14
+#define REGNO_A5  15
+#define REGNO_A6  16
+#define REGNO_A7  17
+#define REGNO_S2  18
+#define REGNO_S3  19
+#define REGNO_S4  20
+#define REGNO_S5  21
+#define REGNO_S6  22
+#define REGNO_S7  23
+#define REGNO_S8  24
+#define REGNO_S9  25
+#define REGNO_S10 26
+#define REGNO_S11 27
+#define REGNO_T3  28
+#define REGNO_T4  29
+#define REGNO_T5  30
+#define REGNO_T6  31
 
 #undef STRUCT_BEGIN
 #undef STRUCT_FIELD_WORD
