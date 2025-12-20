@@ -5,6 +5,9 @@ use uuid::Uuid;
 
 use crate::bindings::error::EResult;
 
+pub mod list;
+pub mod thread_ref;
+
 /// Enum that represents either a const or a mut reference.
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 pub enum MaybeMut<'a, T> {

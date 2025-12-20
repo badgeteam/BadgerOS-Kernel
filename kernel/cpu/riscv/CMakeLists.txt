@@ -8,6 +8,7 @@ set(cpu_src
     ${CMAKE_CURRENT_LIST_DIR}/src/driver/riscv_plic.c
     
     ${CMAKE_CURRENT_LIST_DIR}/src/entrypoint.S
+    ${CMAKE_CURRENT_LIST_DIR}/src/exception.S
     ${CMAKE_CURRENT_LIST_DIR}/src/isr.S
     ${CMAKE_CURRENT_LIST_DIR}/src/isr_ctx.S
     ${CMAKE_CURRENT_LIST_DIR}/src/syscall.S

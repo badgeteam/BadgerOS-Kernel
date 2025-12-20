@@ -151,3 +151,11 @@ macro_rules! printf {
         crate::bindings::log::printf(&format_args!($($args),*))
     };
 }
+
+/// Print a formatted message without locking the mutex.
+#[macro_export]
+macro_rules! printf_unlocked {
+    ($($args:expr),*) => {
+        crate::bindings::log::printf_unlocked(&format_args!($($args),*))
+    };
+}

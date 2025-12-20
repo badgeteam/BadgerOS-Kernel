@@ -22,6 +22,7 @@ SECTIONS
         *(.interrupt_vector_table)
     } :text
     .text : {
+        *(.text.riscv_exception_asm)
         *(.text.__trap_asm)
         *(.text .text.*)
     } :text

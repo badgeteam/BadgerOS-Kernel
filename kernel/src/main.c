@@ -78,6 +78,9 @@ void basic_runtime_init() {
     bootp_postheap_init();
     ktests_runlevel(KTEST_WHEN_VMM);
 
+    void sched3_test();
+    sched3_test();
+
     // Global scheduler initialization.
     sched_init();
     sched_init_cpu(0);

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Julian Scheffers <julian@scheffers.net>
+// SPDX-FileType: SOURCE
+// SPDX-License-Identifier: MIT
+
 #![no_std]
 #![no_main]
 #![feature(allocator_api)]
@@ -34,6 +38,7 @@ pub mod badgelib;
 pub mod config;
 pub mod device;
 pub mod filesystem;
+pub mod misc;
 #[macro_use]
 pub mod ktest;
 pub mod kparam;
