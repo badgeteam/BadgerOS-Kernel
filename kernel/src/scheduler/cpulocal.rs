@@ -17,5 +17,5 @@ pub struct CpuLocal {
     /// Current thread.
     pub thread: Option<Arc<Thread>>,
     /// This CPU's scheduler.
-    pub sched: Scheduler,
+    pub sched: Option<Scheduler>,
 }

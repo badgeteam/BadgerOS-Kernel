@@ -2,7 +2,12 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::{arch::naked_asm, fmt::Display, ptr};
+use core::{
+    arch::{asm, naked_asm},
+    fmt::Display,
+    ptr,
+    sync::atomic::{Ordering, fence},
+};
 
 use alloc::boxed::Box;
 
@@ -259,8 +264,9 @@ unsafe extern "C" fn thread_trampoline_1() {
 unsafe extern "C" fn thread_trampoline_2(ptr: *mut (), meta: *mut ()) {
     unsafe {
         let code: *mut dyn FnOnce() = ptr::from_raw_parts_mut(ptr, core::mem::transmute(meta));
+        fence(Ordering::Acquire);
         Box::from_raw(code)();
-        Thread::current().unwrap().die();
+        Thread::current().unwrap().as_ref().die();
     }
 }
 
@@ -305,4 +311,12 @@ pub unsafe extern "C" fn context_switch(new_stack: *mut (), old_stack_out: *mut 
         // Return to the new thread context.
         "ret"
     );
+}
+
+/// Run a CPU pause hint instruction.
+#[inline(always)]
+pub fn pause_hint() {
+    // RISC-V Zihintpause instruction.
+    // This is a fence with PRED=W and SUCC=none.
+    unsafe { asm!(".word 0x0100000f") };
 }

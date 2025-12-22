@@ -35,6 +35,7 @@ extern crate chrono;
 #[macro_use]
 pub mod bindings;
 pub mod badgelib;
+pub mod boot;
 pub mod config;
 pub mod device;
 pub mod filesystem;

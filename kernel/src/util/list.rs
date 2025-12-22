@@ -54,10 +54,10 @@ impl<T: HasListNode<T>> InvasiveList<T> {
         if !node.next.is_null() {
             return Err(());
         }
+        debug_assert!(node.prev.is_null());
 
         unsafe {
             node.next = self.first;
-            debug_assert!(node.prev.is_null());
             if !self.first.is_null() {
                 (*self.first).prev = node;
             } else {
@@ -109,10 +109,10 @@ impl<T: HasListNode<T>> InvasiveList<T> {
         if !node.next.is_null() {
             return Err(());
         }
+        debug_assert!(node.prev.is_null());
 
         unsafe {
             node.next = self.last;
-            debug_assert!(node.next.is_null());
             if !self.last.is_null() {
                 (*self.last).next = node;
             } else {

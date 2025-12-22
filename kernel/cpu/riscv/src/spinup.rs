@@ -4,17 +4,19 @@
 
 use core::arch::asm;
 
+use crate::boot::spinup::common_cpu_spinup;
+
 unsafe extern "C" {
     /// RISC-V interrupt vector table.
     unsafe fn riscv_vector_table();
 }
 
 /// Run architecture-specific CPU spin-up code.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn arch_cpu_spinup() {
     unsafe {
         asm!("csrw sstatus, 0");
         asm!("csrw stvec, {}", in(reg) riscv_vector_table as *const () as usize);
         asm!("csrw sie, {}", in(reg)(1 << 9)); // Supervisor external interrupt.
+        common_cpu_spinup();
     }
 }

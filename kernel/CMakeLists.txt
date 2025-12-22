@@ -129,7 +129,7 @@ set(kernel_src
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/spinlock.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/nanoprintf.c
     
-    ${CMAKE_CURRENT_LIST_DIR}/src/bootp/${CONFIG_BOOT_PROTOCOL}.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/boot/${CONFIG_BOOT_PROTOCOL}.c
     
     ${CMAKE_CURRENT_LIST_DIR}/src/device/builtin_driver/pcie.c
     ${CMAKE_CURRENT_LIST_DIR}/src/device/class/block.c

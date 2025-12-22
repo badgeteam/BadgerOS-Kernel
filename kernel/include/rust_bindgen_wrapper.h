@@ -30,4 +30,5 @@
 #include "scheduler/scheduler.h"
 #include "semaphore.h"
 #include "signal.h"
+#include "smp.h"
 #include "usercopy.h"

@@ -4,10 +4,7 @@
 
 use core::{arch::asm, ptr::NonNull};
 
-use crate::{
-    scheduler::cpulocal::CpuLocal,
-    util::thread_ref::{ThreadMut, ThreadRef},
-};
+use crate::scheduler::cpulocal::CpuLocal;
 
 /// Architecture-specific CPU-local data.
 #[repr(C)]
@@ -22,21 +19,11 @@ pub struct ArchCpuLocal {
 impl CpuLocal {
     /// Get the CPU-local pointer.
     #[inline(always)]
-    pub fn get() -> ThreadRef<Self> {
+    pub fn get() -> Option<NonNull<CpuLocal>> {
         unsafe {
             let ptr: *mut Self;
             asm!("csrr {ptr}, sscratch", ptr=out(reg)ptr);
-            ThreadRef::new(NonNull::new(ptr).unwrap())
-        }
-    }
-
-    /// Get the CPU-local pointer.
-    #[inline(always)]
-    pub unsafe fn get_mut() -> ThreadMut<Self> {
-        unsafe {
-            let ptr: *mut Self;
-            asm!("csrr {ptr}, sscratch", ptr=out(reg)ptr);
-            ThreadMut::new(NonNull::new(ptr).unwrap())
+            NonNull::new(ptr)
         }
     }
 
