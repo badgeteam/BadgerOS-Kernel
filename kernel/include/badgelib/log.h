@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "mutex.h"
+#include "sched/sync/mutex.h"
 
 #include <stddef.h>
 

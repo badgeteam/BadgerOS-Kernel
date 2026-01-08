@@ -7,7 +7,8 @@
 
 #include "badge_strings.h"
 #include "lstr.h"
-#include "malloc.h"
+
+#include <malloc.h>
 
 
 

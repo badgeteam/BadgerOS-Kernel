@@ -4,9 +4,16 @@
 
 use core::ffi::c_void;
 
-use crate::bindings::{
-    log::LogLevel,
-    raw::{sched_signal_enter, sigaction, sigaction__bindgen_ty_1, siginfo_t},
+use crate::{
+    bindings::{
+        log::LogLevel,
+        raw::{sigaction, sigaction__bindgen_ty_1, siginfo_t},
+    },
+    cpu::{
+        thread::{GpRegfile, SpRegfile},
+        usermode::enter_signal,
+    },
+    process::current,
 };
 
 /// Signal numbers recognised by BadgerOS.
@@ -70,8 +77,56 @@ impl Default for Sigtab {
     }
 }
 
+/// Run the handler for a segmentation fault.
+pub fn run_sigsegv_handler(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
+    run_handler(
+        siginfo_t {
+            si_signo: Signal::SIGSEGV as i32,
+            si_code: 0,
+            si_pid: current().unwrap().pid,
+            si_uid: 0,
+            si_addr: sregs.fault_vaddr() as *mut c_void,
+            si_status: 0,
+        },
+        regs,
+        sregs,
+    );
+}
+
+/// Run the handler for an illegal instruction fault.
+pub fn run_sigill_handler(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
+    run_handler(
+        siginfo_t {
+            si_signo: Signal::SIGILL as i32,
+            si_code: 0,
+            si_pid: current().unwrap().pid,
+            si_uid: 0,
+            si_addr: sregs.fault_pc() as *mut c_void,
+            si_status: 0,
+        },
+        regs,
+        sregs,
+    );
+}
+
+/// Run the handler for a breakpoint trap.
+pub fn run_sigtrap_handler(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
+    run_handler(
+        siginfo_t {
+            si_signo: Signal::SIGTRAP as i32,
+            si_code: 0,
+            si_pid: current().unwrap().pid,
+            si_uid: 0,
+            si_addr: sregs.fault_pc() as *mut c_void,
+            si_status: 0,
+        },
+        regs,
+        sregs,
+    );
+}
+
 /// Run the handler for some signal.
-pub fn run_handler(siginfo: siginfo_t) {
+pub fn run_handler(siginfo: siginfo_t, regs: &mut GpRegfile, sregs: &mut SpRegfile) {
     logkf!(
         LogLevel::Debug,
         "Running signal handler for {:#?}",
@@ -84,7 +139,7 @@ pub fn run_handler(siginfo: siginfo_t) {
     }
 
     let proc = super::current().unwrap();
-    let guard = proc.sigtab.lock_shared();
+    let guard = proc.sigtab.unintr_lock_shared();
     let action = guard.table[siginfo.si_signo as usize];
     let handler = unsafe { action.__bindgen_anon_1.sa_handler_ptr } as usize;
     let returner = action.sa_return_trampoline as usize;
@@ -119,7 +174,7 @@ pub fn run_handler(siginfo: siginfo_t) {
     }
 
     // TODO: Get rid of sched_signal_enter?
-    let success = unsafe { sched_signal_enter(handler, returner, siginfo) };
+    let success = unsafe { enter_signal(siginfo, handler, returner, regs, sregs) };
     if !success {
         signal_die(Signal::SIGSEGV as i32);
     }

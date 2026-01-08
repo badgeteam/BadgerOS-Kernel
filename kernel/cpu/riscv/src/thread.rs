@@ -11,7 +11,7 @@ use core::{
 
 use alloc::boxed::Box;
 
-use crate::scheduler::Thread;
+use crate::{cpu::irq, kernel::sched::Thread};
 
 /// Special registers state for threads.
 #[repr(C)]
@@ -26,6 +26,14 @@ pub struct SpRegfile {
 impl SpRegfile {
     pub const fn fault_code(&self) -> isize {
         self.scause
+    }
+
+    pub const fn fault_vaddr(&self) -> usize {
+        self.stval
+    }
+
+    pub const fn fault_pc(&self) -> usize {
+        self.sepc
     }
 
     pub const fn fault_name(&self) -> Option<&'static str> {
@@ -58,14 +66,14 @@ impl SpRegfile {
     }
 
     pub const fn is_kernel_mode(&self) -> bool {
-        self.sstatus & 0x80 != 0
+        self.sstatus & 0x100 != 0
     }
 }
 
 impl Display for SpRegfile {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_fmt(format_args!(
-            "  SSTATUS  0x{:x}\n  SCAUSE   0x{:x}\n  STVAL    0x{:x}",
+            "  SSTATUS  0x{:x}\n  SCAUSE   0x{:x}\n  STVAL    0x{:x}\n",
             self.sstatus, self.scause, self.stval
         ))
     }
@@ -73,7 +81,7 @@ impl Display for SpRegfile {
 
 /// The general-purpose register, PC, thread pointer and stack.
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct GpRegfile {
     pub pc: usize,
     pub ra: usize,
@@ -107,6 +115,17 @@ pub struct GpRegfile {
     pub t4: usize,
     pub t5: usize,
     pub t6: usize,
+}
+
+impl GpRegfile {
+    pub fn set_retval(&mut self, val: usize) {
+        self.a0 = val;
+    }
+
+    pub fn set_big_retval(&mut self, val: [usize; 2]) {
+        self.a0 = val[0];
+        self.a1 = val[1];
+    }
 }
 
 impl Display for GpRegfile {
@@ -229,7 +248,7 @@ pub struct FloatRegfile {
 
 /// Set up the entrypoint for a thread given its kernel stack.
 /// Returns how many words of stack were used.
-pub fn prepare_entry(stack: &mut [usize], code: Box<dyn FnOnce()>) -> usize {
+pub fn prepare_entry(stack: &mut [usize], code: Box<dyn FnOnce() + Send + 'static>) -> usize {
     const WORDS: usize = 16;
     let len = stack.len();
     let stack = &mut stack[len - WORDS..];
@@ -265,15 +284,16 @@ unsafe extern "C" fn thread_trampoline_2(ptr: *mut (), meta: *mut ()) {
     unsafe {
         let code: *mut dyn FnOnce() = ptr::from_raw_parts_mut(ptr, core::mem::transmute(meta));
         fence(Ordering::Acquire);
+        irq::enable();
         Box::from_raw(code)();
-        Thread::current().unwrap().as_ref().die();
+        (*Thread::current()).die();
     }
 }
 
 /// Switch to another thread context.
 #[unsafe(naked)]
 #[cfg(target_arch = "riscv64")]
-pub unsafe extern "C" fn context_switch(new_stack: *mut (), old_stack_out: *mut *mut ()) {
+pub unsafe extern "C" fn context_switch(new_stack: *const *mut (), old_stack_out: *mut *mut ()) {
     naked_asm!(
         // Save old context to stack.
         "addi sp, sp, -14*8",
@@ -292,7 +312,7 @@ pub unsafe extern "C" fn context_switch(new_stack: *mut (), old_stack_out: *mut 
         "sd   ra, 8*12(sp)",
         // Swap out stack pointers.
         "sd   sp, 0(a1)",
-        "mv   sp, a0",
+        "ld   sp, 0(a0)",
         // Restore new context from stack.
         "ld   s0, 8*0(sp)",
         "ld   s1, 8*1(sp)",

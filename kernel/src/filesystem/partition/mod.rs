@@ -7,10 +7,10 @@ use crate::{
     bindings::{
         device::class::block::BlockDevice,
         error::EResult,
-        mutex::Mutex,
         raw::{get_volume_info_t, partition_t, volume_info_t},
     },
     filesystem::partition::{gpt::GptDriver, mbr::MbrDriver},
+    kernel::sync::mutex::Mutex,
 };
 
 pub mod gpt;
@@ -102,12 +102,11 @@ pub trait PartitionDriver {
 }
 
 /// Set of partition system drivers.
-pub static PARTITION_DRIVERS: Mutex<Vec<Box<dyn PartitionDriver>>, true> =
-    unsafe { Mutex::new_static(Vec::new()) };
+pub static PARTITION_DRIVERS: Mutex<Vec<Box<dyn PartitionDriver>>> = Mutex::new(Vec::new());
 
 /// Get the volume information for a particular drive.
 pub fn get_volume_info(drive: BlockDevice) -> EResult<Option<VolumeInfo>> {
-    for driver in &*PARTITION_DRIVERS.lock_shared() {
+    for driver in &*PARTITION_DRIVERS.lock_shared()? {
         if let Some(data) = driver.detect(drive.clone())? {
             return Ok(Some(data));
         }
@@ -116,7 +115,7 @@ pub fn get_volume_info(drive: BlockDevice) -> EResult<Option<VolumeInfo>> {
 }
 
 register_kmodule!(partitioning, [1, 0, 0], || {
-    let mut guard = PARTITION_DRIVERS.lock();
+    let mut guard = PARTITION_DRIVERS.unintr_lock();
     guard.push(Box::new(GptDriver {}));
     guard.push(Box::new(MbrDriver {}));
 });

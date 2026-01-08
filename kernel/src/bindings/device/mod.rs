@@ -4,9 +4,10 @@ use crate::{
     LogLevel,
     bindings::{
         self,
-        raw::{dev_class_t, dev_filter_t, set_ent_t, timestamp_us_t},
+        raw::{dev_class_t, dev_filter_t, set_ent_t},
     },
     filesystem::File,
+    kernel::sync::mutex::{RawMutex, SharedMutexGuard},
     logkf,
 };
 use core::{num::NonZero, ptr::NonNull};
@@ -24,7 +25,6 @@ use crate::bindings::raw::mutex_t;
 
 use super::{
     error::{EResult, Errno},
-    mutex::SharedMutexGuard,
     raw::{
         self, dev_addr_t, dev_class_t_DEV_CLASS_BLOCK, dev_class_t_DEV_CLASS_CHAR,
         dev_class_t_DEV_CLASS_PCICTL, dev_class_t_DEV_CLASS_UNKNOWN, dev_state_t, device_block_t,
@@ -252,9 +252,9 @@ pub trait HasBaseDevice {
             static mut devs_mtx: mutex_t;
         }
         unsafe {
-            raw::mutex_acquire_shared(&raw mut devs_mtx, timestamp_us_t::MAX);
+            raw::mutex_lock_shared(&raw mut devs_mtx);
             let res = (*self.base_ptr()).state;
-            raw::mutex_release_shared(&raw mut devs_mtx);
+            raw::mutex_unlock_shared(&raw mut devs_mtx);
             res
         }
     }
@@ -264,9 +264,9 @@ pub trait HasBaseDevice {
             static mut devs_mtx: mutex_t;
         }
         unsafe {
-            raw::mutex_acquire_shared(&raw mut (*self.base_ptr()).driver_mtx, timestamp_us_t::MAX);
+            raw::mutex_lock_shared(&raw mut (*self.base_ptr()).driver_mtx);
             let res = (*self.base_ptr()).driver;
-            raw::mutex_release_shared(&raw mut (*self.base_ptr()).driver_mtx);
+            raw::mutex_unlock_shared(&raw mut (*self.base_ptr()).driver_mtx);
             res
         }
     }
@@ -319,6 +319,10 @@ pub trait HasBaseDevice {
     /// Returns true if an interrupt handler was run.
     unsafe fn forward_interrupt(&self, in_irqno: irqno_t) -> bool {
         unsafe { raw::device_forward_interrupt(self.base_ptr(), in_irqno) }
+    }
+    /// Send an interrupt to this device.
+    unsafe fn interrupt(&self, irqno: irqno_t) -> bool {
+        unsafe { raw::device_interrupt(self.base_ptr(), irqno) }
     }
 }
 
@@ -747,15 +751,12 @@ pub fn remove_driver(driver: &'static driver_t) -> EResult<()> {
 
 pub fn iter_drivers(mut cb: impl FnMut(SharedMutexGuard<'static, driver_t>) -> bool) {
     unsafe {
-        bindings::raw::mutex_acquire_shared(
-            &raw mut bindings::raw::drivers_mtx,
-            timestamp_us_t::MAX,
-        );
+        bindings::raw::mutex_lock_shared(&raw mut bindings::raw::drivers_mtx);
 
         let mut iter = set_next(&raw const bindings::raw::drivers, 0 as *const set_ent_t);
         while !iter.is_null() {
-            let guard = SharedMutexGuard::new_raw(
-                &raw mut bindings::raw::drivers_mtx,
+            let guard = SharedMutexGuard::from_raw(
+                (&*(&raw const bindings::raw::drivers_mtx as *const RawMutex)).unintr_lock_shared(),
                 &*((*iter).value as *const driver_t),
             );
             if !cb(guard) {
@@ -764,6 +765,6 @@ pub fn iter_drivers(mut cb: impl FnMut(SharedMutexGuard<'static, driver_t>) -> b
             iter = set_next(&raw const bindings::raw::drivers, iter);
         }
 
-        bindings::raw::mutex_release(&raw mut bindings::raw::drivers_mtx);
+        bindings::raw::mutex_unlock(&raw mut bindings::raw::drivers_mtx);
     };
 }

@@ -17,19 +17,19 @@ static IS_PANICKING: AtomicU32 = AtomicU32::new(0);
 
 /// Panic due to an unhandled exception.
 pub fn unhandled_trap(regs: &GpRegfile, sregs: &SpRegfile) -> ! {
-    check_for_panic();
+    claim_panic();
 
     printf_unlocked!(
         "\x1b[0m\n\n**** UNHANDLED EXCEPTION 0x{:x} ****\n",
         sregs.fault_code()
     );
-    if sregs.is_kernel_mode() {
-        write_unlocked("Running in kernel mode");
-    } else {
-        write_unlocked("Running in user mode");
-    }
     if let Some(name) = sregs.fault_name() {
         printf_unlocked!("{}\n", name);
+    }
+    if sregs.is_kernel_mode() {
+        write_unlocked("Running in kernel mode\n");
+    } else {
+        write_unlocked("Running in user mode\n");
     }
     if let Some(vaddr) = sregs.is_mem_trap() {
         printf_unlocked!("While accessing 0x{:x}\n", vaddr);
@@ -52,7 +52,7 @@ pub fn unhandled_trap(regs: &GpRegfile, sregs: &SpRegfile) -> ! {
 /// Generic kernel panic.
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_panic() -> ! {
-    check_for_panic();
+    claim_panic();
     kernel_panic_unchecked();
 }
 
@@ -68,8 +68,38 @@ pub fn kernel_panic_unchecked() -> ! {
     panic_cpu_shutdown();
 }
 
-/// Check whether other cores are panicking and spin early if they do.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn panic_abort() -> ! {
+    kernel_panic();
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn abort() -> ! {
+    kernel_panic();
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn panic_abort_unchecked() -> ! {
+    kernel_panic_unchecked();
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn panic_poweroff() -> ! {
+    panic_cpu_shutdown();
+}
+
+/// Checks whether other cores are panicking and spins if they do.
 pub fn check_for_panic() {
+    if IS_PANICKING.load(Ordering::Relaxed) != 0 {
+        panic_cpu_shutdown();
+    }
+}
+
+/// Start the process of kernel panicking.
+/// Checks whether other cores are panicking and spin early if they do.
+/// If no other core has panicked, returns and assumes the caller will eventually call [`kernel_panic_unlocked`].
+#[unsafe(no_mangle)]
+pub extern "C" fn claim_panic() {
     if IS_PANICKING.fetch_add(1, Ordering::Relaxed) != 0 {
         panic_cpu_shutdown();
     }

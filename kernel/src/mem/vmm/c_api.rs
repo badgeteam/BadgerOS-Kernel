@@ -2,54 +2,12 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::ffi::c_void;
-
 use crate::bindings::{
-    self,
     error::Errno,
-    isr_ctx::isr_ctx_get,
     raw::{errno_t, virt2phys_t},
 };
 
 use super::*;
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn vmm_init() {
-    unsafe {
-        init();
-    }
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn vmm_ctxswitch_from_isr() {
-    unsafe {
-        let ctx = (*isr_ctx_get()).mem_ctx as *const Memmap;
-        if ctx.is_null() {
-            mmu::set_page_table(kernel_mm().pagetable.root_ppn(), 0);
-        } else {
-            mmu::set_page_table((*ctx).root_ppn(), 0);
-        }
-        mmu::vmem_fence(None, None);
-    }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn vmm_create_user_ctx(ctx: *mut Memmap) -> errno_t {
-    match Memmap::new_user() {
-        Ok(x) => {
-            unsafe {
-                bindings::raw::memcpy(
-                    ctx as *mut c_void,
-                    &raw const x as *const c_void,
-                    size_of::<Memmap>(),
-                );
-            }
-            core::mem::forget(x);
-            0
-        }
-        Err(x) => -(x as errno_t),
-    }
-}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vmm_destroy_user_ctx(ctx: Memmap) {

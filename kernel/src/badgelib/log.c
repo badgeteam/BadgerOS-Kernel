@@ -5,8 +5,8 @@
 
 #include "badge_format_str.h"
 #include "badge_strings.h"
-#include "mutex.h"
 #include "rawprint.h"
+#include "sched/sync/mutex.h"
 
 #include <stdarg.h>
 #include <stdbool.h>
@@ -64,23 +64,23 @@ static bool putccb(char const *msg, size_t len, void *cookie) {
 
 // Print an unformatted message.
 void logk(log_level_t level, char const *msg) {
-    bool acq = mutex_acquire(&log_mtx, LOG_MUTEX_TIMEOUT);
+    bool acq = mutex_lock(&log_mtx) >= 0;
     logk_from_isr(level, msg);
     if (acq)
-        mutex_release(&log_mtx);
+        mutex_unlock(&log_mtx);
 }
 
 // Print an unformatted message.
 void logk_len(log_level_t level, char const *msg, size_t msg_len) {
-    bool acq = mutex_acquire(&log_mtx, LOG_MUTEX_TIMEOUT);
+    bool acq = mutex_lock(&log_mtx) >= 0;
     logk_len_from_isr(level, msg, msg_len);
     if (acq)
-        mutex_release(&log_mtx);
+        mutex_unlock(&log_mtx);
 }
 
 // Print a formatted message according to format_str.
 void logkf(log_level_t level, char const *msg, ...) {
-    bool acq = mutex_acquire(&log_mtx, LOG_MUTEX_TIMEOUT);
+    bool acq = mutex_lock(&log_mtx) >= 0;
     logk_prefix(level);
     va_list vararg;
     va_start(vararg, msg);
@@ -94,41 +94,41 @@ void logkf(log_level_t level, char const *msg, ...) {
     va_end(vararg);
     rawprint(term);
     if (acq)
-        mutex_release(&log_mtx);
+        mutex_unlock(&log_mtx);
 }
 
 // Print a hexdump (usually for debug purposes).
 void logk_len_hexdump(log_level_t level, char const *msg, size_t msg_len, void const *data, size_t size) {
-    bool acq = mutex_acquire(&log_mtx, LOG_MUTEX_TIMEOUT);
+    bool acq = mutex_lock(&log_mtx) >= 0;
     logk_len_hexdump_vaddr_from_isr(level, msg, msg_len, data, size, (size_t)data);
     if (acq)
-        mutex_release(&log_mtx);
+        mutex_unlock(&log_mtx);
 }
 
 // Print a hexdump, override the address shown (usually for debug purposes).
 void logk_len_hexdump_vaddr(
     log_level_t level, char const *msg, size_t msg_len, void const *data, size_t size, size_t vaddr
 ) {
-    bool acq = mutex_acquire(&log_mtx, LOG_MUTEX_TIMEOUT);
+    bool acq = mutex_lock(&log_mtx) >= 0;
     logk_len_hexdump_vaddr_from_isr(level, msg, msg_len, data, size, vaddr);
     if (acq)
-        mutex_release(&log_mtx);
+        mutex_unlock(&log_mtx);
 }
 
 // Print a hexdump (usually for debug purposes).
 void logk_hexdump(log_level_t level, char const *msg, void const *data, size_t size) {
-    bool acq = mutex_acquire(&log_mtx, LOG_MUTEX_TIMEOUT);
+    bool acq = mutex_lock(&log_mtx) >= 0;
     logk_len_hexdump_vaddr_from_isr(level, msg, cstr_length(msg), data, size, (size_t)data);
     if (acq)
-        mutex_release(&log_mtx);
+        mutex_unlock(&log_mtx);
 }
 
 // Print a hexdump, override the address shown (usually for debug purposes).
 void logk_hexdump_vaddr(log_level_t level, char const *msg, void const *data, size_t size, size_t vaddr) {
-    bool acq = mutex_acquire(&log_mtx, LOG_MUTEX_TIMEOUT);
+    bool acq = mutex_lock(&log_mtx) >= 0;
     logk_len_hexdump_vaddr_from_isr(level, msg, cstr_length(msg), data, size, vaddr);
     if (acq)
-        mutex_release(&log_mtx);
+        mutex_unlock(&log_mtx);
 }
 
 

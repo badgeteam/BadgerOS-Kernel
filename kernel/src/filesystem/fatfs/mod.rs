@@ -15,9 +15,9 @@ use crate::{
     bindings::{
         device::HasBaseDevice,
         error::{EResult, Errno},
-        mutex::Mutex,
     },
     filesystem::{VNodeMtxInner, fatfs::spec::attr2, vfs::vnflags},
+    kernel::sync::mutex::Mutex,
     mem::vmm::zeroes,
     process::usercopy::{UserSlice, UserSliceMut},
 };
@@ -500,7 +500,7 @@ impl FatVNode {
                 .writek(disk_off, &Into::<[u8; 32]>::into(dirent))?;
 
             // Make the `..` entry.
-            if let Some(dirent_disk_off) = *self.dirent_disk_off.lock_shared() {
+            if let Some(dirent_disk_off) = *self.dirent_disk_off.unintr_lock_shared() {
                 // Copy that of this directory.
                 let mut dirent = [0u8; 32];
                 fatfs.media.readk(dirent_disk_off, &mut dirent)?;
@@ -583,7 +583,7 @@ impl VNodeOps for FatVNode {
         let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
         let mut new_clusters =
             ((new_size + (1 << fatfs.cluster_size_exp) - 1) >> fatfs.cluster_size_exp) as u32;
-        let dirent_disk_offset = self.dirent_disk_off.lock_shared();
+        let dirent_disk_offset = self.dirent_disk_off.lock_shared()?;
         match &mut self.storage {
             FatFileStorage::Root16(_) => {
                 // For FAT12/FAT16 root directory, resizing is not supported.
@@ -764,7 +764,7 @@ impl VNodeOps for FatVNode {
             let fat_vnode = unsafe {
                 &*(unlinked_vnode.mtx.data().ops.as_ref() as *const dyn VNodeOps as *const FatVNode)
             };
-            *fat_vnode.dirent_disk_off.lock() = None;
+            *fat_vnode.dirent_disk_off.unintr_lock() = None;
             unlinked_vnode
                 .flags
                 .fetch_or(vnflags::REMOVED, Ordering::Relaxed);
@@ -883,7 +883,7 @@ impl VNodeOps for FatVNode {
 
     fn stat(&self, arc_self: &Arc<VNode>) -> EResult<Stat> {
         let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
-        let guard = self.dirent_disk_off.lock_shared();
+        let guard = self.dirent_disk_off.lock_shared()?;
         let epoch = Utc.timestamp_nanos(0);
 
         // Read the dirent, if present.
@@ -995,7 +995,7 @@ impl VNodeOps for FatVNode {
 
     fn close(&mut self, vnode_self: &VNode) {
         if let FatFileStorage::Clusters(chain) = &self.storage
-            && self.dirent_disk_off.lock_shared().is_none()
+            && self.dirent_disk_off.unintr_lock_shared().is_none()
             && vnode_self.is_vfs_root().is_none()
         {
             // If this VNode was unlinked, mark the clusters as free now.
@@ -1766,10 +1766,10 @@ impl VfsDriver for FatFsDriver {
 
 fn register_fatfs() {
     FSDRIVERS
-        .lock()
+        .unintr_lock()
         .insert("vfat".into(), Box::new(FatFsDriver { allow_lfn: true }));
     FSDRIVERS
-        .lock()
+        .unintr_lock()
         .insert("msdos".into(), Box::new(FatFsDriver { allow_lfn: false }));
 }
 

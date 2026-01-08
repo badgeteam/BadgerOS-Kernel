@@ -19,8 +19,8 @@
 #include "log.h"
 #include "map.h"
 #include "mem/vmm.h"
-#include "mutex.h"
 #include "nanoprintf.h"
+#include "sched/sync/mutex.h"
 #include "set.h"
 #include "spinlock.h"
 #include "time.h"
@@ -45,13 +45,13 @@ static map_t    devs_by_phandle = PTR_MAP_EMPTY;
 // Device ID counter.
 static uint32_t id_ctr;
 // Devices list mutex.
-mutex_t         devs_mtx     = MUTEX_T_INIT_SHARED;
+mutex_t         devs_mtx     = MUTEX_T_INIT;
 // Drivers set mutex.
-mutex_t         drivers_mtx  = MUTEX_T_INIT_SHARED;
+mutex_t         drivers_mtx  = MUTEX_T_INIT;
 // Set of drivers.
 set_t           drivers      = PTR_SET_EMPTY;
 // Mutex guarding the act of changing the interrupt graph.
-mutex_t         irqconn_mtx  = MUTEX_T_INIT_SHARED;
+mutex_t         irqconn_mtx  = MUTEX_T_INIT;
 // Spinlock guarding changes to interrupt graph fields.
 spinlock_t      irqconn_lock = SPINLOCK_T_INIT_SHARED;
 
@@ -84,7 +84,7 @@ static bool device_init(device_union_t *device) {
     device->base.children     = PTR_SET_EMPTY;
     device->base.irq_children = PTR_MAP_EMPTY;
     device->base.irq_parents  = PTR_MAP_EMPTY;
-    mutex_init(&device->base.driver_mtx, true);
+    device->base.driver_mtx   = MUTEX_T_INIT;
 
     for (size_t i = 0; i < device->base.info.addrs_len; i++) {
         if (device->base.info.addrs[i].type == DEV_ATYPE_MMIO) {
@@ -158,17 +158,17 @@ static errno_t driver_add_succeeded(device_union_t *device) {
 // Initializes all data used by devices with drivers.
 // Returns -errno on error, 0 if not a match, 1 if a match (adding succeeded).
 static errno_bool_t device_add_to_driver(device_t *device, driver_t const *driver, bool skip_match) {
-    mutex_acquire(&device->driver_mtx, TIMESTAMP_US_MAX);
+    mutex_lock(&device->driver_mtx);
 
     if (device->state != DEV_STATE_ACTIVE) {
         // Cannot add a driver because the device is inactive.
-        mutex_release(&device->driver_mtx);
+        mutex_unlock(&device->driver_mtx);
         return 1;
     }
 
     if (device->driver) {
         // Device had already received a driver.
-        mutex_release(&device->driver_mtx);
+        mutex_unlock(&device->driver_mtx);
         return 1;
     }
 
@@ -201,7 +201,7 @@ static errno_bool_t device_add_to_driver(device_t *device, driver_t const *drive
                 spinlock_release(&irqconn_lock);
                 irq_enable();
 
-                mutex_release(&device->driver_mtx);
+                mutex_unlock(&device->driver_mtx);
                 return 1;
             }
 
@@ -211,14 +211,14 @@ static errno_bool_t device_add_to_driver(device_t *device, driver_t const *drive
 
             device_t *parent = device->info.parent;
             if (parent) {
-                mutex_acquire_shared(&parent->driver_mtx, TIMESTAMP_US_MAX);
-                mutex_release(&device->driver_mtx);
+                mutex_lock_shared(&parent->driver_mtx);
+                mutex_unlock(&device->driver_mtx);
                 if (parent->driver && parent->driver->child_got_driver) {
                     parent->driver->child_got_driver(parent, device);
                 }
-                mutex_release_shared(&parent->driver_mtx);
+                mutex_unlock_shared(&parent->driver_mtx);
             } else {
-                mutex_release(&device->driver_mtx);
+                mutex_unlock(&device->driver_mtx);
             }
 
             return 2;
@@ -230,14 +230,14 @@ static errno_bool_t device_add_to_driver(device_t *device, driver_t const *drive
         }
     }
 
-    mutex_release(&device->driver_mtx);
+    mutex_unlock(&device->driver_mtx);
     return 0;
 }
 
 // Remove a device from its driver.
 // Frees all memory used by devices with drivers.
 static void device_remove_from_driver(device_t *device) {
-    mutex_acquire(&device->driver_mtx, TIMESTAMP_US_MAX);
+    mutex_lock(&device->driver_mtx);
 
     if (device->driver) {
         driver_t const *driver = device->driver;
@@ -258,7 +258,7 @@ static void device_remove_from_driver(device_t *device) {
         driver->remove(device);
     }
 
-    mutex_release(&device->driver_mtx);
+    mutex_unlock(&device->driver_mtx);
 }
 
 // Search for a driver for a device and if found, add it to that driver.
@@ -282,7 +282,7 @@ device_t *device_add(device_info_t info) {
         goto err0;
     }
 
-    mutex_acquire(&devs_mtx, TIMESTAMP_US_MAX);
+    mutex_lock(&devs_mtx);
 
     // Insert device into the list.
     uint32_t id = ++id_ctr;
@@ -327,7 +327,7 @@ device_t *device_add(device_info_t info) {
     }
 
     device->base.refcount = 2;
-    mutex_release(&devs_mtx);
+    mutex_unlock(&devs_mtx);
 
     return &device->base;
 
@@ -337,7 +337,7 @@ err4:
     }
     map_remove(&devs_by_id, (void *)(size_t)id);
     device_pop_ref(&device->base);
-    mutex_release(&devs_mtx);
+    mutex_unlock(&devs_mtx);
     return NULL;
 
 err3:
@@ -352,29 +352,29 @@ err0:
     device_pop_ref(info.parent);
     device_pop_ref(info.irq_parent);
     free(info.addrs);
-    mutex_release(&devs_mtx);
+    mutex_unlock(&devs_mtx);
     return NULL;
 }
 
 // Set the driver for a device explicitly.
 // Returns EEXIST if it already has one.
 errno_t device_set_driver(device_t *device, driver_t const *driver) {
-    mutex_acquire_shared(&drivers_mtx, TIMESTAMP_US_MAX);
+    mutex_lock_shared(&drivers_mtx);
     assert_always(set_contains(&drivers, driver));
 
-    mutex_acquire(&device->driver_mtx, TIMESTAMP_US_MAX);
+    mutex_lock(&device->driver_mtx);
     errno_t res = 0;
     if (device->state != DEV_STATE_ACTIVE) {
         logkf(LOG_WARN, "Device %{u32;x} cannot have a driver set because it is not active", device->id);
         res = -ENOENT;
     }
-    mutex_release(&device->driver_mtx);
+    mutex_unlock(&device->driver_mtx);
 
     if (res == 0) {
         res = device_add_to_driver(device, driver, true);
     }
 
-    mutex_release_shared(&drivers_mtx);
+    mutex_unlock_shared(&drivers_mtx);
     return res;
 }
 
@@ -382,11 +382,11 @@ errno_t device_set_driver(device_t *device, driver_t const *driver) {
 // If no driver could be found, the device is now eligible to get one in the future.
 // If this function is not called, no driver will ever be added.
 void device_activate(device_t *device) {
-    mutex_acquire(&device->driver_mtx, TIMESTAMP_US_MAX);
+    mutex_lock(&device->driver_mtx);
     if (device->state == DEV_STATE_INACTIVE) {
         device->state = DEV_STATE_ACTIVE;
     }
-    mutex_release(&device->driver_mtx);
+    mutex_unlock(&device->driver_mtx);
     device_try_find_driver(device);
     device_t *parent = device->info.parent;
     if (parent) {
@@ -402,14 +402,14 @@ static uint32_t device_remove_impl(uint32_t id) {
 
     if (device) {
         // Disconnect from interrupt parents, if any.
-        mutex_acquire(&irqconn_mtx, TIMESTAMP_US_MAX);
+        mutex_lock(&irqconn_mtx);
         map_foreach(ent, &device->irq_parents) {
             dlist_t *list = ent->value;
             dlist_foreach_node(irqconn_t, conn, list) {
                 device_unlink_irq_impl(device, (irqno_t)(size_t)ent->value, conn->device, conn->irqno);
             }
         }
-        mutex_release(&irqconn_mtx);
+        mutex_unlock(&irqconn_mtx);
 
         // First remove child devices, if any.
         set_foreach(device_t, child, &device->children) {
@@ -444,9 +444,9 @@ bool device_remove(uint32_t id) {
     TODO();
 
     // Recursively remove devices.
-    mutex_acquire(&devs_mtx, TIMESTAMP_US_MAX);
+    mutex_lock(&devs_mtx);
     bool success = device_remove_impl(id);
-    mutex_release(&devs_mtx);
+    mutex_unlock(&devs_mtx);
 
     return success;
 }
@@ -454,28 +454,28 @@ bool device_remove(uint32_t id) {
 // Try to get a reference to a device by ID.
 // This reference must be cleaned up by `device_pop_ref` and can be cloned by `device_push_ref`.
 device_t *device_by_id(uint32_t id) {
-    mutex_acquire_shared(&devs_mtx, TIMESTAMP_US_MAX);
+    mutex_lock_shared(&devs_mtx);
 
     device_t *dev = map_get(&devs_by_id, (void *)(size_t)id);
     if (dev) {
         dev->refcount++;
     }
 
-    mutex_release_shared(&devs_mtx);
+    mutex_unlock_shared(&devs_mtx);
     return dev;
 }
 
 // Try to get a reference to a device by DTB phandle.
 // This reference must be cleaned up by `device_pop_ref` and can be cloned by `device_push_ref`.
 device_t *device_by_phandle(uint32_t phandle) {
-    mutex_acquire_shared(&devs_mtx, TIMESTAMP_US_MAX);
+    mutex_lock_shared(&devs_mtx);
 
     device_t *dev = map_get(&devs_by_phandle, (void *)(size_t)phandle);
     if (dev) {
         dev->refcount++;
     }
 
-    mutex_release_shared(&devs_mtx);
+    mutex_unlock_shared(&devs_mtx);
     return dev;
 }
 
@@ -526,7 +526,7 @@ void device_push_ref(device_t *device) {
 // This reference must be cleaned up by `device_pop_ref` and can be cloned by `device_push_ref`.
 set_t device_get_all() {
     set_t set = PTR_SET_EMPTY;
-    mutex_acquire_shared(&devs_mtx, TIMESTAMP_US_MAX);
+    mutex_lock_shared(&devs_mtx);
 
     map_foreach(ent, &devs_by_id) {
         if (set_add(&set, ent->value)) {
@@ -534,7 +534,7 @@ set_t device_get_all() {
         }
     }
 
-    mutex_release_shared(&devs_mtx);
+    mutex_unlock_shared(&devs_mtx);
     return set;
 }
 
@@ -612,7 +612,7 @@ static bool match_filter(device_union_t const *device, dev_filter_t const *filte
 // This reference must be cleaned up by `device_pop_ref` and can be cloned by `device_push_ref`.
 set_t device_get_filtered(dev_filter_t const *filter) {
     set_t set = PTR_SET_EMPTY;
-    mutex_acquire_shared(&devs_mtx, TIMESTAMP_US_MAX);
+    mutex_lock_shared(&devs_mtx);
 
     if (filter->match_parent && filter->parent_id) {
         device_t *parent = device_by_id(filter->parent_id);
@@ -636,7 +636,7 @@ set_t device_get_filtered(dev_filter_t const *filter) {
         }
     }
 
-    mutex_release_shared(&devs_mtx);
+    mutex_unlock_shared(&devs_mtx);
     return set;
 }
 
@@ -708,25 +708,25 @@ errno_t device_unlink_irq(device_t *child, irqno_t child_irqno, device_t *parent
         return -EINVAL;
     }
 
-    mutex_acquire(&irqconn_mtx, TIMESTAMP_US_MAX);
+    mutex_lock(&irqconn_mtx);
 
     errno_t res = device_unlink_irq_impl(child, child_irqno, parent, parent_irqno);
 
-    mutex_release(&irqconn_mtx);
+    mutex_unlock(&irqconn_mtx);
 
     return res;
 }
 
 // Enable an outgoing interrupt.
 errno_t device_enable_irq_out(device_t *device, irqno_t irq_out_pin, bool enabled) {
-    mutex_acquire_shared(&device->driver_mtx, TIMESTAMP_US_MAX);
+    mutex_lock_shared(&device->driver_mtx);
     errno_t res;
     if (!device->driver) {
         res = -EFAULT;
     } else {
         res = device->driver->enable_irq_out(device, irq_out_pin, enabled);
     }
-    mutex_release_shared(&device->driver_mtx);
+    mutex_unlock_shared(&device->driver_mtx);
     return res;
 }
 
@@ -739,27 +739,27 @@ errno_t device_cascade_enable_irq_out(device_t *device, irqno_t out_irqno) {
     }
     dlist_foreach_node(irqconn_t, conn, list) {
         device_t *parent = conn->device;
-        mutex_acquire_shared(&parent->driver_mtx, TIMESTAMP_US_MAX);
+        mutex_lock_shared(&parent->driver_mtx);
         if (!parent->driver || !parent->driver->cascase_enable_irq) {
-            mutex_release_shared(&parent->driver_mtx);
+            mutex_unlock_shared(&parent->driver_mtx);
             continue;
         }
         parent->driver->cascase_enable_irq(parent, conn->irqno);
-        mutex_release_shared(&parent->driver_mtx);
+        mutex_unlock_shared(&parent->driver_mtx);
     }
     return 0;
 }
 
 // Enable an incoming interrupt.
 errno_t device_enable_irq_in(device_t *device, irqno_t irq_in_pin, bool enabled) {
-    mutex_acquire_shared(&device->driver_mtx, TIMESTAMP_US_MAX);
+    mutex_lock_shared(&device->driver_mtx);
     errno_t res;
     if (!device->driver || !device->driver->enable_irq_in) {
         res = -ENOENT;
     } else {
         res = device->driver->enable_irq_in(device, irq_in_pin, enabled);
     }
-    mutex_release_shared(&device->driver_mtx);
+    mutex_unlock_shared(&device->driver_mtx);
     return res;
 }
 
@@ -782,34 +782,36 @@ bool device_forward_interrupt(device_t *device, irqno_t in_irqno) {
 
 
 // Notify of a device interrupt.
-void device_interrupt(device_t *device, irqno_t irq_pin) {
+bool device_interrupt(device_t *device, irqno_t irq_pin) {
     assert_dev_drop(!irq_is_enabled());
     spinlock_take_shared(&irqconn_lock);
+    bool handled = false;
     if (device->driver) {
-        device->driver->interrupt(device, irq_pin);
+        handled = device->driver->interrupt(device, irq_pin);
     }
     spinlock_release_shared(&irqconn_lock);
+    return handled;
 }
 
 
 
 // Register a new driver.
 errno_t driver_add(driver_t const *driver) {
-    mutex_acquire(&drivers_mtx, TIMESTAMP_US_MAX);
+    mutex_lock(&drivers_mtx);
     if (!set_add(&drivers, driver)) {
-        mutex_release(&drivers_mtx);
+        mutex_unlock(&drivers_mtx);
         return -ENOMEM;
     }
-    mutex_release(&drivers_mtx);
+    mutex_unlock(&drivers_mtx);
 
     // Try to match driverless devices against this driver.
-    mutex_acquire(&devs_mtx, TIMESTAMP_US_MAX);
+    mutex_lock(&devs_mtx);
     map_foreach(ent, &devs_by_id) {
         if (device_add_to_driver(ent->value, driver, false) != 0) {
             break;
         }
     }
-    mutex_release(&devs_mtx);
+    mutex_unlock(&devs_mtx);
 
     return 0;
 }
@@ -820,12 +822,12 @@ errno_t driver_remove(driver_t const *driver) {
     // returns.
     TODO();
 
-    mutex_acquire(&drivers_mtx, TIMESTAMP_US_MAX);
+    mutex_lock(&drivers_mtx);
     if (!set_remove(&drivers, driver)) {
-        mutex_release(&drivers_mtx);
+        mutex_unlock(&drivers_mtx);
         return -ENOENT;
     }
-    mutex_release(&drivers_mtx);
+    mutex_unlock(&drivers_mtx);
 
     // Remove all devices from this driver.
     map_foreach(ent, &devs_by_id) {
@@ -934,7 +936,7 @@ errno_t device_devtmpfs_mounted(file_t devtmpfs_root) {
         logkf(LOG_WARN, "Failed to create devnode by_id: %{cs} (%{cs})", errno_get_name(tmp), errno_get_desc(tmp));
     });
 
-    mutex_acquire_shared(&devs_mtx, TIMESTAMP_US_MAX);
+    mutex_lock_shared(&devs_mtx);
     map_foreach(ent, &devs_by_id) {
         device_t *dev = ent->value;
         char      buf[32];
@@ -947,7 +949,7 @@ errno_t device_devtmpfs_mounted(file_t devtmpfs_root) {
                 errno_get_name(tmp),
                 errno_get_desc(tmp)
             );
-            mutex_release_shared(&devs_mtx);
+            mutex_unlock_shared(&devs_mtx);
         });
 
         file_t devnode_dir = RETURN_ON_ERRNO_FILE(fs_open(devtmpfs_root, buf, len, FS_O_DIR_ONLY | FS_O_READ_ONLY), {
@@ -958,7 +960,7 @@ errno_t device_devtmpfs_mounted(file_t devtmpfs_root) {
                 errno_get_name(tmp.errno),
                 errno_get_desc(tmp.errno)
             );
-            mutex_release_shared(&devs_mtx);
+            mutex_unlock_shared(&devs_mtx);
         });
 
         RETURN_ON_ERRNO(populate_info_file(devnode_dir, dev), {
@@ -970,18 +972,18 @@ errno_t device_devtmpfs_mounted(file_t devtmpfs_root) {
                 errno_get_desc(tmp)
             );
             fs_file_drop(devnode_dir);
-            mutex_release_shared(&devs_mtx);
+            mutex_unlock_shared(&devs_mtx);
         });
 
-        mutex_acquire_shared(&dev->driver_mtx, TIMESTAMP_US_MAX);
+        mutex_lock_shared(&dev->driver_mtx);
         if (dev->driver && dev->driver->create_devnodes) {
             dev->driver->create_devnodes(dev, devtmpfs_root, devnode_dir);
         }
-        mutex_release_shared(&dev->driver_mtx);
+        mutex_unlock_shared(&dev->driver_mtx);
 
         fs_file_drop(devnode_dir);
     }
-    mutex_release_shared(&devs_mtx);
+    mutex_unlock_shared(&devs_mtx);
 
     return 0;
 }

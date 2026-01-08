@@ -12,20 +12,15 @@ use alloc::{ffi::CString, vec::Vec};
 use crate::{
     bindings::{
         error::{EResult, Errno},
-        raw::{
-            SIGKILL, SIGSEGV, SIGSTOP, rawputc, sched_signal_exit, sigaction,
-            sigaction__bindgen_ty_1, siginfo_t, thread_exit,
-        },
+        raw::{SIGKILL, SIGSEGV, SIGSTOP, rawputc, sigaction, sigaction__bindgen_ty_1},
     },
-    filesystem::PATH_MAX,
-    process::usercopy,
+    kernel::sched::Thread,
+    process::{signal::signal_die, usercopy},
 };
 
 use super::{
-    Cmdline, PID,
-    c_api::get_user_pc,
-    current,
-    signal::{SIG_COUNT, SIG_DFL, run_handler},
+    Cmdline, PID, current,
+    signal::{SIG_COUNT, SIG_DFL},
     usercopy::{UserPtr, UserSlice},
 };
 
@@ -47,16 +42,7 @@ pub unsafe extern "C" fn syscall_proc_exit(code: c_int) {
     let status = (code & 255) << 8;
     current().unwrap().kill(status);
     // Nothing needs to be dropped in the scope from which this would be called.
-    unsafe { thread_exit(0) };
-}
-
-/// Get the command-line arguments (i.e. argc+argv) of the current process.
-/// If memory is large enough, a NULL-terminated argv array of C-string poc_inters and their data is stored in `memory`.
-/// The function returns how many bytes would be needed to store the structure.
-/// If the memory was not large enough, it it not modified.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn syscall_proc_getargs(cap: usize, memory: *mut c_void) -> usize {
-    todo!()
+    unsafe { (*Thread::current()).die() };
 }
 
 /// Create a copy of the running process and return its PID (to the parent) or -1 (to the child).
@@ -73,7 +59,6 @@ pub unsafe extern "C" fn syscall_proc_exec(
     argv: *const *const c_char,
     envp: *const *const c_char,
 ) -> c_int {
-    // TODO: Implement envp.
     let res = Errno::extract(
         try {
             let proc = current().unwrap();
@@ -92,16 +77,29 @@ pub unsafe extern "C" fn syscall_proc_exec(
                 argv = UserPtr::new(argv.as_ptr().wrapping_add(1))?;
             }
 
+            let mut envp = UserPtr::new(envp)?;
+            let mut envbuf = Vec::<CString>::new();
+            loop {
+                let ptr = envp.read()?;
+                if ptr.is_null() {
+                    break;
+                }
+                envbuf.try_reserve(1).map_err(Into::into)?;
+                envbuf.push(usercopy::copy_user_cstr(ptr)?);
+                envp = UserPtr::new(envp.as_ptr().wrapping_add(1))?;
+            }
+
             proc.exec(Cmdline {
                 binary: path,
                 argv: argbuf,
+                envp: envbuf,
             })?;
         },
     );
 
     if res == 0 {
         // TODO: Perhaps a future sched could avoid the need for this.
-        unsafe { thread_exit(0) };
+        unsafe { (*Thread::current()).die() };
     }
 
     res
@@ -123,7 +121,7 @@ pub unsafe extern "C" fn syscall_proc_sigaction(
         try {
             let act = UserPtr::new_nullable(act)?;
             let old_act = UserPtr::new_nullable_mut(old_act)?;
-            let mut guard = proc.sigtab.lock();
+            let mut guard = proc.sigtab.unintr_lock();
             if let Some(mut old_act) = old_act {
                 old_act.write(guard.table[signum as usize])?;
             }
@@ -146,16 +144,18 @@ pub unsafe extern "C" fn syscall_proc_sigaction(
 /// Return from a signal handler.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn syscall_proc_sigret() {
-    if !unsafe { sched_signal_exit() } {
-        run_handler(siginfo_t {
-            si_signo: SIGSEGV as c_int,
-            si_code: 0,
-            si_pid: current().unwrap().pid,
-            si_uid: 0,
-            si_addr: get_user_pc() as *mut c_void,
-            si_status: 0,
-        });
-    }
+    // if !unsafe { sched_signal_exit() } {
+    // TODO.
+    signal_die(SIGSEGV as i32);
+    // run_handler(siginfo_t {
+    //     si_signo: SIGSEGV as c_int,
+    //     si_code: 0,
+    //     si_pid: current().unwrap().pid,
+    //     si_uid: 0,
+    //     si_addr: get_user_pc() as *mut c_void,
+    //     si_status: 0,
+    // });
+    // }
 }
 
 /// Get child process status update.

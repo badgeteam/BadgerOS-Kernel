@@ -12,6 +12,7 @@
 #include "device/pci/confspace.h"
 #include "log.h"
 #include "mem/vmm.h"
+#include "sched/sync/mutex.h"
 
 #include <stddef.h>
 
@@ -154,21 +155,21 @@ static errno_t ecam_dev_detect(device_pcictl_t *device, uint8_t bus, uint8_t dev
 
 // Enumerate a PCI or PCIe bus, adding or removing devices accordingly.
 errno_t device_pcictl_enumerate(device_pcictl_t *device) {
-    mutex_acquire_shared(&device->base.driver_mtx, TIMESTAMP_US_MAX);
+    mutex_lock_shared(&device->base.driver_mtx);
     if (!device->base.driver) {
-        mutex_release_shared(&device->base.driver_mtx);
+        mutex_unlock_shared(&device->base.driver_mtx);
         return -EINVAL;
     }
     for (unsigned bus = device->bus_start; bus <= device->bus_end; bus++) {
         for (uint8_t dev = 0; dev < 32; dev++) {
             errno_t res = ecam_dev_detect(device, bus, dev);
             if (res < 0) {
-                mutex_release_shared(&device->base.driver_mtx);
+                mutex_unlock_shared(&device->base.driver_mtx);
                 return res;
             }
         }
     }
-    mutex_release_shared(&device->base.driver_mtx);
+    mutex_unlock_shared(&device->base.driver_mtx);
     return 0;
 }
 

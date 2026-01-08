@@ -193,7 +193,7 @@ fn filter_parts(
 }
 
 /// Mount the root filesystem according to kernel parameters.
-fn mount_root_fs() {
+pub fn mount_root_fs() {
     // Try to find the root disk.
     let kernel_disk = find_kernel_disk();
     let root_disk: Option<BlockDevice> = try {
@@ -299,15 +299,5 @@ fn mount_root_fs() {
     let res = mount(None, b"/", None, Some(media), 0);
     if let Err(x) = res {
         panic!("Unable to mount root filesystem: {}", x);
-    }
-}
-
-mod c_api {
-    use crate::filesystem::mount_root::mount_root_fs;
-
-    #[unsafe(no_mangle)]
-    /// Mount the root filesystem according to kernel parameters.
-    unsafe extern "C" fn fs_mount_root_fs() {
-        mount_root_fs();
     }
 }

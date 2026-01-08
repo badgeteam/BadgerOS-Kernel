@@ -5,15 +5,13 @@
 
 #include "arrays.h"
 #include "assertions.h"
-#include "cpulocal.h"
 #include "interrupt.h"
-#include "isr_ctx.h"
-#include "scheduler/isr.h"
 #include "spinlock.h"
 #include "time_private.h"
 
 
 
+/*
 // Spinlock for list of unclaimed timer tasks.
 static spinlock_t tasks_spinlock = SPINLOCK_T_INIT_SHARED;
 
@@ -166,4 +164,9 @@ void time_cpu_timer_isr() {
 
     // Re-evaluate this CPU's timer.
     eval_cpu_timer(ctx);
+}
+*/
+
+// Generic timer init after timer-specific init.
+void time_init_generic() {
 }

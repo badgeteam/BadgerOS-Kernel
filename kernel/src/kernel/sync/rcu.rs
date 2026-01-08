@@ -4,7 +4,10 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::{bindings::raw::smp_cur_cpu, scheduler::RUNNING_SCHED_COUNT};
+use crate::{
+    bindings::raw::smp_cur_cpu,
+    kernel::sched::{RUNNING_SCHED_COUNT, thread_yield},
+};
 
 /// Global RCU generation.
 static RCU_GENERATION: AtomicU32 = AtomicU32::new(0);
@@ -12,7 +15,7 @@ static RCU_GENERATION: AtomicU32 = AtomicU32::new(0);
 static RCU_OUTSTANDING: AtomicU32 = AtomicU32::new(1);
 
 /// Per-scheduler RCU context.
-pub(in crate::scheduler) struct RcuCtx {
+pub(in crate::kernel) struct RcuCtx {
     /// What RCU generation this scheduler is on.
     generation: u32,
 }
@@ -64,5 +67,16 @@ impl RcuCtx {
             Ordering::Relaxed,
         );
         RCU_GENERATION.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rcu_sync() {
+    if RUNNING_SCHED_COUNT.load(Ordering::Relaxed) == 0 {
+        return;
+    }
+    let generation = RCU_GENERATION.load(Ordering::Relaxed);
+    while RCU_GENERATION.load(Ordering::Relaxed) == generation {
+        thread_yield();
     }
 }

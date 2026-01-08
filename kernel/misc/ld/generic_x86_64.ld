@@ -31,6 +31,9 @@ SECTIONS
     .rodata : {
         *(.rodata .rodata.* .srodata .srodata.*)
         . = ALIGN(16);
+        __start_noexc = .;
+        KEEP(*(.noexc_table .noexc_table.*))
+        __stop_noexc = .;
         __start_kmodules = .;
         KEEP(*(.kmodules .kmodules.*))
         __stop_kmodules = .;

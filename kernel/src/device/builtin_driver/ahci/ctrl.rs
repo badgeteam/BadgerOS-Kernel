@@ -7,7 +7,6 @@ use tock_registers::interfaces::{ReadWriteable, Readable, Writeable};
 use crate::{
     LogLevel, base_driver_struct,
     bindings::{
-        self,
         device::{
             BaseDriver, Device, DeviceInfo, DeviceInfoView, HasBaseDevice,
             addr::{AhciAddr, DevAddr, PciAddr},
@@ -19,9 +18,10 @@ use crate::{
             pci_progif_storage_sata_t_PCI_PROGIF_STORAGE_SATA_AHCI,
             pci_subclass_storage_t_PCI_SUBCLASS_STORAGE_SATA, pcie_hdr_com_t,
         },
-        thread::Thread,
         time_us,
     },
+    boot::init::INIT_BLOCK_THREADS,
+    kernel::sched::{Thread, thread_sleep},
     logk,
 };
 
@@ -111,7 +111,7 @@ impl AhciDriver {
                     logk(LogLevel::Warning, "Failed to take HBA ownership");
                     return Err(Errno::ENAVAIL);
                 }
-                Thread::sleep_us(10000);
+                let _ = thread_sleep(10000);
             }
         }
 
@@ -123,7 +123,7 @@ impl AhciDriver {
                 logk(LogLevel::Warning, "Failed to reset HBA");
                 return Err(Errno::ENAVAIL);
             }
-            Thread::sleep_us(10000);
+            let _ = thread_sleep(10000);
         }
 
         // Switch to AHCI mode if it wasn't already in that mode.
@@ -162,16 +162,16 @@ impl AhciDriver {
                 }
             }
         }
-        let discover_thread = Thread::new_kernel(
+        let discover_thread = Thread::new(
             move || {
                 for drive in drives {
                     drive.activate();
                 }
-                0
             },
-            Some("AHCI drive discover"),
-        );
-        unsafe { bindings::raw::klifetime_join_for_kinit(discover_thread.into_tid()) };
+            None,
+            Some(format!("AHCI {} discover", device.id())),
+        )?;
+        INIT_BLOCK_THREADS.unintr_lock().push(discover_thread);
 
         // Enable interrupts.
         unsafe {

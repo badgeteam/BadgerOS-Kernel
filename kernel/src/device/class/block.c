@@ -9,12 +9,12 @@
 #include "badge_strings.h"
 #include "cpu/interrupt.h"
 #include "cpu/mmu.h"
-#include "isr_ctx.h"
+#include "cpu/usercopy.h"
 #include "log.h"
-#include "mutex.h"
 #include "radixtree.h"
-#include "rcu.h"
-#include "scheduler/scheduler.h"
+#include "sched/sched.h"
+#include "sched/sync/mutex.h"
+#include "sched/sync/rcu.h"
 #include "time.h"
 
 #include <stdint.h>
@@ -53,7 +53,7 @@ errno_t device_block_activated(device_block_t *device) {
     if (!device->no_cache) {
         rtree_init(&device->cache);
     }
-    mutex_init(&device->volume_info_mtx, true);
+    device->volume_info_mtx = MUTEX_T_INIT;
     mem_set(&device->volume_info, 0, sizeof(device->volume_info));
     return 0;
 }
@@ -65,13 +65,13 @@ void device_block_remove(device_block_t *device) {
 
 // (Re-)scan partitions for this drive.
 errno_t device_block_scan_parts(device_block_t *device) {
-    mutex_acquire(&device->volume_info_mtx, TIMESTAMP_US_MAX);
+    mutex_lock(&device->volume_info_mtx);
     get_volume_info_t res = get_volume_info(device);
 
     if (res.errno >= 0) {
     }
 
-    mutex_release(&device->volume_info_mtx);
+    mutex_unlock(&device->volume_info_mtx);
     return res.errno;
 }
 
@@ -229,7 +229,7 @@ static errno_t iterate_block_ranges(
 static bool write_bytes_cb(uint8_t *subblock_data, size_t subblock_len, size_t byte_offset, void __user *cookie) {
     uint8_t const __user *wdata = cookie;
     mmu_enable_sum();
-    bool faulted = isr_noexc_mem_copy(subblock_data, (void const *)(wdata + byte_offset), subblock_len);
+    bool faulted = copy_from_user(subblock_data, (void const *)(wdata + byte_offset), subblock_len);
     mmu_disable_sum();
     return faulted;
 }
@@ -249,17 +249,17 @@ errno_t device_block_write_bytes(device_block_t *device, uint64_t offset, uint64
         return -EINVAL;
     }
 
-    mutex_acquire_shared(&device->base.driver_mtx, TIMESTAMP_US_MAX);
+    mutex_lock_shared(&device->base.driver_mtx);
     driver_block_t const *driver = (void *)device->base.driver;
     if (device->no_cache) {
         errno_t res = driver->write_bytes(device, offset, size, data);
-        mutex_release_shared(&device->base.driver_mtx);
+        mutex_unlock_shared(&device->base.driver_mtx);
         return res;
     }
 
     errno_t res = iterate_block_ranges(device, offset, size, write_bytes_cb, (void __user *)data, true);
 
-    mutex_release_shared(&device->base.driver_mtx);
+    mutex_unlock_shared(&device->base.driver_mtx);
     return res;
 }
 
@@ -267,7 +267,7 @@ errno_t device_block_write_bytes(device_block_t *device, uint64_t offset, uint64
 static bool read_bytes_cb(uint8_t *subblock_data, size_t subblock_len, size_t byte_offset, void __user *cookie) {
     uint8_t __user *rdata = cookie;
     mmu_enable_sum();
-    bool faulted = isr_noexc_mem_copy((void *)(rdata + byte_offset), subblock_data, subblock_len);
+    bool faulted = copy_to_user((void *)(rdata + byte_offset), subblock_data, subblock_len);
     mmu_disable_sum();
     return faulted;
 }
@@ -287,17 +287,17 @@ errno_t device_block_read_bytes(device_block_t *device, uint64_t offset, uint64_
         return -EINVAL;
     }
 
-    mutex_acquire_shared(&device->base.driver_mtx, TIMESTAMP_US_MAX);
+    mutex_lock_shared(&device->base.driver_mtx);
     driver_block_t const *driver = (void *)device->base.driver;
     if (device->no_cache) {
         errno_t res = driver->read_bytes(device, offset, size, data);
-        mutex_release_shared(&device->base.driver_mtx);
+        mutex_unlock_shared(&device->base.driver_mtx);
         return res;
     }
 
     errno_t res = iterate_block_ranges(device, offset, size, read_bytes_cb, data, false);
 
-    mutex_release_shared(&device->base.driver_mtx);
+    mutex_unlock_shared(&device->base.driver_mtx);
     return res;
 }
 
@@ -354,9 +354,9 @@ static errno_t
 
 // Apply pending changes in a range of blocks.
 errno_t device_block_sync_blocks(device_block_t *device, uint64_t start, uint64_t count, bool flush) {
-    mutex_acquire_shared(&device->base.driver_mtx, TIMESTAMP_US_MAX);
+    mutex_lock_shared(&device->base.driver_mtx);
     if (!device->base.driver) {
-        mutex_release_shared(&device->base.driver_mtx);
+        mutex_unlock_shared(&device->base.driver_mtx);
         return -ENOENT;
     }
     driver_block_t const *const driver = (void *)device->base.driver;
@@ -414,7 +414,7 @@ errno_t device_block_sync_blocks(device_block_t *device, uint64_t start, uint64_
         // Buffer filled up, sync more now.
         RETURN_ON_ERRNO(sync_blocks_helper(device, to_sync_len, to_sync_blocks, to_sync_data), {
             driver->sync_blocks(device, start, count);
-            mutex_release_shared(&device->base.driver_mtx);
+            mutex_unlock_shared(&device->base.driver_mtx);
         });
 
         // Finally, continue looking for blocks to sync after this one.
@@ -434,21 +434,21 @@ errno_t device_block_sync_blocks(device_block_t *device, uint64_t start, uint64_
     if (driver->sync_blocks(device, start, count) < 0 && res >= 0) {
         res = -EIO;
     }
-    mutex_release_shared(&device->base.driver_mtx);
+    mutex_unlock_shared(&device->base.driver_mtx);
     return res;
 }
 
 // Apply pending changes in a range of bytes.
 errno_t device_block_sync_bytes(device_block_t *device, uint64_t offset, uint64_t size, bool flush) {
     if (device->no_cache) {
-        mutex_acquire_shared(&device->base.driver_mtx, TIMESTAMP_US_MAX);
+        mutex_lock_shared(&device->base.driver_mtx);
         if (!device->base.driver) {
-            mutex_release_shared(&device->base.driver_mtx);
+            mutex_unlock_shared(&device->base.driver_mtx);
             return -ENOENT;
         }
         driver_block_t const *const driver = (void *)device->base.driver;
         errno_t                     res    = driver->sync_bytes(device, offset, size);
-        mutex_release_shared(&device->base.driver_mtx);
+        mutex_unlock_shared(&device->base.driver_mtx);
         return res;
     }
 

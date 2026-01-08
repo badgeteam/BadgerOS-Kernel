@@ -12,6 +12,7 @@
 #include "device/dtb/dtb.h"
 #include "log.h"
 #include "rawprint.h"
+#include "sched/cpulocal.h"
 #include "set.h"
 #include "smp.h"
 
@@ -292,7 +293,7 @@ void dtparse(void *dtb_ptr) {
     // Initialise timers.
     time_init_dtb(handle);
     // Initialise SMP.
-    smp_init_dtb(handle);
+    smp_init_dtb(cpus);
 
     // Walk the CPU nodes to find CPU root interrupt controllers.
     for (size_t i = 0; i < cpus->nodes_len; i++) {
@@ -314,7 +315,7 @@ void dtparse(void *dtb_ptr) {
         if (!irqctl) {
             logkf(LOG_ERROR, "Failed to add interrupt controller for CPU%{d}", smp_idx);
         } else {
-            smp_get_cpulocal(smp_idx)->root_irqctl = irqctl;
+            cpulocal_set_irqctl(smp_idx, irqctl);
         }
     }
 

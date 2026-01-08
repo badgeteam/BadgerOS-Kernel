@@ -22,7 +22,7 @@ impl CharDevFile {
             char_dev: vnode
                 .clone()
                 .mtx
-                .lock_shared()
+                .unintr_lock_shared()
                 .ops
                 .get_device(&vnode)
                 .unwrap()
@@ -36,7 +36,7 @@ impl CharDevFile {
 
 impl File for CharDevFile {
     fn stat(&self) -> EResult<Stat> {
-        self.vnode.mtx.lock_shared().ops.stat(&self.vnode)
+        self.vnode.mtx.lock_shared()?.ops.stat(&self.vnode)
     }
 
     fn tell(&self) -> EResult<u64> {
@@ -93,7 +93,7 @@ impl BlockDevFile {
             block_dev: vnode
                 .clone()
                 .mtx
-                .lock_shared()
+                .unintr_lock_shared()
                 .ops
                 .get_device(&vnode)
                 .unwrap()
@@ -110,7 +110,7 @@ impl BlockDevFile {
 
 impl File for BlockDevFile {
     fn stat(&self) -> EResult<Stat> {
-        self.vnode.mtx.lock_shared().ops.stat(&self.vnode)
+        self.vnode.mtx.lock_shared()?.ops.stat(&self.vnode)
     }
 
     fn tell(&self) -> EResult<u64> {

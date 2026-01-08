@@ -11,7 +11,7 @@
 #include "errno.h"
 #include "filesystem.h"
 #include "map.h"
-#include "mutex.h"
+#include "sched/sync/mutex.h"
 #include "set.h"
 
 #include <stdatomic.h>
@@ -228,7 +228,7 @@ errno_t device_enable_irq_in(device_t *device, irqno_t in_irqno, bool enabled);
 bool    device_forward_interrupt(device_t *device, irqno_t in_irqno);
 
 // Notify of a device interrupt.
-void device_interrupt(device_t *device, irqno_t irq_irqno);
+bool device_interrupt(device_t *device, irqno_t irq_irqno);
 
 // Register a new driver.
 errno_t driver_add(driver_t const *driver);

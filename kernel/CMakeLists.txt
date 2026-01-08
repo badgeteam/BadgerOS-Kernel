@@ -118,13 +118,9 @@ set(kernel_src
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/log.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/lstr.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/map.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/mutex.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/num_to_str.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/panic.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/rcu.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/radixtree.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/rawprint.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/semaphore.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/set.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/spinlock.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/nanoprintf.c
@@ -139,8 +135,6 @@ set(kernel_src
     ${CMAKE_CURRENT_LIST_DIR}/src/device/builtin_drivers.c
     ${CMAKE_CURRENT_LIST_DIR}/src/device/device.c
     
-    # ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/syscall_impl.c
-    
     ${CMAKE_CURRENT_LIST_DIR}/src/freestanding/int_routines.c
     ${CMAKE_CURRENT_LIST_DIR}/src/freestanding/string.c
     
@@ -150,18 +144,8 @@ set(kernel_src
     
     ${CMAKE_CURRENT_LIST_DIR}/src/mem/mod.c
     
-    ${CMAKE_CURRENT_LIST_DIR}/src/scheduler/scheduler.c
-    # ${CMAKE_CURRENT_LIST_DIR}/src/scheduler/syscall_impl.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/scheduler/waitlist.c
-    
     ${CMAKE_CURRENT_LIST_DIR}/src/errno.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/housekeeping.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/interrupt.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/main.c
-    # ${CMAKE_CURRENT_LIST_DIR}/src/memprotect.c
     ${CMAKE_CURRENT_LIST_DIR}/src/page_alloc.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/smp.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/syscall.c
     ${CMAKE_CURRENT_LIST_DIR}/src/time.c
 )
 set(kernel_include
@@ -226,7 +210,7 @@ else()
     set(rust_build_type debug)
 endif()
 set(rust_target ${CMAKE_CURRENT_LIST_DIR}/misc/rust_target/${CONFIG_CPU}-kernel.json)
-set(rust_lib ${CMAKE_CURRENT_LIST_DIR}/target/${CONFIG_CPU}-kernel/${rust_build_type}/libbadgeros_kernel.a)
+set(rust_lib ${CMAKE_CURRENT_LIST_DIR}/target/${CONFIG_CPU}-kernel/${rust_build_type}/libkernel.a)
 add_custom_target(
     rust.target ALL
     cargo +nightly build -Z build-std=core,alloc --target=${rust_target} ${rust_features}

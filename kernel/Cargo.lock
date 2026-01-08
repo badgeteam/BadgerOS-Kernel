@@ -18,22 +18,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
-name = "badgeros_kernel"
-version = "0.1.0"
-dependencies = [
- "bindgen",
- "bytemuck",
- "bytemuck_derive",
- "chrono",
- "compile-time",
- "crc",
- "num",
- "static_assertions",
- "tock-registers",
- "uuid",
-]
-
-[[package]]
 name = "bindgen"
 version = "0.71.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -175,6 +159,22 @@ name = "itoa"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
+
+[[package]]
+name = "kernel"
+version = "0.1.0"
+dependencies = [
+ "bindgen",
+ "bytemuck",
+ "bytemuck_derive",
+ "chrono",
+ "compile-time",
+ "crc",
+ "num",
+ "static_assertions",
+ "tock-registers",
+ "uuid",
+]
 
 [[package]]
 name = "libc"

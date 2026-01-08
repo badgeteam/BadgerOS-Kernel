@@ -4,26 +4,39 @@
 
 use core::{
     cell::UnsafeCell,
+    ffi::c_char,
+    ptr::{addr_eq, null},
     sync::atomic::{AtomicI32, AtomicI64, AtomicU32, Ordering},
     usize,
 };
 
-use alloc::{collections::btree_map::BTreeMap, ffi::CString, sync::Arc, sync::Weak, vec::Vec};
+use alloc::{
+    collections::btree_map::BTreeMap,
+    ffi::CString,
+    string::String,
+    sync::{Arc, Weak},
+    vec::Vec,
+};
+use elf::AuxvEntry;
 use signal::Sigtab;
-use usercopy::UserSliceMut;
+use usercopy::{AccessResult, UserSliceMut};
 
 use crate::{
     bindings::{
-        self,
         error::{EResult, Errno},
         log::LogLevel,
-        mutex::{Mutex, SharedMutexGuard},
-        raw::{process_t, sched_current_tid, sched_get_thread, thread_fork, thread_resume},
-        thread::Thread,
     },
-    cpu,
+    config::{PAGE_SIZE, STACK_SIZE},
+    cpu::{self, usercopy::copy_to_user, usermode::call_usermode},
     filesystem::{self, File, SeekMode, mode, oflags},
-    mem::{pmm::PPN, vmm::Memmap},
+    kernel::{
+        sched::Thread,
+        sync::mutex::{Mutex, SharedMutexGuard},
+    },
+    mem::{
+        pmm::PPN,
+        vmm::{self, Memmap},
+    },
     process::files::FDTable,
 };
 
@@ -31,6 +44,7 @@ mod c_api;
 pub mod elf;
 pub mod files;
 pub mod signal;
+pub mod syscall;
 pub mod sysimpl;
 pub mod usercopy;
 
@@ -45,8 +59,7 @@ pub type PID = i64;
 pub static PID_COUNTER: AtomicI64 = AtomicI64::new(1);
 
 /// Map of all processes by PID.
-static PROCESSES: Mutex<BTreeMap<PID, Arc<Process>>> =
-    unsafe { Mutex::new_static(BTreeMap::new()) };
+static PROCESSES: Mutex<BTreeMap<PID, Arc<Process>>> = Mutex::new(BTreeMap::new());
 
 /// Maximum number of file decriptor table entries.
 pub const FILE_MAX: i32 = 256;
@@ -62,6 +75,13 @@ struct PCR {
 pub struct Cmdline {
     pub binary: CString,
     pub argv: Vec<CString>,
+    pub envp: Vec<CString>,
+}
+
+/// Process threads list.
+struct ProcThreads {
+    threads: BTreeMap<i64, Arc<Thread>>,
+    detached: Vec<Weak<Thread>>,
 }
 
 /// The process descriptor structure.
@@ -75,7 +95,7 @@ pub struct Process {
     sigtab: Mutex<Sigtab>,
     pub files: Mutex<FDTable>,
     tid_counter: AtomicI64,
-    threads: Mutex<BTreeMap<i64, Thread>>,
+    threads: Mutex<ProcThreads>,
 }
 impl PartialEq for Process {
     fn eq(&self, other: &Self) -> bool {
@@ -99,12 +119,90 @@ unsafe impl Sync for Process {}
 impl Process {
     /// View the process' command line.
     pub fn cmdline<'a>(&'a self) -> SharedMutexGuard<'a, Cmdline> {
-        self.cmdline.lock_shared()
+        self.cmdline.unintr_lock_shared()
     }
 
     /// Get the page table's root physical page number.
     pub fn pagetable(&self) -> PPN {
         self.memmap().root_ppn()
+    }
+
+    /// Prepare the entrypoint stack.
+    fn create_entry_stack(
+        &self,
+        mut stack_top: *mut (),
+        auxv: &[AuxvEntry],
+    ) -> AccessResult<*mut ()> {
+        let cmdline = self.cmdline();
+        let mut argv = Vec::<*const c_char>::new();
+        let mut envp = Vec::<*const c_char>::new();
+
+        unsafe {
+            // Make the strings block.
+            for arg in &cmdline.argv {
+                let arg = arg.as_bytes_with_nul();
+                stack_top = stack_top.byte_sub(arg.len());
+                cpu::mmu::enable_sum();
+                copy_to_user(stack_top, arg.as_ptr() as *const (), arg.len())?;
+                cpu::mmu::disable_sum();
+            }
+            argv.push(null());
+
+            for env in &cmdline.envp {
+                let env = env.as_bytes_with_nul();
+                stack_top = stack_top.byte_sub(env.len());
+                cpu::mmu::enable_sum();
+                copy_to_user(stack_top, env.as_ptr() as *const (), env.len())?;
+                cpu::mmu::disable_sum();
+            }
+            envp.push(null());
+
+            // Align stack pointer to 16 bytes again.
+            stack_top = (stack_top as usize & !15) as *mut ();
+            let bytes_left = (argv.len() + envp.len() + auxv.len() * 2 + 2) * size_of::<usize>();
+            if bytes_left % 16 != 0 {
+                // Account for the offsets caused by the remaining data.
+                stack_top = stack_top.byte_sub(16 - bytes_left % 16);
+            }
+
+            // Null auxvec entry.
+            let zero = 0usize;
+            let zero_ptr = &raw const zero as *const ();
+            cpu::mmu::enable_sum();
+            copy_to_user(stack_top, zero_ptr, size_of::<usize>())?;
+            cpu::mmu::disable_sum();
+            stack_top = stack_top.byte_sub(size_of::<usize>());
+
+            // Envp.
+            cpu::mmu::enable_sum();
+            copy_to_user(
+                stack_top,
+                envp.as_ptr() as *const (),
+                envp.len() * size_of::<usize>(),
+            )?;
+            cpu::mmu::disable_sum();
+            stack_top = stack_top.byte_sub(envp.len() * size_of::<usize>());
+
+            // Argv.
+            cpu::mmu::enable_sum();
+            copy_to_user(
+                stack_top,
+                argv.as_ptr() as *const (),
+                argv.len() * size_of::<usize>(),
+            )?;
+            cpu::mmu::disable_sum();
+            stack_top = stack_top.byte_sub(argv.len() * size_of::<usize>());
+
+            // Argc.
+            let argc = argv.len();
+            let argc_ptr = &raw const argc as *const ();
+            cpu::mmu::enable_sum();
+            copy_to_user(stack_top, argc_ptr, size_of::<usize>())?;
+            cpu::mmu::disable_sum();
+            stack_top = stack_top.byte_sub(size_of::<usize>());
+        }
+
+        Ok(stack_top)
     }
 
     /// Create the init process.
@@ -125,19 +223,35 @@ impl Process {
             cmdline: Mutex::new(Cmdline {
                 binary: init_path.clone(),
                 argv: vec![init_path],
+                envp: Vec::new(),
             }),
             tid_counter: AtomicI64::new(0),
-            threads: Mutex::new(BTreeMap::new()),
+            threads: Mutex::new(ProcThreads {
+                threads: BTreeMap::new(),
+                detached: Vec::new(),
+            }),
             flags: AtomicU32::new(0),
             wait_status: AtomicI32::new(0),
             sigtab: Mutex::new(Sigtab::default()),
         };
-        let entry = load_executable(proc.memmap(), &mut *proc.cmdline.lock(), file.as_ref(), 0)?;
+        let entry = load_executable(
+            proc.memmap(),
+            &mut *proc.cmdline.unintr_lock(),
+            file.as_ref(),
+            0,
+        )?;
 
         let proc = Arc::try_new(proc)?;
-        PROCESSES.lock().insert(1, proc.clone());
+        PROCESSES.unintr_lock().insert(1, proc.clone());
 
-        proc.create_thread(entry, 0, Some("main"))?;
+        let proc2 = proc.clone();
+        proc.create_thread(
+            move |stack_top| {
+                let stack_top = proc2.create_entry_stack(stack_top, &[]).unwrap();
+                (entry as *const (), stack_top)
+            },
+            Some("U: main".into()),
+        )?;
 
         logkf!(LogLevel::Debug, "Process {} started", proc.pid);
 
@@ -156,30 +270,24 @@ impl Process {
             }),
             flags: AtomicU32::new(0),
             wait_status: AtomicI32::new(0),
-            cmdline: Mutex::new(self.cmdline.lock_shared().clone()),
+            cmdline: Mutex::new(self.cmdline.lock_shared()?.clone()),
             memmap: UnsafeCell::new(self.memmap().fork()?),
-            sigtab: Mutex::new(*self.sigtab.lock_shared()),
-            files: self.files.clone(),
+            sigtab: Mutex::new(*self.sigtab.lock_shared()?),
+            files: Mutex::new(self.files.lock()?.clone()),
             tid_counter: AtomicI64::new(self.tid_counter.load(Ordering::Relaxed)),
-            threads: Mutex::new(BTreeMap::new()),
+            threads: Mutex::new(ProcThreads {
+                threads: BTreeMap::new(),
+                detached: Vec::new(),
+            }),
         };
         let child = Arc::try_new(child)?;
-        self.pcr.lock().children.insert(pid, child.clone());
-        PROCESSES.lock().insert(pid, child.clone());
+        self.pcr.lock()?.children.insert(pid, child.clone());
+        PROCESSES.unintr_lock().insert(pid, child.clone());
 
         let thread = unsafe {
-            let tid = Errno::check_i32(thread_fork(
-                self.threads.lock_shared().get(&0).unwrap().tid(),
-                child.as_ref() as *const Process as *mut process_t,
-            ))?;
-            let thread_struct = sched_get_thread(tid);
-            // TODO: Portable impl for this after sched rewrite.
-            (*thread_struct).user_isr_ctx.regs.pc += 4;
-            (*thread_struct).user_isr_ctx.regs.a0 = 0;
-            thread_resume(tid);
-            Thread::from_id(tid)
+            todo!("Fork threads");
         };
-        child.threads.lock().insert(0, thread);
+        child.threads.unintr_lock().threads.insert(0, thread);
 
         logkf!(
             LogLevel::Debug,
@@ -205,17 +313,25 @@ impl Process {
 
         // Commit to replacing the process.
         self.join_all_threads();
-        self.files.lock().close_cloexec();
+        self.files.unintr_lock().close_cloexec();
         self.flags.store(0, Ordering::Relaxed);
         self.tid_counter.store(0, Ordering::Relaxed);
-        *self.sigtab.lock() = Sigtab::default();
-        *self.cmdline.lock() = cmdline;
+        *self.sigtab.unintr_lock() = Sigtab::default();
+        *self.cmdline.unintr_lock() = cmdline;
 
         unsafe {
             cpu::mmu::set_page_table(new_mm.root_ppn(), 0);
             *self.memmap.as_mut_unchecked() = new_mm;
         }
-        self.create_thread(entry, 0, Some("main")).unwrap();
+        let proc2 = self.clone();
+        self.create_thread(
+            move |stack_top| {
+                let stack_top = proc2.create_entry_stack(stack_top, &[]).unwrap();
+                (entry as *const (), stack_top)
+            },
+            Some("U: main".into()),
+        )
+        .unwrap();
 
         logkf!(LogLevel::Debug, "Process {} exec'ed", self.pid);
 
@@ -235,27 +351,51 @@ impl Process {
         }
 
         // TODO: Spawning a full thread for this is somewhat inefficient.
-        let arc_self = PROCESSES.lock_shared().get(&self.pid).cloned().unwrap();
-        Thread::new_kernel(
+        let arc_self = PROCESSES
+            .unintr_lock_shared()
+            .get(&self.pid)
+            .cloned()
+            .unwrap();
+        Thread::new(
             move || {
                 arc_self.reap();
-                0
             },
-            Some("process reaper"),
+            None,
+            Some(format!("Process {} reaper", self.pid)),
         )
-        .detach();
+        .unwrap();
     }
 
     /// Join all currently running threads.
     fn join_all_threads(&self) {
         debug_assert!(self.flags.load(Ordering::Relaxed) & flags::STOPPING != 0);
-        let mut threads = self.threads.lock();
-        let tid_self = unsafe { sched_current_tid() };
-        while let Some((_, thread)) = threads.pop_first() {
-            if tid_self != thread.tid() {
-                thread.join();
+        let mut threads = self.threads.unintr_lock();
+        let thread_self = Thread::current();
+
+        // Kindly ask all threads to stop.
+        for thread in &threads.threads {
+            thread.1.stop();
+        }
+        for thread in &threads.detached {
+            if let Some(thread) = thread.upgrade() {
+                thread.stop();
             }
         }
+
+        // Now wait until all threads have indeed stopped.
+        while let Some((_, thread)) = threads.threads.pop_first() {
+            if !addr_eq(thread_self, thread.as_ref()) {
+                let _ = thread.join();
+            }
+        }
+        while let Some(thread) = threads.detached.pop() {
+            if let Some(thread) = thread.upgrade() {
+                if !addr_eq(thread_self, thread.as_ref()) {
+                    let _ = thread.join();
+                }
+            }
+        }
+
         drop(threads);
     }
 
@@ -264,21 +404,45 @@ impl Process {
         self.join_all_threads();
         logkf!(LogLevel::Debug, "Process {} stopped", self.pid);
 
-        self.files.lock().clear();
+        self.files.unintr_lock().clear();
         unsafe { self.memmap().clear() };
     }
 
     /// Create a new thread in this process.
+    /// The `setup` function accepts the stack top and returns the entrypoint and the stack pointer to start into.
     pub fn create_thread(
         self: &Arc<Self>,
-        entry: usize,
-        arg: usize,
-        name: Option<&str>,
+        setup: impl FnOnce(*mut ()) -> (*const (), *mut ()) + Send + 'static,
+        name: Option<String>,
     ) -> EResult<i64> {
         let tid = self.tid_counter.fetch_add(1, Ordering::Relaxed);
-        let thread =
-            unsafe { Thread::try_new_user(Arc::into_raw(self.clone()), entry, arg, name)? };
-        self.threads.lock().insert(tid, thread);
+        let stack_pages = (STACK_SIZE / PAGE_SIZE) as usize;
+        // TODO: Safe and owning API for memory objects?
+        let u_stack = unsafe { self.memmap().map_ram(None, stack_pages, vmm::flags::RW) }?;
+        let proc_self = self.clone();
+        let thread = Thread::new(
+            move || {
+                // Set up things on the stack.
+                let u_stack_top = ((u_stack + stack_pages) * PAGE_SIZE as usize) as *mut ();
+                let (pc, sp) = setup(u_stack_top);
+
+                // Call user mode.
+                call_usermode(pc, sp);
+
+                // Clean up the stack.
+                unsafe {
+                    proc_self.memmap().unmap(u_stack..u_stack + stack_pages);
+                }
+            },
+            Some(self.clone()),
+            name,
+        );
+        if thread.is_err() {
+            unsafe {
+                self.memmap().unmap(u_stack..u_stack + stack_pages);
+            }
+        }
+        self.threads.unintr_lock().threads.insert(tid, thread?);
         Ok(tid)
     }
 }
@@ -352,15 +516,9 @@ fn load_executable(
 
 /// Get the current process handle.
 pub fn current() -> Option<Arc<Process>> {
-    unsafe {
-        let thread = bindings::raw::sched_current_thread();
-        if thread.is_null() {
-            return None;
-        }
-        let proc = (*thread).process as *const Process;
-        let proc = Arc::from_raw(proc);
-        // Clone the arc from the thread instead of dropping it.
-        core::mem::forget(proc.clone());
-        Some(proc)
+    let thread = Thread::current();
+    if thread.is_null() {
+        return None;
     }
+    unsafe { &*thread }.process.clone()
 }

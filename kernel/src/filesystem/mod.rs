@@ -28,7 +28,6 @@ use crate::{
             class::{block::BlockDevice, char::CharDevice},
         },
         error::{EResult, Errno},
-        mutex::{Mutex, SharedMutexGuard},
         raw::{errno_t, file_t, stat_t},
     },
     filesystem::{
@@ -36,6 +35,7 @@ use crate::{
         fifo::{Fifo, FifoShared},
         vfs::{VNodeMtxInner, mflags, vnflags},
     },
+    kernel::sync::mutex::{Mutex, SharedMutexGuard},
     process::usercopy::{UserSlice, UserSliceMut},
 };
 
@@ -286,7 +286,7 @@ pub trait File: Sync {
     /// Get all entries in this directory.
     fn get_dirents(&self) -> EResult<Vec<Dirent>> {
         let vnode = self.get_vnode().ok_or(Errno::ESPIPE)?;
-        let guard = vnode.mtx.lock_shared();
+        let guard = vnode.mtx.lock_shared()?;
         if guard.flags & vnflags::REMOVED != 0 {
             return Ok(Vec::new());
         }
@@ -486,24 +486,21 @@ struct MountTable {
 }
 
 /// The currently mounted root filesystem.
-static ROOT_FS: Mutex<Option<Arc<Vfs>>> = unsafe { Mutex::new_static(None) };
+static ROOT_FS: Mutex<Option<Arc<Vfs>>> = Mutex::new(None);
 
 /// Table of mounted filesystems.
-static MOUNT_TABLE: Mutex<MountTable> = unsafe {
-    Mutex::new_static(MountTable {
-        fs_by_media: BTreeMap::new(),
-        fs_by_mount: BTreeMap::new(),
-    })
-};
+static MOUNT_TABLE: Mutex<MountTable> = Mutex::new(MountTable {
+    fs_by_media: BTreeMap::new(),
+    fs_by_mount: BTreeMap::new(),
+});
 
 /// Table of filesystem drivers.
-pub static FSDRIVERS: Mutex<BTreeMap<String, Box<dyn VfsDriver>>> =
-    unsafe { Mutex::new_static(BTreeMap::new()) };
+pub static FSDRIVERS: Mutex<BTreeMap<String, Box<dyn VfsDriver>>> = Mutex::new(BTreeMap::new());
 
 /// Helper function that gets the root directory handle.
 fn root_vnode_unlocked(guard: &MountTable) -> EResult<Arc<VNode>> {
     debug_assert!(ptr::addr_eq(guard, unsafe { MOUNT_TABLE.data() }));
-    if let Some(fs) = &*ROOT_FS.lock_shared() {
+    if let Some(fs) = &*ROOT_FS.lock_shared()? {
         Ok(fs.root())
     } else {
         logkf!(
@@ -515,7 +512,7 @@ fn root_vnode_unlocked(guard: &MountTable) -> EResult<Arc<VNode>> {
 }
 /// Helper function that gets the root directory handle.
 fn root_vnode() -> EResult<Arc<VNode>> {
-    root_vnode_unlocked(&MOUNT_TABLE.lock_shared())
+    root_vnode_unlocked(&*MOUNT_TABLE.lock_shared()?)
 }
 
 /// Helper function that gets the VNode for `at` parameters.
@@ -529,7 +526,7 @@ fn at_vnode_unlocked(at: Option<&dyn File>, guard: &MountTable) -> EResult<Arc<V
 
 /// Helper function that gets the VNode for `at` parameters.
 fn at_vnode(at: Option<&dyn File>) -> EResult<Arc<VNode>> {
-    at_vnode_unlocked(at, &*MOUNT_TABLE.lock_shared())
+    at_vnode_unlocked(at, &*MOUNT_TABLE.lock_shared()?)
 }
 
 /// Walk down the filesystem to a certain path.
@@ -583,7 +580,7 @@ fn walk_unlocked(
     } else if path[0] == b'/' {
         at = root_vnode_unlocked(guard)?
             .mtx
-            .lock_shared()
+            .lock_shared()?
             .dentcache
             .clone()
             .unwrap();
@@ -644,7 +641,7 @@ fn walk_unlocked(
                     } else if at.readlink()?[0] == b'/' {
                         at = root_vnode_unlocked(guard)?
                             .mtx
-                            .lock_shared()
+                            .lock_shared()?
                             .dentcache
                             .clone()
                             .unwrap();
@@ -662,14 +659,14 @@ fn walk_unlocked(
 
 /// Walk down the filesystem to a certain path.
 fn walk(at: Arc<DentCache>, path: &[u8], follow_last_symlink: bool) -> EResult<Arc<DentCache>> {
-    walk_unlocked(at, path, follow_last_symlink, &MOUNT_TABLE.lock_shared())
+    walk_unlocked(at, path, follow_last_symlink, &*MOUNT_TABLE.lock_shared()?)
 }
 
 /// Helper function for [`oflags::CREATE`] logic in [`open`].
 fn o_creat_helper(to_create: Arc<DentCache>, exclusive: bool) -> EResult<Arc<VNode>> {
-    let uses_inodes = to_create.vfs.ops.lock_shared().uses_inodes();
+    let uses_inodes = to_create.vfs.ops.lock_shared()?.uses_inodes();
     let dir_cache = to_create.parent.clone().unwrap();
-    let mut guard = dir_cache.type_.as_dir().unwrap().lock();
+    let mut guard = dir_cache.type_.as_dir().unwrap().lock()?;
 
     // Check whether the file was created in the mean time.
     if let Some(weak) = guard.children.get(&*to_create.dirent.name) {
@@ -697,7 +694,7 @@ fn o_creat_helper(to_create: Arc<DentCache>, exclusive: bool) -> EResult<Arc<VNo
 
     // A new regular file is to be created.
     let dir_vnode = dir_cache.open_vnode()?;
-    let mut dir_guard = dir_vnode.mtx.lock();
+    let mut dir_guard = dir_vnode.mtx.lock()?;
     if dir_guard.flags & vnflags::REMOVED != 0 {
         return Err(Errno::ENOENT);
     }
@@ -733,14 +730,14 @@ fn o_creat_helper(to_create: Arc<DentCache>, exclusive: bool) -> EResult<Arc<VNo
         type_: NodeType::Regular,
         fifo: None,
     })?;
-    *dentcache.vnode.lock() = Some(Arc::downgrade(&new_vnode));
+    *dentcache.vnode.unintr_lock() = Some(Arc::downgrade(&new_vnode));
 
     // Successfully created new VNode.
     if uses_inodes {
         dir_vnode
             .vfs
             .vnodes
-            .lock()
+            .unintr_lock()
             .insert(ino, Arc::downgrade(&new_vnode));
     }
 
@@ -783,7 +780,7 @@ pub fn open(at: Option<&dyn File>, path: &[u8], mut oflags: OFlags) -> EResult<A
     let at = at_vnode(at)?;
     let cache = walk(
         at.mtx
-            .lock_shared()
+            .lock_shared()?
             .dentcache
             .clone()
             .ok_or(Errno::ENOTDIR)?,
@@ -881,7 +878,7 @@ pub fn link(
     let old = walk(
         old_at
             .mtx
-            .lock_shared()
+            .lock_shared()?
             .dentcache
             .clone()
             .ok_or(Errno::ENOTDIR)?,
@@ -891,7 +888,7 @@ pub fn link(
     let new = walk(
         new_at
             .mtx
-            .lock_shared()
+            .lock_shared()?
             .dentcache
             .clone()
             .ok_or(Errno::ENOTDIR)?,
@@ -912,13 +909,16 @@ pub fn link(
         return Err(Errno::EROFS);
     }
 
-    let old_guard = old_dir_cache.type_.as_dir().unwrap().lock();
-    let new_guard = (!Arc::ptr_eq(&old_dir_cache, &new_dir_cache))
-        .then(|| new_dir_cache.type_.as_dir().unwrap().lock());
+    let old_guard = old_dir_cache.type_.as_dir().unwrap().lock()?;
+    let new_guard = if !Arc::ptr_eq(&old_dir_cache, &new_dir_cache) {
+        Some(new_dir_cache.type_.as_dir().unwrap().lock()?)
+    } else {
+        None
+    };
 
     // Perform link operation on VFS.
     let dir_vnode = new_dir_cache.open_vnode()?;
-    let mut dir_guard = dir_vnode.mtx.lock();
+    let mut dir_guard = dir_vnode.mtx.lock()?;
     if dir_guard.flags & vnflags::REMOVED != 0 {
         return Err(Errno::ENOENT);
     }
@@ -942,7 +942,7 @@ pub fn unlink(at: Option<&dyn File>, path: &[u8], is_rmdir: bool) -> EResult<()>
     let at = at_vnode(at)?;
     let to_remove = walk(
         at.mtx
-            .lock_shared()
+            .lock_shared()?
             .dentcache
             .clone()
             .ok_or(Errno::ENOTDIR)?,
@@ -962,17 +962,18 @@ pub fn unlink(at: Option<&dyn File>, path: &[u8], is_rmdir: bool) -> EResult<()>
     if dir_cache.vfs.is_read_only() {
         return Err(Errno::EROFS);
     }
-    let mut guard = dir_cache.type_.as_dir().unwrap().lock();
+    let mut guard = dir_cache.type_.as_dir().unwrap().lock()?;
 
     // Get the VNode entry being unlinked.
-    let unlinked_vnode: Option<_> = try { to_remove.vnode.lock_shared().clone()?.upgrade()? };
+    let to_remove_vnode = to_remove.vnode.lock_shared()?;
+    let unlinked_vnode: Option<_> = try { to_remove_vnode.clone()?.upgrade()? };
 
     // If the target is a dir, lock it so it cannot be concurrently modified.
     let _target_guard = to_remove.type_.as_dir().map(Mutex::lock);
 
     // Unlink the node.
     let dir_vnode = dir_cache.open_vnode()?;
-    let mut dir_guard = dir_vnode.mtx.lock();
+    let mut dir_guard = dir_vnode.mtx.lock()?;
     if dir_guard.flags & vnflags::REMOVED != 0 {
         return Err(Errno::ENOENT);
     }
@@ -992,17 +993,17 @@ pub fn make_file(at: Option<&dyn File>, path: &[u8], spec: MakeFileSpec) -> ERes
     let at = at_vnode(at)?;
     let to_create = walk(
         at.mtx
-            .lock_shared()
+            .lock_shared()?
             .dentcache
             .clone()
             .ok_or(Errno::ENOTDIR)?,
         path,
         false,
     )?;
-    let uses_inodes = to_create.vfs.ops.lock_shared().uses_inodes();
+    let uses_inodes = to_create.vfs.ops.lock_shared()?.uses_inodes();
 
     let dir_cache = to_create.parent.clone().ok_or(Errno::EEXIST)?;
-    let mut guard = dir_cache.type_.as_dir().unwrap().lock();
+    let mut guard = dir_cache.type_.as_dir().unwrap().lock()?;
 
     // Check whether the file already exists.
     if let Some(weak) = guard.children.get(&*to_create.dirent.name) {
@@ -1015,7 +1016,7 @@ pub fn make_file(at: Option<&dyn File>, path: &[u8], spec: MakeFileSpec) -> ERes
     }
 
     let dir_vnode = dir_cache.open_vnode()?;
-    let mut dir_guard = dir_vnode.mtx.lock();
+    let mut dir_guard = dir_vnode.mtx.lock()?;
     if dir_guard.flags & vnflags::REMOVED != 0 {
         return Err(Errno::ENOENT);
     }
@@ -1066,13 +1067,13 @@ pub fn make_file(at: Option<&dyn File>, path: &[u8], spec: MakeFileSpec) -> ERes
         type_,
         fifo,
     })?;
-    *dentcache.vnode.lock() = Some(Arc::downgrade(&new_vnode));
+    *dentcache.vnode.unintr_lock() = Some(Arc::downgrade(&new_vnode));
 
     // Successfully created new VNode.
     dir_vnode
         .vfs
         .vnodes
-        .lock()
+        .unintr_lock()
         .insert(inode, Arc::downgrade(&new_vnode));
 
     // Replace the dirent cache entry.
@@ -1116,7 +1117,7 @@ fn rename_impl(
     let old = walk(
         old_at
             .mtx
-            .lock_shared()
+            .lock_shared()?
             .dentcache
             .clone()
             .ok_or(Errno::ENOTDIR)?,
@@ -1126,7 +1127,7 @@ fn rename_impl(
     let new = walk(
         new_at
             .mtx
-            .lock_shared()
+            .lock_shared()?
             .dentcache
             .clone()
             .ok_or(Errno::ENOTDIR)?,
@@ -1139,10 +1140,10 @@ fn rename_impl(
     let new_dir_cache = new.parent.clone().ok_or(Errno::EBUSY)?;
     let old_dir_vnode = old_dir_cache.open_vnode()?;
 
-    let mut old_guard = old_dir_cache.type_.as_dir().unwrap().lock();
+    let mut old_guard = old_dir_cache.type_.as_dir().unwrap().lock()?;
     let (new_guard, dirent) = if Arc::ptr_eq(&old_dir_cache, &new_dir_cache) {
         // Rename within directory.
-        let mut old_dir_guard = old_dir_vnode.mtx.lock();
+        let mut old_dir_guard = old_dir_vnode.mtx.lock()?;
         if old_dir_guard.flags & vnflags::REMOVED != 0 {
             return Err(Errno::ENOENT);
         }
@@ -1156,10 +1157,10 @@ fn rename_impl(
         (None, dirent)
     } else {
         // Rename across directories.
-        let guard = new_dir_cache.type_.as_dir().unwrap().try_lock(10000)?;
+        let guard = new_dir_cache.type_.as_dir().unwrap().timed_lock(10000)?;
         let new_dir_vnode = new_dir_cache.open_vnode()?;
-        let mut old_dir_guard = old_dir_vnode.mtx.lock();
-        let mut new_dir_guard = new_dir_vnode.mtx.try_lock(10000)?;
+        let mut old_dir_guard = old_dir_vnode.mtx.lock()?;
+        let mut new_dir_guard = new_dir_vnode.mtx.timed_lock(10000)?;
         if old_dir_guard.flags & vnflags::REMOVED != 0 {
             return Err(Errno::ENOENT);
         }
@@ -1172,7 +1173,7 @@ fn rename_impl(
         if old_dir_cache.vfs.is_read_only() {
             return Err(Errno::EROFS);
         }
-        let dirent = old_dir_cache.vfs.ops.lock_shared().rename(
+        let dirent = old_dir_cache.vfs.ops.lock_shared()?.rename(
             &old_dir_cache.vfs,
             &old_dir_vnode,
             &old.dirent.name,
@@ -1192,14 +1193,19 @@ fn rename_impl(
         let type_ = match &old_dentcache.type_ {
             DentCacheType::Negative => unreachable!(),
             DentCacheType::Directory(mutex) => {
-                DentCacheType::Directory(Mutex::new(mutex.lock_shared().clone()))
+                DentCacheType::Directory(Mutex::new(mutex.unintr_lock_shared().clone()))
             }
             DentCacheType::Symlink(value) => DentCacheType::Symlink(value.clone()),
             DentCacheType::File => DentCacheType::File,
         };
 
-        let moved_vnode: Option<Arc<VNode>> =
-            try { old_dentcache.vnode.lock_shared().clone()?.upgrade()? };
+        let moved_vnode: Option<Arc<VNode>> = try {
+            old_dentcache
+                .vnode
+                .unintr_lock_shared()
+                .clone()?
+                .upgrade()?
+        };
 
         // Create new dirent cache entry.
         let dentcache = Arc::new(DentCache {
@@ -1212,7 +1218,7 @@ fn rename_impl(
 
         // Update that of the VNode if it exists and has a dentcache reference.
         if let Some(moved_vnode) = &moved_vnode {
-            let mut vnode_guard = moved_vnode.mtx.lock();
+            let mut vnode_guard = moved_vnode.mtx.unintr_lock();
             if vnode_guard.dentcache.is_some() {
                 vnode_guard.dentcache = Some(dentcache.clone());
             }
@@ -1236,7 +1242,7 @@ pub fn realpath(at: Option<&dyn File>, path: &[u8], follow_last_symlink: bool) -
     let at = at_vnode(at)?;
     let cache = walk(
         at.mtx
-            .lock_shared()
+            .lock_shared()?
             .dentcache
             .clone()
             .ok_or(Errno::ENOTDIR)?,
@@ -1287,8 +1293,8 @@ fn create_vfs(
     })
     .unwrap();
 
-    let root_ops = vfs.ops.lock_shared().open_root(&vfs)?;
-    let root_ino = if vfs.ops.lock_shared().uses_inodes() {
+    let root_ops = vfs.ops.unintr_lock_shared().open_root(&vfs)?;
+    let root_ino = if vfs.ops.unintr_lock_shared().uses_inodes() {
         root_ops.get_inode()
     } else {
         vfs.next_fake_ino.fetch_add(1, Ordering::Relaxed)
@@ -1320,7 +1326,9 @@ fn create_vfs(
         type_: NodeType::Directory,
         fifo: None,
     });
-    vfs.vnodes.lock().insert(root.ino, Arc::downgrade(&root));
+    vfs.vnodes
+        .unintr_lock()
+        .insert(root.ino, Arc::downgrade(&root));
     unsafe { *vfs.root.as_mut_unchecked() = Some(root) };
 
     Ok(vfs)
@@ -1335,7 +1343,7 @@ pub fn mount(
     mflags: MFlags,
 ) -> EResult<()> {
     // Determine filesystem type.
-    let drivers = FSDRIVERS.lock_shared();
+    let drivers = FSDRIVERS.lock_shared()?;
     let type_ = if let Some(x) = type_ {
         x
     } else if let Some(media) = &media {
@@ -1346,7 +1354,7 @@ pub fn mount(
     };
 
     // Lock mounts table while other mounting logic runs.
-    let mut mounts = MOUNT_TABLE.lock();
+    let mut mounts = MOUNT_TABLE.lock()?;
     let media_key = try { MediaKey::new(media.as_ref()?)? };
 
     // Cloning mounts is currently unsupported.
@@ -1371,7 +1379,7 @@ pub fn mount(
         if let Some(media_key) = media_key {
             mounts.fs_by_media.insert(media_key, vfs.clone());
         }
-        *ROOT_FS.lock() = Some(vfs);
+        *ROOT_FS.unintr_lock() = Some(vfs);
         return Ok(());
     }
 
@@ -1380,7 +1388,7 @@ pub fn mount(
     let at = at_vnode_unlocked(at, &mounts)?;
     let cache = walk_unlocked(
         at.mtx
-            .lock_shared()
+            .lock_shared()?
             .dentcache
             .clone()
             .ok_or(Errno::ENOTDIR)?,
@@ -1391,7 +1399,7 @@ pub fn mount(
     .follow_mounts();
     // Lock it so no modifications can happen while mounting there.
     let cache_dir = cache.type_.as_dir().ok_or(Errno::ENOTDIR)?;
-    let mut cache_guard = cache_dir.lock();
+    let mut cache_guard = cache_dir.lock()?;
 
     if cache_guard.children.len() != 0 {
         // Mountpoint must be empty.
@@ -1442,12 +1450,12 @@ pub fn umount(at: Option<&dyn File>, path: &[u8], flags: MFlags) -> EResult<()> 
         .unwrap();
 
     // Now, lock the mount table; this will inhibit any new VNodes from being opened.
-    let mut mount_table = MOUNT_TABLE.lock();
+    let mut mount_table = MOUNT_TABLE.lock()?;
     // Get the target VFS from this VNode.
     let mut vfs = target.follow_mounts().is_vfs_root();
     if vfs.is_none() {
+        let ops = &target.mtx.lock_shared()?.ops;
         vfs = try {
-            let ops = &target.mtx.lock_shared().ops;
             let device = ops.get_device(&target)?.as_block()?;
             let offset = ops.get_part_offset(&target);
             let media_key = MediaKey { device, offset };
@@ -1459,7 +1467,7 @@ pub fn umount(at: Option<&dyn File>, path: &[u8], flags: MFlags) -> EResult<()> 
     // Assert that no files are open; only the root dir VNode should be present with refcount 2.
     if flags & mflags::DETACH == 0 {
         let root = unsafe { vfs.root.as_ref_unchecked() }.as_ref().unwrap();
-        for weak in vfs.vnodes.lock_shared().values() {
+        for weak in vfs.vnodes.lock_shared()?.values() {
             if weak
                 .upgrade()
                 .map(|arc| !Arc::ptr_eq(root, &arc))
@@ -1475,12 +1483,12 @@ pub fn umount(at: Option<&dyn File>, path: &[u8], flags: MFlags) -> EResult<()> 
     }
 
     // OK to unmount, remove from mount table.
-    if let Some(key) = try { MediaKey::new(vfs.ops.lock_shared().media()?)? } {
+    if let Some(key) = try { MediaKey::new(vfs.ops.unintr_lock_shared().media()?)? } {
         mount_table.fs_by_media.remove(&key).unwrap();
     }
     let mountpoint = if let Some(vnode) = vfs.mountpoint.clone() {
-        let dentcache = vnode.mtx.lock_shared().dentcache.clone().unwrap();
-        dentcache.type_.as_dir().unwrap().lock().mounted = None;
+        let dentcache = vnode.mtx.unintr_lock_shared().dentcache.clone().unwrap();
+        dentcache.type_.as_dir().unwrap().unintr_lock().mounted = None;
         &*(dentcache.realpath()?)
     } else {
         b"/"
@@ -1497,7 +1505,7 @@ pub fn umount(at: Option<&dyn File>, path: &[u8], flags: MFlags) -> EResult<()> 
 pub fn pipe(oflags: OFlags) -> EResult<(Arc<dyn File>, Arc<dyn File>)> {
     // TODO: OOM handling.
     let shared = FifoShared::new();
-    shared.open(true, true, true);
+    shared.open(true, true, true)?;
     let write_end = Arc::new(Fifo {
         vnode: None,
         is_nonblock: (oflags & oflags::NONBLOCK) != 0,

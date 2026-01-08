@@ -25,11 +25,11 @@ pub const AT_FDCWD: i32 = -100;
 /// If `at` is -1, `path` is relative to the working directory.
 /// Returns -errno on error, file descriptor number on success.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn syscall_fs_open(at: c_int, path: *const c_char, oflags: u32) -> c_int {
+pub unsafe extern "C" fn syscall_fs_open(at: c_int, path: *const c_char, oflags: u32) -> c_int {
     let proc = process::current().unwrap();
     Errno::extract_i32(
         try {
-            let mut files = proc.files.lock();
+            let mut files = proc.files.lock()?;
             let mut pathbuf = [0u8; PATH_MAX];
             let pathlen = usercopy::read_user_cstr(path, &mut pathbuf)?;
             let at_file = files.get_atfile(at)?;
@@ -44,15 +44,19 @@ unsafe extern "C" fn syscall_fs_open(at: c_int, path: *const c_char, oflags: u32
 
 /// Flush and close a file.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn syscall_fs_close(fd: c_int) -> c_int {
+pub unsafe extern "C" fn syscall_fs_close(fd: c_int) -> c_int {
     let proc = process::current().unwrap();
-    Errno::extract(proc.files.lock().remove_file(fd as i32))
+    Errno::extract(proc.files.unintr_lock().remove_file(fd as i32))
 }
 
 /// Read bytes from a file.
 /// Returns 0 on EOF, -errno on error, read count on success.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn syscall_fs_read(fd: c_int, read_buf: *mut c_void, read_len: c_long) -> c_long {
+pub unsafe extern "C" fn syscall_fs_read(
+    fd: c_int,
+    read_buf: *mut c_void,
+    read_len: c_long,
+) -> c_long {
     if read_len < 0 {
         return -(Errno::EINVAL as c_long);
     }
@@ -60,7 +64,7 @@ unsafe extern "C" fn syscall_fs_read(fd: c_int, read_buf: *mut c_void, read_len:
     Errno::extract_usize(
         try {
             proc.files
-                .lock_shared()
+                .lock_shared()?
                 .get_file(fd)?
                 .read(UserSliceMut::new_mut(
                     read_buf as *mut u8,
@@ -73,7 +77,7 @@ unsafe extern "C" fn syscall_fs_read(fd: c_int, read_buf: *mut c_void, read_len:
 /// Write bytes to a file.
 /// Returns -errno on error, write count on success.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn syscall_fs_write(
+pub unsafe extern "C" fn syscall_fs_write(
     fd: c_int,
     write_buf: *const c_void,
     write_len: c_long,
@@ -85,7 +89,7 @@ unsafe extern "C" fn syscall_fs_write(
     Errno::extract_usize(
         try {
             proc.files
-                .lock_shared()
+                .lock_shared()?
                 .get_file(fd)?
                 .write(UserSlice::new(write_buf as *const u8, write_len as usize)?)?
         },
@@ -96,7 +100,7 @@ unsafe extern "C" fn syscall_fs_write(
 /// See `dirent_t` for the format.
 /// Returns -errno on error, read count on success.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn syscall_fs_getdents(
+pub unsafe extern "C" fn syscall_fs_getdents(
     fd: c_int,
     read_buf: *mut c_void,
     read_len: c_long,
@@ -108,7 +112,7 @@ unsafe extern "C" fn syscall_fs_getdents(
 /// If `*_at` is -1, the respective `*_path` is relative to the working directory.
 /// Returns -errno on error, 0 on success.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn syscall_fs_rename(
+pub unsafe extern "C" fn syscall_fs_rename(
     old_at: c_int,
     old_path: *const c_char,
     new_at: c_int,
@@ -118,7 +122,7 @@ unsafe extern "C" fn syscall_fs_rename(
     let proc = process::current().unwrap();
     Errno::extract(
         try {
-            let files = proc.files.lock_shared();
+            let files = proc.files.lock_shared()?;
             let old_at_file = files.get_atfile(old_at)?;
             let mut old_pathbuf = [0u8; PATH_MAX];
             let old_pathlen = usercopy::read_user_cstr(old_path, &mut old_pathbuf)?;
@@ -140,7 +144,7 @@ unsafe extern "C" fn syscall_fs_rename(
 /// If `path` is specified, it is interpreted as relative to `fd`.
 /// If `path` is NULL, the inode referenced by `fd` is stat'ed.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn syscall_fs_stat(
+pub unsafe extern "C" fn syscall_fs_stat(
     fd: c_int,
     path: *const c_char,
     follow_link: bool,
@@ -149,7 +153,7 @@ unsafe extern "C" fn syscall_fs_stat(
     let proc = process::current().unwrap();
     Errno::extract(
         try {
-            let files = proc.files.lock_shared();
+            let files = proc.files.lock_shared()?;
             let mut stat_out = UserPtrMut::new_mut(stat_out)?;
             let stat: stat_t;
             if path.is_null() {
@@ -174,14 +178,14 @@ unsafe extern "C" fn syscall_fs_stat(
 /// If `at` is -1, `path` is relative to the working directory.
 /// Returns -errno on error, 0 on success.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn syscall_fs_mkdir(at: c_int, path: *const c_char) -> c_int {
+pub unsafe extern "C" fn syscall_fs_mkdir(at: c_int, path: *const c_char) -> c_int {
     let proc = process::current().unwrap();
     Errno::extract(
         try {
             let mut pathbuf = [0u8; PATH_MAX];
             let pathlen = usercopy::read_user_cstr(path, &mut pathbuf)?;
             make_file(
-                proc.files.lock_shared().get_atfile(at)?.as_deref(),
+                proc.files.lock_shared()?.get_atfile(at)?.as_deref(),
                 &pathbuf[..pathlen],
                 MakeFileSpec::Directory,
             )?;
@@ -193,14 +197,14 @@ unsafe extern "C" fn syscall_fs_mkdir(at: c_int, path: *const c_char) -> c_int {
 /// If `at` is -1, `path` is relative to the working directory.
 /// Returns -errno on error, 0 on success.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn syscall_fs_rmdir(at: c_int, path: *const c_char) -> c_int {
+pub unsafe extern "C" fn syscall_fs_rmdir(at: c_int, path: *const c_char) -> c_int {
     let proc = process::current().unwrap();
     Errno::extract(
         try {
             let mut pathbuf = [0u8; PATH_MAX];
             let pathlen = usercopy::read_user_cstr(path, &mut pathbuf)?;
             unlink(
-                proc.files.lock_shared().get_atfile(at)?.as_deref(),
+                proc.files.lock_shared()?.get_atfile(at)?.as_deref(),
                 &pathbuf[..pathlen],
                 true,
             )?;
@@ -212,7 +216,7 @@ unsafe extern "C" fn syscall_fs_rmdir(at: c_int, path: *const c_char) -> c_int {
 /// If `*_at` is -1, the respective `*_path` is relative to the working directory.
 /// Returns -errno on error, 0 on success.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn syscall_fs_link(
+pub unsafe extern "C" fn syscall_fs_link(
     old_at: c_int,
     old_path: *const c_char,
     new_at: c_int,
@@ -222,7 +226,7 @@ unsafe extern "C" fn syscall_fs_link(
     let proc = process::current().unwrap();
     Errno::extract(
         try {
-            let files = proc.files.lock_shared();
+            let files = proc.files.lock_shared()?;
             let old_at_file = files.get_atfile(old_at)?;
             let mut old_pathbuf = [0u8; PATH_MAX];
             let old_pathlen = usercopy::read_user_cstr(old_path, &mut old_pathbuf)?;
@@ -244,14 +248,14 @@ unsafe extern "C" fn syscall_fs_link(
 /// If `at` is -1, `path` is relative to the working directory.
 /// Returns -errno on error, 0 on success.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn syscall_fs_unlink(at: c_int, path: *const c_char) -> c_int {
+pub unsafe extern "C" fn syscall_fs_unlink(at: c_int, path: *const c_char) -> c_int {
     let proc = process::current().unwrap();
     Errno::extract(
         try {
             let mut pathbuf = [0u8; PATH_MAX];
             usercopy::read_user_cstr(path, &mut pathbuf)?;
             unlink(
-                proc.files.lock_shared().get_atfile(at)?.as_deref(),
+                proc.files.lock_shared()?.get_atfile(at)?.as_deref(),
                 &pathbuf,
                 false,
             )?;
@@ -263,14 +267,14 @@ unsafe extern "C" fn syscall_fs_unlink(at: c_int, path: *const c_char) -> c_int 
 /// If `at` is -1, `path` is relative to the working directory.
 /// Returns -errno on error, 0 on success.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn syscall_fs_mkfifo(at: c_int, path: *const c_char) -> c_int {
+pub unsafe extern "C" fn syscall_fs_mkfifo(at: c_int, path: *const c_char) -> c_int {
     let proc = process::current().unwrap();
     Errno::extract(
         try {
             let mut pathbuf = [0u8; PATH_MAX];
             usercopy::read_user_cstr(path, &mut pathbuf)?;
             make_file(
-                proc.files.lock_shared().get_atfile(at)?.as_deref(),
+                proc.files.lock_shared()?.get_atfile(at)?.as_deref(),
                 &pathbuf,
                 MakeFileSpec::Fifo,
             )?;
@@ -282,12 +286,12 @@ unsafe extern "C" fn syscall_fs_mkfifo(at: c_int, path: *const c_char) -> c_int 
 /// `fds[0]` will be written with the pointer to the read end, `fds[1]` the write end.
 /// Returns -errno on error, 0 on success.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn syscall_fs_pipe(fds: *mut [c_int; 2], flags: u32) -> c_int {
+pub unsafe extern "C" fn syscall_fs_pipe(fds: *mut [c_int; 2], flags: u32) -> c_int {
     let proc = process::current().unwrap();
     Errno::extract(
         try {
             let fifos = pipe(flags as u32)?;
-            let (fd0, fd1) = proc.files.lock().insert_dual_file(
+            let (fd0, fd1) = proc.files.unintr_lock().insert_dual_file(
                 FileDesc {
                     flags: AtomicU32::new(flags & 0xffff0000),
                     file: fifos.0,

@@ -22,9 +22,9 @@ use crate::{
     bindings::{
         device::HasBaseDevice,
         error::{EResult, Errno},
-        mutex::Mutex,
     },
     filesystem::{MakeFileSpec, NAME_MAX},
+    kernel::sync::mutex::Mutex,
     process::usercopy::{UserSlice, UserSliceMut},
     util::MaybeMut,
 };
@@ -61,11 +61,11 @@ impl E2VNode {
 
     /// Helper function to get one block ID from the inode.
     fn get_block(&self, e2fs: &E2Fs, block: u32, de_sparse: bool) -> EResult<Option<NonZeroU32>> {
-        let guard = self.inode.lock_shared();
+        let guard = self.inode.lock_shared()?;
         let mut res = self.get_block_unlocked(e2fs, block, MaybeMut::Const(&guard))?;
         drop(guard);
         if de_sparse {
-            let mut guard = self.inode.lock();
+            let mut guard = self.inode.lock()?;
             res = self.get_block_unlocked(e2fs, block, MaybeMut::Mut(&mut guard))?;
             debug_assert!(res.is_some());
         }
@@ -664,7 +664,7 @@ impl E2VNode {
 
         // Decrease inode refcount.
         let unlinked_ops = unlinked_ops.unwrap_or(self);
-        let mut inode = unlinked_ops.inode.lock();
+        let mut inode = unlinked_ops.inode.lock()?;
         inode.nlink = inode.nlink.checked_sub(1).ok_or(Errno::EIO)?;
         e2fs.media.write_le(
             unlinked_ops.inode_offset + offset_of!(Inode, nlink) as u64,
@@ -705,7 +705,7 @@ impl VNodeOps for E2VNode {
             )?;
         } else if new_size < old_size {
             // Garbage-collect blocks.
-            let mut inode = self.inode.lock();
+            let mut inode = self.inode.lock()?;
             let old_blocks = old_size.div_ceil(1u64 << e2fs.block_size_exp);
             let new_blocks = new_size.div_ceil(1u64 << e2fs.block_size_exp);
             for block in new_blocks..old_blocks {
@@ -714,7 +714,7 @@ impl VNodeOps for E2VNode {
         }
 
         // Update size in inode.
-        let mut inode = self.inode.lock();
+        let mut inode = self.inode.lock()?;
         inode.size = new_size as u32;
         e2fs.media.writek(
             self.inode_offset + offset_of!(Inode, size) as u64,
@@ -783,7 +783,10 @@ impl VNodeOps for E2VNode {
 
         // Get E2VNode from unlinked_vnode, or open temporarily if not present.
         // This will be used to decrease the links count later.
-        let mut unlinked_guard = unlinked_vnode.as_ref().map(|x| x.mtx.lock());
+        let mut unlinked_guard = match unlinked_vnode.as_ref() {
+            Some(x) => Some(x.mtx.lock()?),
+            None => None,
+        };
         let unlinked_ops = unlinked_guard.as_mut().map(|x| &mut x.ops);
         let mut tmp_ops = if unlinked_ops.is_none() {
             let dent = self.find_dirent(arc_self, name)?;
@@ -823,13 +826,13 @@ impl VNodeOps for E2VNode {
         // Inode is now ready to be unlinked.
         self.unlink_impl(&arc_self.vfs, name, Some(unlinked_ops))?;
         debug_assert!(
-            unlinked_ops.inode.lock_shared().nlink == 0
+            unlinked_ops.inode.unintr_lock_shared().nlink == 0
                 || unlinked_ops.type_ != NodeType::Directory
         );
 
         // If not currently open and nlink is 0, then delete the inode now.
-        if unlinked_ops.inode.lock_shared().nlink == 0 && unlinked_vnode.is_none() {
-            Self::free_inode_blocks(&e2fs, unlinked_ops.inode.lock_shared().data_blocks)?;
+        if unlinked_ops.inode.lock_shared()?.nlink == 0 && unlinked_vnode.is_none() {
+            Self::free_inode_blocks(&e2fs, unlinked_ops.inode.lock_shared()?.data_blocks)?;
             e2fs.free_inode(unlinked_ops.ino)?;
         }
 
@@ -841,7 +844,7 @@ impl VNodeOps for E2VNode {
 
         // Increase the inode's links count.
         let vnode_ops = vnode.get_ops_as::<E2VNode>();
-        let mut inode = vnode_ops.inode.lock();
+        let mut inode = vnode_ops.inode.lock()?;
         inode.nlink = inode.nlink.checked_add(1).ok_or(Errno::EMLINK)?;
         e2fs.media.write_le(
             vnode_ops.inode_offset + offset_of!(Inode, nlink) as u64,
@@ -879,7 +882,7 @@ impl VNodeOps for E2VNode {
             ..Default::default()
         };
         let mut ops = Box::try_new(E2VNode {
-            ino: ino.into(),
+            ino,
             inode: Mutex::new(inode),
             inode_offset,
             size: 0,
@@ -891,12 +894,12 @@ impl VNodeOps for E2VNode {
             match &spec {
                 MakeFileSpec::Directory => {
                     // Create . and .. entries.
-                    if self.inode.lock_shared().nlink == u16::MAX {
+                    if self.inode.lock_shared()?.nlink == u16::MAX {
                         return Err(Errno::EMLINK);
                     }
 
                     {
-                        let mut inode = ops.inode.lock();
+                        let mut inode = ops.inode.lock()?;
                         inode.nlink = 2;
                         ops.size = 1u64 << e2fs.block_size_exp;
                         inode.size = ops.size as u32;
@@ -922,7 +925,7 @@ impl VNodeOps for E2VNode {
 
                     // Update link counts.
                     {
-                        let mut inode = self.inode.lock();
+                        let mut inode = self.inode.lock()?;
                         inode.nlink += 1;
                         e2fs.media.write_le(
                             self.inode_offset + offset_of!(Inode, nlink) as u64,
@@ -934,7 +937,7 @@ impl VNodeOps for E2VNode {
                     {
                         let group =
                             e2fs.get_block_group((u32::from(ino) - 1) / e2fs.inodes_per_group)?;
-                        let mut desc = group.desc.lock();
+                        let mut desc = group.desc.lock()?;
                         desc.used_dirs_count =
                             desc.used_dirs_count.checked_add(1).ok_or(Errno::EIO)?;
                         e2fs.media.write_le(
@@ -945,19 +948,19 @@ impl VNodeOps for E2VNode {
                 }
                 MakeFileSpec::Symlink(value) => {
                     ops.size = value.len() as u64;
-                    ops.inode.lock().size = ops.size as u32;
+                    ops.inode.lock()?.size = ops.size as u32;
                     if value.len() < 60 {
                         // Short symlinks stored directly in inode buffer.
                         let mut buffer = [0u8; 60];
                         buffer[..value.len()].copy_from_slice(value);
-                        let mut inode = ops.inode.lock();
+                        let mut inode = ops.inode.lock()?;
                         inode.data_blocks = unsafe { core::mem::transmute(buffer) };
                         for i in 0..15 {
                             inode.data_blocks[i] = u32::from_le(inode.data_blocks[i]);
                         }
                     } else {
                         // Long symlinks stored in blocks.
-                        ops.inode.lock().realsize = 1u32 << (e2fs.block_size_exp - 9);
+                        ops.inode.lock()?.realsize = 1u32 << (e2fs.block_size_exp - 9);
                         ops.writek_impl(&e2fs, 0, value)?;
                     }
                 }
@@ -975,7 +978,7 @@ impl VNodeOps for E2VNode {
         // Write the base inode struct.
         e2fs.media.writek(
             inode_offset,
-            &Into::<[u8; _]>::into(*ops.inode.lock_shared()),
+            &Into::<[u8; _]>::into(*ops.inode.lock_shared()?),
         )?;
         // Fill the space not covered by our inode struct with zeroes.
         e2fs.media.write_zeroes(
@@ -1044,7 +1047,7 @@ impl VNodeOps for E2VNode {
         let mut link = Vec::try_with_capacity(self.size as usize)?;
         link.resize(self.size as usize, 0);
         if self.size <= 60 {
-            let data_blocks = &self.inode.lock_shared().data_blocks;
+            let data_blocks = &self.inode.lock_shared()?.data_blocks;
             let mut block_bytes = [0u8; 60];
             for i in 0..15 {
                 block_bytes[i * 4..i * 4 + 4].copy_from_slice(&data_blocks[i].to_le_bytes());
@@ -1058,7 +1061,7 @@ impl VNodeOps for E2VNode {
 
     fn stat(&self, arc_self: &Arc<VNode>) -> EResult<Stat> {
         let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
-        let inode = self.inode.lock_shared();
+        let inode = self.inode.lock_shared()?;
         Ok(Stat {
             dev: e2fs
                 .media
@@ -1117,7 +1120,7 @@ impl VNodeOps for E2VNode {
 
     fn close(&mut self, vnode_self: &VNode) {
         let e2fs = vnode_self.vfs.get_ops_as::<E2Fs>();
-        let inode = self.inode.lock();
+        let inode = self.inode.unintr_lock();
         if inode.nlink != 0
             || (vnode_self.vfs.flags.load(Ordering::Relaxed) & mflags::READ_ONLY) != 0
         {
@@ -1189,7 +1192,7 @@ impl E2Fs {
 
         loop {
             let group = self.get_block_group(group_hint)?;
-            let mut guard = group.desc.lock();
+            let mut guard = group.desc.lock()?;
 
             if guard.free_block_count > 0 {
                 for i in 0..self.blocks_per_group.div_ceil(size_of::<usize>() as u32) {
@@ -1215,7 +1218,7 @@ impl E2Fs {
                             &guard.free_block_count.to_le_bytes(),
                         )?;
                         // Mark backup BGDT entry out of date.
-                        self.dirty_bgdt_ents.lock().insert(group_hint);
+                        self.dirty_bgdt_ents.unintr_lock().insert(group_hint);
 
                         // Return the newly allocated block.
                         return Ok(NonZeroU32::new(
@@ -1244,7 +1247,7 @@ impl E2Fs {
         let index = (block - self.first_data_block) % self.blocks_per_group;
 
         let block_group = self.get_block_group(group)?;
-        let mut guard = block_group.desc.lock();
+        let mut guard = block_group.desc.lock()?;
         let bitmap_off = ((guard.block_bitmap as u64) << self.block_size_exp)
             + size_of::<usize>() as u64 * (index / usize::BITS) as u64;
 
@@ -1264,7 +1267,7 @@ impl E2Fs {
             guard.free_block_count,
         )?;
         // Mark backup BGDT entry out of date.
-        self.dirty_bgdt_ents.lock().insert(group);
+        self.dirty_bgdt_ents.unintr_lock().insert(group);
 
         self.free_blocks.fetch_add(1, Ordering::Relaxed);
         Ok(())
@@ -1281,7 +1284,7 @@ impl E2Fs {
 
         loop {
             let group = self.get_block_group(group_hint)?;
-            let mut guard = group.desc.lock();
+            let mut guard = group.desc.lock()?;
 
             if guard.free_inode_count > 0 {
                 for i in 0..self.inodes_per_group.div_ceil(size_of::<usize>() as u32) {
@@ -1307,7 +1310,7 @@ impl E2Fs {
                             &guard.free_inode_count.to_le_bytes(),
                         )?;
                         // Mark backup BGDT entry out of date.
-                        self.dirty_bgdt_ents.lock().insert(group_hint);
+                        self.dirty_bgdt_ents.unintr_lock().insert(group_hint);
 
                         // Return the newly allocated inode number.
                         let ino = bitpos
@@ -1337,7 +1340,7 @@ impl E2Fs {
         let index = (ino - 1) % self.inodes_per_group;
 
         let block_group = self.get_block_group(group)?;
-        let mut guard = block_group.desc.lock();
+        let mut guard = block_group.desc.unintr_lock();
         let bitmap_off = ((guard.inode_bitmap as u64) << self.block_size_exp)
             + size_of::<usize>() as u64 * (index / usize::BITS) as u64;
         let inode_offset = ((guard.inode_table as u64) << self.block_size_exp)
@@ -1370,7 +1373,7 @@ impl E2Fs {
             )?;
         }
         // Mark backup BGDT entry out of date.
-        self.dirty_bgdt_ents.lock().insert(group);
+        self.dirty_bgdt_ents.unintr_lock().insert(group);
 
         // Clear inode to zeroes.
         let _ = self
@@ -1393,7 +1396,7 @@ impl E2Fs {
             let group = dent.ino.checked_sub(1).ok_or(Errno::EIO)? / self.inodes_per_group;
             let index = (dent.ino - 1) % self.inodes_per_group;
             let block_group = self.get_block_group(group)?;
-            let inode_offset = ((block_group.desc.lock_shared().inode_table as u64)
+            let inode_offset = ((block_group.desc.unintr_lock_shared().inode_table as u64)
                 << self.block_size_exp)
                 + self.inode_size as u64 * index as u64;
             let mode: u16 = self
@@ -1407,11 +1410,16 @@ impl E2Fs {
 
     /// Get block group descriptor by block group index.
     fn get_block_group(&self, index: u32) -> EResult<Arc<E2BlockGroup>> {
-        if let Some(res) = try { self.block_group_desc.lock_shared().get(&index)?.upgrade()? } {
+        if let Some(res) = try {
+            self.block_group_desc
+                .unintr_lock_shared()
+                .get(&index)?
+                .upgrade()?
+        } {
             return Ok(res.clone());
         }
 
-        let mut guard = self.block_group_desc.lock();
+        let mut guard = self.block_group_desc.unintr_lock();
         if let Some(res) = try { guard.get(&index)?.upgrade()? } {
             return Ok(res.clone()); // Race condition: Entry created by another thread.
         }
@@ -1438,7 +1446,7 @@ impl E2Fs {
 
         // Load the inode structure from disk.
         let block_group = self.get_block_group(block_group)?;
-        let inode_offset = ((block_group.desc.lock_shared().inode_table as u64)
+        let inode_offset = ((block_group.desc.lock_shared()?.inode_table as u64)
             << self.block_size_exp)
             + index as u64 * self.inode_size as u64;
         let mut inode = [0u8; size_of::<Inode>()];
@@ -1704,7 +1712,7 @@ impl VfsDriver for E2FsDriver {
         // Test the number of free blocks and inodes.
         for group in 0..block_groups {
             let group = vfs.get_block_group(group)?;
-            let guard = group.desc.lock();
+            let guard = group.desc.unintr_lock();
             vfs.free_blocks
                 .fetch_add(guard.free_block_count as u32, Ordering::Relaxed);
             vfs.free_inodes
@@ -1717,7 +1725,7 @@ impl VfsDriver for E2FsDriver {
 
 fn register_e2fs() {
     FSDRIVERS
-        .lock()
+        .unintr_lock()
         .insert("ext2".into(), Box::new(E2FsDriver {}));
 }
 

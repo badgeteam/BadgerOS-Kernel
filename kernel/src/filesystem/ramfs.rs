@@ -20,11 +20,11 @@ use crate::{
             class::{block::BlockDevice, char::CharDevice},
         },
         error::{EResult, Errno},
-        mutex::Mutex,
         spinlock::Spinlock,
     },
     cpu,
     filesystem::{VNodeMtxInner, vfs::mflags},
+    kernel::sync::mutex::Mutex,
     process::usercopy::{UserSlice, UserSliceMut},
 };
 
@@ -62,14 +62,14 @@ impl RamFs {
             mtim: AtomicTimespec::new(now),
             ctim: AtomicTimespec::new(now),
         }))?;
-        fs.inodes.lock().insert(1, root);
+        fs.inodes.unintr_lock().insert(1, root);
         Ok(fs)
     }
 
     fn open_impl(&self, ino: u64) -> EResult<Box<dyn VNodeOps>> {
         let inode = self
             .inodes
-            .lock_shared()
+            .lock_shared()?
             .get(&ino)
             .ok_or(Errno::EIO)?
             .clone();
@@ -105,8 +105,8 @@ impl VfsOps for RamFs {
         _dest_mutexinner: &mut VNodeMtxInner,
     ) -> EResult<Dirent> {
         // Downcast trait objects into RamVNode.
-        let mut src_ops = src_dir.mtx.lock();
-        let mut dest_ops = dest_dir.mtx.lock();
+        let mut src_ops = src_dir.mtx.lock()?;
+        let mut dest_ops = dest_dir.mtx.lock()?;
         let src_ramnode = (&mut *src_ops as &mut dyn Any)
             .downcast_mut::<RamVNode>()
             .unwrap();
@@ -313,7 +313,12 @@ impl VNodeOps for RamVNode {
         let directory = inode.data.as_directory_mut().ok_or(Errno::EINVAL)?;
 
         let dirent = directory.remove(name).ok_or(Errno::ENOENT)?;
-        let ino = ramfs.inodes.lock_shared().get(&dirent.ino).unwrap().clone();
+        let ino = ramfs
+            .inodes
+            .unintr_lock_shared()
+            .get(&dirent.ino)
+            .unwrap()
+            .clone();
         let ino = unsafe { ino.as_ref_unchecked() };
 
         if let RamFsData::Directory(data) = &ino.data {
@@ -336,7 +341,7 @@ impl VNodeOps for RamVNode {
 
         if prev_links == 1 {
             // Last link removed.
-            ramfs.inodes.lock().remove(&dirent.ino).unwrap();
+            ramfs.inodes.unintr_lock().remove(&dirent.ino).unwrap();
         }
 
         Ok(())
@@ -353,7 +358,7 @@ impl VNodeOps for RamVNode {
 
         let ram_inode = ramfs
             .inodes
-            .lock_shared()
+            .lock_shared()?
             .get(&inode.ino)
             .cloned()
             .ok_or(Errno::EIO)?;
@@ -435,7 +440,7 @@ impl VNodeOps for RamVNode {
             inode: new_inode.clone(),
         })?;
 
-        ramfs.inodes.lock().insert(ino, new_inode.clone());
+        ramfs.inodes.lock()?.insert(ino, new_inode.clone());
 
         let dirent = Dirent {
             ino,
@@ -561,13 +566,13 @@ impl VfsDriver for RamFsDriver {
 }
 
 fn register_ramfs() {
-    FSDRIVERS.lock().insert(
+    FSDRIVERS.unintr_lock().insert(
         "ramfs".into(),
         Box::new(RamFsDriver {
             allows_devfiles: false,
         }),
     );
-    FSDRIVERS.lock().insert(
+    FSDRIVERS.unintr_lock().insert(
         "devtmpfs".into(),
         Box::new(RamFsDriver {
             allows_devfiles: true,

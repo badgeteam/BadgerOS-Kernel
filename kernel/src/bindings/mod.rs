@@ -19,11 +19,8 @@ pub mod log;
 #[macro_use]
 pub mod error;
 pub mod isr_ctx;
-pub mod mutex;
 pub mod process;
-pub mod semaphore;
 pub mod spinlock;
-pub mod thread;
 
 pub fn time_us() -> timestamp_us_t {
     unsafe { raw::time_us() }

@@ -2,7 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::ptr::null_mut;
+use core::{marker::PhantomData, ptr::null_mut};
 
 use alloc::sync::Arc;
 
@@ -29,6 +29,48 @@ impl<T: HasListNode<T>> InvasiveListNode<T> {
     }
 }
 
+/// Invasive linked list iterator.
+pub struct InvasiveListIter<'a, T: HasListNode<T>> {
+    cur: *mut InvasiveListNode<T>,
+    marker: PhantomData<&'a InvasiveList<T>>,
+}
+
+impl<'a, T: HasListNode<T>> Iterator for InvasiveListIter<'a, T> {
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<&'a T> {
+        if self.cur.is_null() {
+            return None;
+        }
+        unsafe {
+            let tmp = T::from_node(&*self.cur);
+            self.cur = (*self.cur).next;
+            Some(tmp)
+        }
+    }
+}
+
+/// Invasive linked list iterator.
+pub struct InvasiveListIterMut<'a, T: HasListNode<T>> {
+    cur: *mut InvasiveListNode<T>,
+    marker: PhantomData<&'a mut InvasiveList<T>>,
+}
+
+impl<'a, T: HasListNode<T>> Iterator for InvasiveListIterMut<'a, T> {
+    type Item = &'a mut T;
+
+    fn next(&mut self) -> Option<&'a mut T> {
+        if self.cur.is_null() {
+            return None;
+        }
+        unsafe {
+            let tmp = T::from_node_mut(&mut *self.cur);
+            self.cur = (*self.cur).next;
+            Some(tmp)
+        }
+    }
+}
+
 /// Invasive linked list.
 pub struct InvasiveList<T: HasListNode<T>> {
     first: *mut InvasiveListNode<T>,
@@ -49,6 +91,23 @@ impl<T: HasListNode<T>> InvasiveList<T> {
         self.len
     }
 
+    fn consistency_check(&self) {
+        #[cfg(debug_assertions)]
+        unsafe {
+            let mut len = 0usize;
+            let mut prev = 1 as _;
+            let mut cur = self.first;
+            while cur > 1 as _ {
+                debug_assert!((*cur).prev == prev, "InvasiveList has broken prev link");
+                prev = cur;
+                cur = (*cur).next;
+                len += 1;
+                debug_assert!(len <= self.len, "InvasiveList has too many elements");
+            }
+            debug_assert!(len == self.len, "InvasiveList has too few elements");
+        }
+    }
+
     pub fn push_front<'a>(&'a mut self, item: &'a mut T) -> Result<(), ()> {
         let node = item.list_node_mut();
         if !node.next.is_null() {
@@ -57,7 +116,8 @@ impl<T: HasListNode<T>> InvasiveList<T> {
         debug_assert!(node.prev.is_null());
 
         unsafe {
-            node.next = self.first;
+            node.next = self.first.max(1 as _);
+            node.prev = 1 as _;
             if !self.first.is_null() {
                 (*self.first).prev = node;
             } else {
@@ -67,6 +127,8 @@ impl<T: HasListNode<T>> InvasiveList<T> {
         }
 
         self.len += 1;
+        debug_assert!(self.contains(item));
+        self.consistency_check();
         Ok(())
     }
 
@@ -77,16 +139,19 @@ impl<T: HasListNode<T>> InvasiveList<T> {
 
         let node = self.first;
         unsafe {
-            if !(*node).next.is_null() {
-                (*(*node).next).prev = null_mut();
+            if (*node).next > 1 as _ {
+                (*(*node).next).prev = 1 as _;
+                self.first = (*node).next;
             } else {
+                self.first = null_mut();
                 self.last = null_mut();
             }
-            self.first = (*node).next;
             *node = InvasiveListNode::new();
         }
 
         self.len -= 1;
+        debug_assert!(!self.contains(unsafe { T::from_node(&*node) }));
+        self.consistency_check();
         Some(unsafe { T::from_node_mut(&mut *node) })
     }
 
@@ -112,7 +177,8 @@ impl<T: HasListNode<T>> InvasiveList<T> {
         debug_assert!(node.prev.is_null());
 
         unsafe {
-            node.next = self.last;
+            node.prev = self.last.max(1 as _);
+            node.next = 1 as _;
             if !self.last.is_null() {
                 (*self.last).next = node;
             } else {
@@ -122,6 +188,8 @@ impl<T: HasListNode<T>> InvasiveList<T> {
         }
 
         self.len += 1;
+        debug_assert!(self.contains(item));
+        self.consistency_check();
         Ok(())
     }
 
@@ -132,16 +200,19 @@ impl<T: HasListNode<T>> InvasiveList<T> {
 
         let node = self.last;
         unsafe {
-            if !(*node).prev.is_null() {
-                (*(*node).prev).next = null_mut();
+            if (*node).prev > 1 as _ {
+                (*(*node).prev).next = 1 as _;
+                self.last = (*node).prev;
             } else {
                 self.first = null_mut();
+                self.last = null_mut();
             }
-            self.last = (*node).prev;
             *node = InvasiveListNode::new();
         }
 
         self.len -= 1;
+        debug_assert!(!self.contains(unsafe { T::from_node(&*node) }));
+        self.consistency_check();
         Some(unsafe { T::from_node_mut(&mut *node) })
     }
 
@@ -157,6 +228,54 @@ impl<T: HasListNode<T>> InvasiveList<T> {
             return None;
         }
         Some(unsafe { T::from_node_mut(&mut *self.last) })
+    }
+
+    pub fn clear(&mut self) {
+        let mut cur = self.first;
+        self.first = null_mut();
+        self.last = null_mut();
+
+        unsafe {
+            while !cur.is_null() {
+                let next = (*cur).next;
+                (*cur).next = null_mut();
+                (*cur).prev = null_mut();
+                cur = next;
+            }
+        }
+    }
+
+    pub fn contains(&self, thing: &T) -> bool {
+        let node = thing.list_node();
+        if node.next.is_null() {
+            return false;
+        }
+        for elem in self.iter() {
+            if core::ptr::addr_eq(elem, thing) {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn iter<'a>(&'a self) -> InvasiveListIter<'a, T> {
+        InvasiveListIter {
+            cur: self.first,
+            marker: PhantomData,
+        }
+    }
+
+    pub fn iter_mut<'a>(&'a mut self) -> InvasiveListIterMut<'a, T> {
+        InvasiveListIterMut {
+            cur: self.first,
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<T: HasListNode<T>> Drop for InvasiveList<T> {
+    fn drop(&mut self) {
+        self.clear()
     }
 }
 
@@ -216,5 +335,39 @@ impl<T: HasListNode<T>> ArcList<T> {
 
     pub fn back(&self) -> Option<&T> {
         self.inner.back()
+    }
+
+    pub fn clear(&mut self) {
+        let mut cur = self.inner.first;
+        self.inner.first = null_mut();
+        self.inner.last = null_mut();
+
+        unsafe {
+            while !cur.is_null() {
+                let next = (*cur).next;
+                (*cur).next = null_mut();
+                (*cur).prev = null_mut();
+                drop(Arc::from_raw(T::from_node(&*cur)));
+                cur = next;
+            }
+        }
+    }
+
+    pub fn contains(&self, thing: &T) -> bool {
+        self.inner.contains(thing)
+    }
+
+    pub fn iter<'a>(&'a self) -> InvasiveListIter<'a, T> {
+        self.inner.iter()
+    }
+
+    pub fn iter_mut<'a>(&'a mut self) -> InvasiveListIterMut<'a, T> {
+        self.inner.iter_mut()
+    }
+}
+
+impl<T: HasListNode<T>> Drop for ArcList<T> {
+    fn drop(&mut self) {
+        self.clear()
     }
 }

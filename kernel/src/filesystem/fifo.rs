@@ -12,9 +12,9 @@ use crate::{
         error::{EResult, Errno},
         raw::timestamp_us_t,
         spinlock::Spinlock,
-        thread::Waitlist,
     },
     cpu::irq,
+    kernel::waitlist::Waitlist,
     process::usercopy::{UserSlice, UserSliceMut},
 };
 
@@ -51,7 +51,7 @@ impl FifoShared {
     }
 
     /// Handle a file open on a FIFO.
-    pub(super) fn open(&self, nonblock: bool, is_read: bool, is_write: bool) {
+    pub(super) fn open(&self, nonblock: bool, is_read: bool, is_write: bool) -> EResult<()> {
         assert!(is_read || is_write);
         assert!(unsafe { irq::disable() });
         let nonblock = nonblock || (is_read && is_write);
@@ -74,7 +74,7 @@ impl FifoShared {
             let mut taken_lock = None;
             let taken_lock_ptr = &mut taken_lock;
 
-            queue.block(timestamp_us_t::MAX, &mut move || {
+            let res = queue.block(timestamp_us_t::MAX, move || {
                 *taken_lock_ptr = Some(self.buffer.lock());
 
                 // Unblock if the other end is open.
@@ -87,6 +87,19 @@ impl FifoShared {
                 *taken_lock_ptr = None;
                 false
             });
+
+            if let Err(x) = res {
+                // Only happens if signalled.
+                if is_read {
+                    self.read_count.fetch_sub(1, Ordering::Relaxed);
+                }
+                if is_write {
+                    self.write_count.fetch_sub(1, Ordering::Relaxed);
+                }
+                drop(taken_lock);
+                unsafe { irq::enable() };
+                return Err(x);
+            }
 
             // Take the spinlock had it not been taken already.
             taken_lock.unwrap_or_else(|| self.buffer.lock())
@@ -105,6 +118,8 @@ impl FifoShared {
         self.write_queue.notify();
 
         unsafe { irq::enable() };
+
+        Ok(())
     }
 
     /// Handle a file close on the FIFO.
@@ -128,7 +143,7 @@ impl FifoShared {
         } else {
             let mut buffer = None;
             let buffer_ptr = &mut buffer;
-            self.read_queue.block(timestamp_us_t::MAX, &mut || {
+            self.read_queue.block(timestamp_us_t::MAX, || {
                 // Unblock if there is read data available.
                 *buffer_ptr = Some(self.buffer.lock_shared());
                 if let Some(buffer) = &**buffer_ptr.as_ref().unwrap()
@@ -138,7 +153,7 @@ impl FifoShared {
                 }
                 *buffer_ptr = None;
                 true
-            });
+            })?;
             buffer.unwrap_or_else(|| self.buffer.lock_shared())
         };
 
@@ -171,7 +186,7 @@ impl FifoShared {
         } else {
             let mut buffer = None;
             let buffer_ptr = &mut buffer;
-            self.write_queue.block(timestamp_us_t::MAX, &mut || {
+            self.write_queue.block(timestamp_us_t::MAX, || {
                 // Unblock if there is write data available.
                 *buffer_ptr = Some(self.buffer.lock_shared());
                 if let Some(buffer) = &**buffer_ptr.as_ref().unwrap()
@@ -181,7 +196,7 @@ impl FifoShared {
                 }
                 *buffer_ptr = None;
                 true
-            });
+            })?;
             buffer.unwrap_or_else(|| self.buffer.lock_shared())
         };
 
@@ -222,7 +237,7 @@ impl Drop for Fifo {
 impl File for Fifo {
     fn stat(&self) -> EResult<Stat> {
         if let Some(vnode) = &self.vnode {
-            vnode.mtx.lock_shared().ops.stat(&vnode)
+            vnode.mtx.lock_shared()?.ops.stat(&vnode)
         } else {
             Ok(Stat::default())
         }

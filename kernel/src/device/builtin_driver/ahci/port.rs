@@ -17,13 +17,12 @@ use crate::{
             class::block::{BlockDevice, BlockDriver},
         },
         error::{EResult, Errno},
-        mutex::Mutex,
         raw::driver_block_t,
-        thread::Thread,
         time_us,
     },
     block_driver_struct,
     device::builtin_driver::ahci::{AHCI_DRIVER, ata, fis},
+    kernel::{sched::thread_sleep, sync::mutex::Mutex},
     logk,
     mem::{pmm::phys_box::PhysBox, vmm},
 };
@@ -91,7 +90,7 @@ pub(super) struct SataMem {
 pub(super) struct SataDriver {
     pub(super) device: BlockDevice,
     pub(super) parent: &'static mut AhciDriver,
-    pub(super) mem: Mutex<SataMem, false>,
+    pub(super) mem: Mutex<SataMem>,
     pub(super) supports_48bit: bool,
 }
 
@@ -119,7 +118,7 @@ impl SataDriver {
         })?;
 
         {
-            let guard = this.mem.lock();
+            let guard = this.mem.lock().unwrap();
 
             // Power on the port.
             if this.parent.mmio.cap.read(reg::HostCaps::supports_ss) != 0 {
@@ -134,7 +133,7 @@ impl SataDriver {
                 if time_us() > lim {
                     return Err(Errno::ENAVAIL);
                 }
-                Thread::sleep_us(5000);
+                let _ = thread_sleep(5000);
             }
             guard.mmio.cmd.modify(reg::PortCmd::fis_en.val(0));
             let lim = time_us() + 100000;
@@ -142,7 +141,7 @@ impl SataDriver {
                 if time_us() > lim {
                     return Err(Errno::ENAVAIL);
                 }
-                Thread::sleep_us(5000);
+                let _ = thread_sleep(5000);
             }
 
             // Set up the physical-memory pointers.
@@ -178,7 +177,7 @@ impl SataDriver {
                 if time_us() > lim {
                     return Err(Errno::ENAVAIL);
                 }
-                Thread::sleep_us(5000);
+                let _ = thread_sleep(5000);
             }
             guard.mmio.cmd.modify(reg::PortCmd::cmd_start.val(1));
         }
@@ -222,7 +221,7 @@ impl SataDriver {
         make_cmd: impl FnOnce(*mut ()) -> u32,
         data: Option<ConstOrMutSlice<'_>>,
     ) -> EResult<()> {
-        let mut guard = self.mem.lock();
+        let mut guard = self.mem.lock().unwrap();
         let is_write = data.as_ref().map(|x| !x.is_mut()).unwrap_or(false);
         let data = data.map(|x| x.into_const_slice());
 

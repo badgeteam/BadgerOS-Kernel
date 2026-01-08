@@ -84,11 +84,9 @@ pub fn logkf_unlocked(level: LogLevel, thing: &dyn Display) {
 
 /// Log a formatted message.
 pub fn logkf(level: LogLevel, thing: &dyn Display) {
-    let acq = unsafe { raw::mutex_acquire(&raw mut raw::log_mtx, raw::LOG_MUTEX_TIMEOUT.into()) };
+    unsafe { raw::mutex_lock(&raw mut raw::log_mtx) };
     logkf_unlocked(level, thing);
-    if acq {
-        unsafe { raw::mutex_release(&raw mut raw::log_mtx) };
-    }
+    unsafe { raw::mutex_unlock(&raw mut raw::log_mtx) };
 }
 
 /// Write a  string without locking the mutex.
@@ -98,11 +96,9 @@ pub fn write_unlocked(thing: &str) {
 
 /// Write a  string.
 pub fn write(thing: &str) {
-    let acq = unsafe { raw::mutex_acquire(&raw mut raw::log_mtx, raw::LOG_MUTEX_TIMEOUT.into()) };
+    unsafe { raw::mutex_lock(&raw mut raw::log_mtx) };
     write_unlocked(thing);
-    if acq {
-        unsafe { raw::mutex_release(&raw mut raw::log_mtx) };
-    }
+    unsafe { raw::mutex_unlock(&raw mut raw::log_mtx) };
 }
 
 /// Write a formatted string without locking the mutex.
@@ -114,11 +110,9 @@ pub fn printf_unlocked(thing: &dyn Display) {
 
 /// Write a formatted string.
 pub fn printf(thing: &dyn Display) {
-    let acq = unsafe { raw::mutex_acquire(&raw mut raw::log_mtx, raw::LOG_MUTEX_TIMEOUT.into()) };
+    unsafe { raw::mutex_lock(&raw mut raw::log_mtx) };
     printf_unlocked(thing);
-    if acq {
-        unsafe { raw::mutex_release(&raw mut raw::log_mtx) };
-    }
+    unsafe { raw::mutex_unlock(&raw mut raw::log_mtx) };
 }
 
 /// Log a formatted message without locking the mutex.

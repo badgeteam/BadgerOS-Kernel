@@ -4,10 +4,14 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::{bindings::error::EResult, scheduler::waitlist::Waitlist};
+use crate::{
+    bindings::{error::EResult, raw::timestamp_us_t},
+    kernel::waitlist::Waitlist,
+};
 
 /// A counting semaphore.
 #[repr(C)]
+#[derive(Debug)]
 pub struct Semaphore {
     waitlist: Waitlist,
     counter: AtomicU32,
@@ -30,6 +34,12 @@ impl Semaphore {
     /// Await one post from the semaphore.
     /// May fail with [`crate::bindings::error::Errno::EINTR`] if signalled.
     pub fn wait(&self) -> EResult<()> {
+        self.timed_wait(timestamp_us_t::MAX)
+    }
+
+    /// Await one post from the semaphore.
+    /// May fail with [`crate::bindings::error::Errno::EINTR`] if signalled.
+    pub fn timed_wait(&self, timeout: timestamp_us_t) -> EResult<()> {
         // Fast path.
         for _ in 0..50 {
             if self
@@ -52,7 +62,7 @@ impl Semaphore {
             .is_ok()
         {
             self.waitlist
-                .block(|| self.counter.load(Ordering::Relaxed) == 0)?;
+                .block(timeout, || self.counter.load(Ordering::Relaxed) == 0)?;
         }
 
         Ok(())

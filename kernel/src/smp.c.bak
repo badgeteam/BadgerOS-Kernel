@@ -5,13 +5,11 @@
 
 #include "arrays.h"
 #include "assertions.h"
-#include "cpu/isr_ctx.h"
-#include "cpu/mmu.h"
-#include "cpulocal.h"
 #include "interrupt.h"
-#include "isr_ctx.h"
 #include "mem/mmu.h"
-#include "mutex.h"
+#include "mem/vmm.h"
+#include "sched/cpulocal.h"
+#include "sched/sync/mutex.h"
 
 #include <limine.h>
 
@@ -34,8 +32,6 @@ typedef struct {
     void *tmp_stack;
     // Point to jump to after starting the CPU.
     void (*entrypoint)();
-    // CPU-local data.
-    cpulocal_t cpulocal;
 } smp_status_t;
 
 // CPUID to/from SMP index map.

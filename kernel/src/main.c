@@ -85,8 +85,6 @@ void basic_runtime_init() {
     sched_init();
     sched_init_cpu(0);
 
-    // Housekeeping thread initialization.
-    hk_init();
     // Add the remainder of the kernel lifetime as a new thread.
     klifetime_tid = thread_new_kernel("main", (void *)kernel_lifetime_func, NULL, SCHED_PRIO_NORMAL);
     assert_always(klifetime_tid > 0);

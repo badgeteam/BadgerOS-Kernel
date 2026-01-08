@@ -2,7 +2,7 @@ file build/badger-os.elf
 target remote :1234
 
 b basic_runtime_init
-b panic_poweroff_unchecked
+b kernel::misc::panic::kekw
 
 define reset
     mon system_reset

@@ -42,10 +42,10 @@ pub mod filesystem;
 pub mod misc;
 #[macro_use]
 pub mod ktest;
+pub mod kernel;
 pub mod kparam;
 pub mod mem;
 pub mod process;
-pub mod scheduler;
 pub mod util;
 
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
@@ -83,7 +83,7 @@ unsafe impl GlobalAlloc for BadgerOSMalloc {
 
 #[panic_handler]
 #[inline(never)]
-pub fn badgeros_rust_panic(info: &PanicInfo) -> ! {
+pub fn panic_impl(info: &PanicInfo) -> ! {
     unsafe {
         bindings::raw::claim_panic();
 

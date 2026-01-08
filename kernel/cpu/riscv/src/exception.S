@@ -4,6 +4,8 @@
 
 
 
+    .cfi_sections .debug_frame
+
     # Linker relaxation is not possible due to entering from untrusted code,
     # which controls the GP register.
     .option norelax
@@ -41,8 +43,11 @@ riscv_vector_table:
     .global riscv_exception_asm
     .type riscv_exception_asm, %function
     .align 2
+    .cfi_startproc
 riscv_exception_asm:
-#pragma region
+    .cfi_return_column 64
+    .cfi_signal_frame
+    .cfi_register 64, sepc
     # Get the cpulocal ptr.
     csrrw t0, sscratch, t0
     # Normal save of T1.
@@ -58,50 +63,81 @@ riscv_exception_asm:
     bnez sp, 1f
     ld sp, 8(t0)
 1:
-    # Check for system calls, which use a different codepath
-    csrr t1, scause
-    addi t1, t1, -8
-    beqz t0, riscv_syscall_asm
+    .cfi_remember_state
     
     # Save context to the stack.
     addi sp, sp, -256
+    .cfi_def_cfa sp, 0
     csrr t1, sepc
     sd t1,   0*8(sp) # PC
+    .cfi_rel_offset 64, 0*8
     sd ra,   1*8(sp)
+    .cfi_rel_offset ra, 1*8
     ld t1,     8(t0)
     sd t1,   2*8(sp) # SP
+    .cfi_rel_offset sp, 2*8
     sd gp,   3*8(sp)
+    .cfi_rel_offset gp, 3*8
     sd tp,   4*8(sp)
+    .cfi_rel_offset tp, 4*8
     ld t1,    16(t0)
     sd t1,   5*8(sp) # T0
+    .cfi_rel_offset t0, 5*8
     ld t1,    24(t0)
     sd t1,   6*8(sp) # T1
+    .cfi_rel_offset t1, 6*8
     sd t2,   7*8(sp)
+    .cfi_rel_offset t2, 7*8
     sd s0,   8*8(sp)
+    .cfi_rel_offset s0, 8*8
     sd s1,   9*8(sp)
+    .cfi_rel_offset s1, 9*8
     sd a0,  10*8(sp)
+    .cfi_rel_offset a0, 10*8
     sd a1,  11*8(sp)
+    .cfi_rel_offset a1, 11*8
     sd a2,  12*8(sp)
+    .cfi_rel_offset a2, 12*8
     sd a3,  13*8(sp)
+    .cfi_rel_offset a3, 13*8
     sd a4,  14*8(sp)
+    .cfi_rel_offset a4, 14*8
     sd a5,  15*8(sp)
+    .cfi_rel_offset a5, 15*8
     sd a6,  16*8(sp)
+    .cfi_rel_offset a6, 16*8
     sd a7,  17*8(sp)
+    .cfi_rel_offset a7, 17*8
     sd s2,  18*8(sp)
+    .cfi_rel_offset s2, 18*8
     sd s3,  19*8(sp)
+    .cfi_rel_offset s3, 19*8
     sd s4,  20*8(sp)
+    .cfi_rel_offset s4, 20*8
     sd s5,  21*8(sp)
+    .cfi_rel_offset s5, 21*8
     sd s6,  22*8(sp)
+    .cfi_rel_offset s6, 22*8
     sd s7,  23*8(sp)
+    .cfi_rel_offset s7, 23*8
     sd s8,  24*8(sp)
+    .cfi_rel_offset s8, 24*8
     sd s9,  25*8(sp)
+    .cfi_rel_offset s9, 25*8
     sd s10, 26*8(sp)
+    .cfi_rel_offset s10, 26*8
     sd s11, 27*8(sp)
+    .cfi_rel_offset s11, 27*8
     sd t3,  28*8(sp)
+    .cfi_rel_offset t3, 28*8
     sd t4,  29*8(sp)
+    .cfi_rel_offset t4, 29*8
     sd t5,  30*8(sp)
+    .cfi_rel_offset t5, 30*8
     sd t6,  31*8(sp)
+    .cfi_rel_offset t6, 31*8
     addi sp, sp, -32
+    .cfi_adjust_cfa_offset 32
     csrr t1, sstatus
     sd t1, 0(sp)
     csrr t1, scause
@@ -113,8 +149,8 @@ riscv_exception_asm:
     
     # Call C-ABI exception handler.
     la gp, __global_pointer$
-    addi a0, sp, 16 # Pointer to struct GpRegfile
-    mv a0, sp # Pointer to struct SpecialRegfile
+    addi a0, sp, 32 # Pointer to struct GpRegfile
+    mv a1, sp # Pointer to struct SpecialRegfile
     jal riscv_exception_handler
     csrr t0, sscratch
     
@@ -126,7 +162,7 @@ riscv_exception_asm:
     csrw sepc, t1
     ld ra,   1*8(sp)
     ld t1,   2*8(sp) # SP
-    sd t1,     0(t0)
+    sd t1,     8(t0)
     ld gp,   3*8(sp)
     ld tp,   4*8(sp)
     ld t1,   5*8(sp) # T0
@@ -159,6 +195,7 @@ riscv_exception_asm:
     ld t5,  30*8(sp)
     ld t6,  31*8(sp)
     addi sp, sp, 256
+    .cfi_restore_state
     
     # Restore the last regs.
     ld sp, 8(t0)
@@ -167,68 +204,5 @@ riscv_exception_asm:
     
     # All done, return from exception handler.
     sret
+    .cfi_endproc
     .size riscv_exception_asm, .-riscv_exception_asm
-#pragma endregion
-
-
-
-    # Specialization that enters the appropriate system call handler routine.
-    #
-    # cpulocal+0  => stack to use (or NULL to use current)
-    # cpulocal+8  => temporary storage of SP
-    # cpulocal+16 => temporary storage of T0
-    # cpulocal+24 => temporary storage of T1
-    #
-    # T0 => pointer to cpulocal data struct (struct CpuLocal)
-    # T1 => Scratch register used to save old value of other regs
-    #
-    # Entry: Kernel SP already loaded, T0 already points to cpulocal.
-    # Old SP, T0 and T1 are saved in the cpulocal struct.
-    .section ".text.riscv_exception_asm", "ax", @progbits
-    .global riscv_syscall_asm
-    .type riscv_syscall_asm, %function
-    .align 2
-riscv_syscall_asm:
-#pragma region
-    # Save context to the stack.
-    addi sp, sp, -16
-    ld t1, 8(t0)
-    sd t1, 0(sp)
-    sd gp, 8(sp)
-    
-    # Call C-ABI syscall handler.
-    la gp, __global_pointer$
-    csrsi sstatus, 2 # Set SIE
-    jal syscall_handler
-    csrci sstatus, 2 # Clear SIE
-    csrr t0, sscratch
-    
-    # Restore context from the stack.
-    ld t1, 0(sp)
-    sd t1, 8(t0)
-    ld gp, 8(sp)
-    addi sp, sp, 16
-    
-    # Replace registers with 0 to avoid leaking kernel state.
-    li ra,  0
-    li gp,  0
-    li tp,  0
-    li t2,  0
-    li a2,  0
-    li a3,  0
-    li a4,  0
-    li a5,  0
-    li a6,  0
-    li a7,  0
-    li t3,  0
-    li t4,  0
-    li t5,  0
-    li t6,  0
-    
-    # Restore the last regs.
-    ld sp, 8(t0)
-    li t1, 0
-    li t0, 0
-    
-    sret
-#pragma endregion

@@ -4,18 +4,21 @@
 
 use core::ffi::{c_int, c_long, c_void};
 
-use crate::bindings::raw::{thread_sleep, thread_yield, timestamp_us_t};
+use crate::{
+    bindings::{error::Errno, raw::timestamp_us_t},
+    kernel::sched::{thread_sleep, thread_yield},
+};
 
 /// Implementation of thread yield system call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn syscall_thread_yield() {
-    unsafe { thread_yield() };
+    thread_yield();
 }
 
 /// Implementation of usleep system call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn syscall_thread_sleep(delay: timestamp_us_t) {
-    unsafe { thread_sleep(delay) };
+pub unsafe extern "C" fn syscall_thread_sleep(delay: timestamp_us_t) -> c_int {
+    Errno::extract(thread_sleep(delay))
 }
 
 /// Create a new thread.

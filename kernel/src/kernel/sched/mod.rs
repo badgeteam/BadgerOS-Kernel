@@ -3,39 +3,35 @@
 // SPDX-License-Identifier: MIT
 
 use core::{
-    arch::asm,
     cell::UnsafeCell,
     mem::offset_of,
-    ptr::{NonNull, null_mut, slice_from_raw_parts_mut},
+    ptr::{null_mut, slice_from_raw_parts_mut},
     sync::atomic::{AtomicU32, Ordering, fence},
 };
 
-use alloc::{boxed::Box, sync::Arc};
+use alloc::{boxed::Box, string::String, sync::Arc};
 
 use crate::{
     badgelib::irq::IrqGuard,
-    bindings::{error::EResult, log::LogLevel, raw::timestamp_us_t, time_us},
+    bindings::{error::EResult, raw::timestamp_us_t, time_us},
     config::{PAGE_SIZE, STACK_SIZE},
-    cpu::{self, cpulocal::ArchCpuLocal, thread::context_switch},
-    mem::vmm,
-    scheduler::{
-        cpulocal::CpuLocal,
-        sync::{mutex::RawMutex, rcu::RcuCtx},
-    },
+    cpu::{self, thread::context_switch, usermode::ThreadUContext},
+    kernel::{cpulocal::CpuLocal, smp, sync::rcu::RcuCtx, waitlist::Waitlist},
+    mem::vmm::{self, Memmap, kernel_mm},
+    process::Process,
     util::list::{ArcList, HasListNode, InvasiveListNode},
 };
 
-pub mod cpulocal;
-pub mod sync;
-pub mod sysimpl;
-pub mod waitlist;
-
 /// Dynamic thread runtime state.
-struct ThreadRuntime {
+pub struct ThreadRuntime {
     /// Stack bottom.
-    stack_bottom: usize,
+    pub stack_bottom: usize,
     /// Current stack pointer.
-    stack_ptr: *mut (),
+    pub stack_ptr: *mut (),
+    /// Stack pointer to use for interrupts.
+    pub irq_stack: *mut (),
+    /// Context for running in userspace.
+    pub uctx: ThreadUContext,
 }
 
 impl ThreadRuntime {
@@ -59,8 +55,10 @@ impl ThreadRuntime {
             fence(Ordering::Release);
 
             Ok(Self {
+                irq_stack: null_mut(),
                 stack_bottom,
                 stack_ptr,
+                uctx: ThreadUContext::default(),
             })
         }
     }
@@ -78,6 +76,7 @@ impl Drop for ThreadRuntime {
 pub mod tflags {
     pub const STOPPED: u32 = 1;
     pub const BLOCKED: u32 = 2;
+    pub const STOPPING: u32 = 4;
 }
 
 /// Thread control block.
@@ -85,6 +84,9 @@ pub struct Thread {
     node: InvasiveListNode<Thread>,
     flags: AtomicU32,
     runtime: UnsafeCell<Option<ThreadRuntime>>,
+    pub waitlist: Waitlist,
+    pub process: Option<Arc<Process>>,
+    pub name: Option<String>,
 }
 impl HasListNode<Thread> for Thread {
     fn list_node(&self) -> &InvasiveListNode<Thread> {
@@ -112,23 +114,34 @@ impl HasListNode<Thread> for Thread {
 
 impl Thread {
     /// Prepare thread control block but do not add it to a scheduler.
-    fn new_tcb_only(code: Box<dyn FnOnce() + 'static + Send>) -> EResult<Arc<Self>> {
+    fn new_tcb_only(
+        code: Box<dyn FnOnce() + 'static + Send>,
+        process: Option<Arc<Process>>,
+        name: Option<String>,
+    ) -> EResult<Arc<Self>> {
         let tcb = Arc::try_new(Thread {
             flags: AtomicU32::new(0),
             node: InvasiveListNode::new(),
             runtime: UnsafeCell::new(Some(ThreadRuntime::new(code)?)),
+            waitlist: Waitlist::new(),
+            process,
+            name,
         })?;
 
         Ok(tcb)
     }
 
     /// Create and start a new thread.
-    pub fn new_impl(code: Box<dyn FnOnce() + 'static + Send>) -> EResult<Arc<Self>> {
-        let tcb = Self::new_tcb_only(code)?;
+    pub fn new_impl(
+        code: Box<dyn FnOnce() + 'static + Send>,
+        process: Option<Arc<Process>>,
+        name: Option<String>,
+    ) -> EResult<Arc<Self>> {
+        let tcb = Self::new_tcb_only(code, process, name)?;
 
         unsafe {
             let _noirq = IrqGuard::new();
-            let cpulocal = CpuLocal::get().unwrap().as_mut();
+            let cpulocal = &mut *CpuLocal::get();
             cpulocal
                 .sched
                 .as_mut()
@@ -142,13 +155,37 @@ impl Thread {
     }
 
     /// Create and start a new thread.
-    pub fn new(code: impl FnOnce() + 'static + Send) -> EResult<Arc<Self>> {
-        Self::new_impl(Box::try_new(code)?)
+    pub fn new(
+        code: impl FnOnce() + 'static + Send,
+        process: Option<Arc<Process>>,
+        name: Option<String>,
+    ) -> EResult<Arc<Self>> {
+        Self::new_impl(Box::try_new(code)?, process, name)
     }
 
     /// Get the currently running thread.
-    pub fn current() -> Option<NonNull<Thread>> {
-        Some(unsafe { NonNull::from(CpuLocal::get()?.as_mut().thread.as_deref()?) })
+    pub fn current() -> *mut Thread {
+        unsafe {
+            let cpulocal = CpuLocal::get();
+            if cpulocal.is_null() {
+                return null_mut();
+            }
+            if let Some(thread) = &(*cpulocal).thread {
+                thread.as_ref() as *const Thread as *mut Thread
+            } else {
+                null_mut()
+            }
+        }
+    }
+
+    /// Set the STOPPING flag, asking for this thread to be stopped.
+    pub fn stop(&self) {
+        self.flags.fetch_or(tflags::STOPPING, Ordering::Relaxed);
+    }
+
+    /// Test whether the STOPPING flag is set.
+    pub fn is_stopping(&self) -> bool {
+        self.flags.load(Ordering::Relaxed) & tflags::STOPPING != 0
     }
 
     /// Terminate the current thread.
@@ -157,10 +194,24 @@ impl Thread {
         thread_yield();
         unreachable!()
     }
+
+    /// Wait for this thread to stop.
+    pub fn join(&self) -> EResult<()> {
+        while self.flags.load(Ordering::Relaxed) & tflags::STOPPED == 0 {
+            self.waitlist.block(timestamp_us_t::MAX, || {
+                self.flags.load(Ordering::Relaxed) & tflags::STOPPED == 0
+            })?;
+        }
+        Ok(())
+    }
+
+    pub unsafe fn runtime(&self) -> &mut ThreadRuntime {
+        unsafe { self.runtime.as_mut_unchecked().as_mut().unwrap() }
+    }
 }
 
 /// Number of currently running schedulers.
-static RUNNING_SCHED_COUNT: AtomicU32 = AtomicU32::new(0);
+pub(super) static RUNNING_SCHED_COUNT: AtomicU32 = AtomicU32::new(0);
 
 /// Instance of a scheduler running on one CPU.
 pub struct Scheduler {
@@ -176,7 +227,11 @@ pub struct Scheduler {
 
 impl Scheduler {
     pub fn new() -> EResult<Self> {
-        let idle = Thread::new_tcb_only(Box::try_new(|| Self::idle_func())?)?;
+        let idle = Thread::new_tcb_only(
+            Box::try_new(|| Self::idle_func())?,
+            None,
+            Some(format!("Idle for CPU{}", smp::cur_cpu())),
+        )?;
 
         Ok(Self {
             idle: Some(idle),
@@ -224,7 +279,7 @@ impl Scheduler {
         // TODO: Time accounting.
         self.rcu.sched_callback();
         unsafe {
-            let cpulocal = CpuLocal::get().unwrap().as_mut();
+            let cpulocal = &mut *CpuLocal::get();
             let mut old = None;
             core::mem::swap(&mut old, &mut cpulocal.thread);
 
@@ -247,7 +302,17 @@ impl Scheduler {
                 next.unwrap()
             });
 
-            let new_stack = next.runtime.as_ref_unchecked().as_ref().unwrap().stack_ptr;
+            // Switch to next page table.
+            let new_mm: &Memmap;
+            if let Some(process) = next.process.as_ref() {
+                new_mm = process.memmap();
+            } else {
+                new_mm = kernel_mm();
+            }
+            cpu::mmu::set_page_table(new_mm.root_ppn(), 0);
+
+            cpulocal.arch.set_irq_stack(next.runtime().irq_stack);
+            let new_stack = &raw const next.runtime().stack_ptr;
             cpulocal.thread = Some(next);
             context_switch(new_stack, old_stack_out);
         }
@@ -255,15 +320,13 @@ impl Scheduler {
 }
 
 /// Yield the current thread's execution.
-pub fn thread_yield() {
+#[unsafe(no_mangle)]
+pub extern "C" fn thread_yield() {
     unsafe {
-        CpuLocal::get()
-            .unwrap()
-            .as_mut()
-            .sched
-            .as_mut()
-            .unwrap()
-            .reschedule();
+        let _noirq = IrqGuard::new();
+        if let Some(sched) = (*CpuLocal::get()).sched.as_mut() {
+            sched.reschedule();
+        }
     }
 }
 
@@ -275,4 +338,16 @@ pub fn thread_sleep(amount: timestamp_us_t) -> EResult<()> {
         thread_yield();
     }
     Ok(())
+}
+
+mod c_api {
+    use crate::bindings::{
+        error::Errno,
+        raw::{errno_t, timestamp_us_t},
+    };
+
+    #[unsafe(no_mangle)]
+    extern "C" fn thread_sleep(amount: timestamp_us_t) -> errno_t {
+        Errno::extract(super::thread_sleep(amount))
+    }
 }

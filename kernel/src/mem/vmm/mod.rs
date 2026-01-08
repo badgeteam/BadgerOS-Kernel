@@ -6,7 +6,7 @@ use core::{
     cell::UnsafeCell,
     ffi::c_void,
     fmt::Debug,
-    ops::Range,
+    ops::{Deref, DerefMut, Range},
     ptr::{slice_from_raw_parts, slice_from_raw_parts_mut},
     sync::atomic::AtomicUsize,
 };
@@ -15,16 +15,20 @@ use alloc::vec::Vec;
 use pagetable::{OwnedPTE, PAGING_LEVELS, canon_half_pages};
 
 use crate::{
-    badgelib::{irq::IrqGuard, rcu},
-    bindings::{error::EResult, log::LogLevel, mutex::Mutex, raw::memcpy},
+    badgelib::irq::IrqGuard,
+    bindings::{error::EResult, log::LogLevel, raw::memcpy},
     config::PAGE_SIZE,
     cpu::{
         self,
         mmu::{self, BITS_PER_LEVEL},
     },
+    kernel::{
+        sched::Thread,
+        sync::{mutex::Mutex, rcu},
+    },
     mem::{
         pmm::{self, PPN, PageUsage},
-        vmm::{pagetable::PageTable, vma_alloc::VmaAlloc},
+        vmm::{flags::A, pagetable::PageTable, vma_alloc::VmaAlloc},
     },
 };
 
@@ -172,7 +176,7 @@ impl Memmap {
         assert!(!self.is_kernel);
         // This function doesn't change the effective contents of this memmap, but must ensure no concurrent modifications happen;
         // it cannot lock the page table spinlock constantly, so this guard effectively prevents concurrent modifications.
-        let guard = self.vma_alloc.lock();
+        let guard = self.vma_alloc.unintr_lock();
 
         let new_mm = Self::new_user()?;
 
@@ -196,7 +200,7 @@ impl Memmap {
         }
 
         // TODO: Fallible clone of this structure.
-        *new_mm.vma_alloc.lock() = guard.clone();
+        *new_mm.vma_alloc.unintr_lock() = guard.clone();
 
         Ok(new_mm)
     }
@@ -206,10 +210,10 @@ impl Memmap {
     /// Reserve a range of memory without mapping anything.
     pub fn reserve(&self, vpn: Option<VPN>, size: VPN) -> EResult<VPN> {
         if let Some(vpn) = vpn {
-            self.vma_alloc.lock().steal(vpn..vpn + size);
+            self.vma_alloc.unintr_lock().steal(vpn..vpn + size);
             Ok(vpn)
         } else {
-            self.vma_alloc.lock().alloc(size)
+            self.vma_alloc.unintr_lock().alloc(size)
         }
     }
 
@@ -230,7 +234,7 @@ impl Memmap {
         size: VPN,
         mut flags: u32,
     ) -> EResult<VPN> {
-        let mut guard = self.vma_alloc.lock();
+        let mut guard = self.vma_alloc.unintr_lock();
         let mut do_steal = false;
         let vpn = match vpn {
             Some(vpn) => {
@@ -291,7 +295,7 @@ impl Memmap {
     ///
     /// If `vpn` is [`None`], an arbitrary virtual address range is chosen.
     pub unsafe fn map_ram(&self, vpn: Option<VPN>, size: VPN, mut flags: u32) -> EResult<VPN> {
-        let mut guard = self.vma_alloc.lock();
+        let mut guard = self.vma_alloc.unintr_lock();
         let mut do_steal = false;
         let vpn = match vpn {
             Some(vpn) => {
@@ -356,7 +360,7 @@ impl Memmap {
     /// Change the protection attributes for a region.
     pub unsafe fn protect(&self, vpn: VPN, new_flags: u32) -> EResult<()> {
         // Inhibit concurrent changes to the mappings.
-        let _guard = self.vma_alloc.lock();
+        let _guard = self.vma_alloc.unintr_lock();
 
         todo!()
     }
@@ -413,7 +417,7 @@ impl Memmap {
             assert!(pagetable::is_canon_user_page_range(pages.clone()));
         }
 
-        let mut guard = self.vma_alloc.lock();
+        let mut guard = self.vma_alloc.unintr_lock();
         // Storing the to-be-freed pages here so they're only freed after an RCU sync.
         let mut to_free = Vec::new();
 
@@ -449,7 +453,7 @@ impl Memmap {
     /// Clear all mappings from this user memory map.
     pub unsafe fn clear(&self) {
         assert!(!self.is_kernel);
-        let mut guard = self.vma_alloc.lock();
+        let mut guard = self.vma_alloc.unintr_lock();
         guard.free(canon_half_pages() / 2..canon_half_pages());
         unsafe { self.pagetable.clear_lower_half() };
     }
@@ -457,12 +461,18 @@ impl Memmap {
     /// Check page faults for lazy mappings given required access permissions `access`.
     /// Called when a page fault happens on this memmap.
     /// Returns `true` if the fault should be ignored and the faulting operation retried.
-    pub fn page_fault(&self, vpn: VPN, access: u32) -> bool {
+    pub fn page_fault(&self, vpn: VPN, access: u32, allow_sum: bool) -> bool {
         // Inhibit concurrent changes to the mappings.
-        let _guard = self.vma_alloc.lock();
+        let _guard = self.vma_alloc.unintr_lock();
 
         let mapping = self.pagetable.walk(vpn);
-        if mapping.flags & access == access {
+        if mapping.valid
+            // Correct access permissions set
+            && mapping.flags & access == access
+            // Privilege levels match.
+            && (mapping.flags & flags::U == access & flags::U
+                || access & flags::U == 0 && allow_sum)
+        {
             // TLB was likely outdated; retry.
             cpu::mmu::vmem_fence(Some(vpn * PAGE_SIZE as usize), None);
             return true;
@@ -503,6 +513,18 @@ impl Memmap {
 impl Drop for Memmap {
     fn drop(&mut self) {
         assert!(!self.is_kernel);
+    }
+}
+
+/// Check page faults for lazy mappings given required access permissions `access`.
+/// Called when a page fault happens on this memmap.
+/// Returns `true` if the fault should be ignored and the faulting operation retried.
+pub fn page_fault(vpn: VPN, access: u32, allow_sum: bool) -> bool {
+    let thread = Thread::current();
+    if let Some(proc) = unsafe { (*thread).process.as_ref() } {
+        proc.memmap().page_fault(vpn, access, allow_sum)
+    } else {
+        kernel_mm().page_fault(vpn, access, allow_sum)
     }
 }
 
@@ -656,5 +678,59 @@ pub unsafe fn init() {
         logkf!(LogLevel::Info, "Switching to new page table");
         mmu::init(kernel_mm().pagetable.root_ppn());
         logkf!(LogLevel::Info, "Virtual memory management initialized");
+    }
+}
+
+/// Represents an object mapped to memory.
+pub struct MemObject<'a, T> {
+    ptr: *mut T,
+    mm: &'a Memmap,
+}
+
+impl<'a, T: Default> MemObject<'a, T> {
+    pub fn new_ram(mm: &'a Memmap) -> EResult<Self> {
+        unsafe {
+            let vpn = mm.map_ram(None, Self::PAGE_COUNT, flags::RW)?;
+            let ptr = (vpn * PAGE_SIZE as usize) as *mut T;
+            ptr.write(T::default());
+            Ok(Self { ptr, mm })
+        }
+    }
+}
+
+impl<'a, T> MemObject<'a, T> {
+    pub const PAGE_COUNT: usize = size_of::<T>().div_ceil(PAGE_SIZE as usize);
+
+    pub fn new_ram_with(mm: &'a Memmap, f: impl FnOnce() -> T) -> EResult<Self> {
+        unsafe {
+            let vpn = mm.map_ram(None, Self::PAGE_COUNT, flags::RW)?;
+            let ptr = (vpn * PAGE_SIZE as usize) as *mut T;
+            ptr.write(f());
+            Ok(Self { ptr, mm })
+        }
+    }
+}
+
+impl<T> Drop for MemObject<'_, T> {
+    fn drop(&mut self) {
+        unsafe {
+            core::ptr::drop_in_place(self.ptr);
+            let vpn = self.ptr as usize / PAGE_SIZE as usize;
+            self.mm.unmap(vpn..vpn + Self::PAGE_COUNT);
+        }
+    }
+}
+
+impl<T> Deref for MemObject<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*self.ptr }
+    }
+}
+
+impl<T> DerefMut for MemObject<'_, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *self.ptr }
     }
 }

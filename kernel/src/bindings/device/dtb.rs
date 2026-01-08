@@ -45,6 +45,12 @@ impl DtbNode {
             ))
         }
     }
+    pub fn child_nodes(&self) -> &[DtbNode] {
+        unsafe { &*slice_from_raw_parts(self.0.nodes as *const DtbNode, self.0.nodes_len) }
+    }
+    pub fn child_props(&self) -> &[DtbProp] {
+        unsafe { &*slice_from_raw_parts(self.0.props as *const DtbProp, self.0.props_len) }
+    }
 }
 
 /// Represents a device tree property.

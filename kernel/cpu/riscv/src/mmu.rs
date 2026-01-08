@@ -192,3 +192,11 @@ pub unsafe fn enable_sum() {
 pub unsafe fn disable_sum() {
     unsafe { asm!("csrc sstatus, {mask}", mask = in(reg) 1 << 18) };
 }
+
+#[inline(always)]
+/// Determine whether kernel access to user memory is allowed.
+pub fn check_sum() -> bool {
+    let mask: usize;
+    unsafe { asm!("csrr {mask}, sstatus", mask=out(reg)mask) };
+    mask & (1 << 18) != 0
+}

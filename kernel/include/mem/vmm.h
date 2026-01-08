@@ -7,7 +7,7 @@
 
 #include "cpu/mmu.h"
 #include "errno.h"
-#include "mutex.h"
+#include "sched/sync/mutex.h"
 
 #include <stdbool.h>
 #include <stddef.h>

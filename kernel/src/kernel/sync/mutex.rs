@@ -9,10 +9,17 @@ use core::{
     u32,
 };
 
-use crate::{bindings::error::EResult, scheduler::waitlist::Waitlist};
+use crate::{
+    bindings::{
+        error::{EResult, Errno},
+        raw::{errno_t, timestamp_us_t},
+    },
+    kernel::waitlist::Waitlist,
+};
 
 /// Raw mutually-exclusive resource access guard.
 #[repr(C)]
+#[derive(Debug)]
 pub struct RawMutex {
     waitlist: Waitlist,
     shares: AtomicU32,
@@ -27,11 +34,34 @@ impl RawMutex {
     }
 
     pub fn lock<'a>(&'a self) -> EResult<RawMutexGuard<'a>> {
-        RawMutexGuard::new(self)
+        RawMutexGuard::new(self, timestamp_us_t::MAX)
+    }
+
+    pub fn timed_lock<'a>(&'a self, timeout: timestamp_us_t) -> EResult<RawMutexGuard<'a>> {
+        RawMutexGuard::new(self, timeout)
     }
 
     pub fn lock_shared<'a>(&'a self) -> EResult<SharedRawMutexGuard<'a>> {
-        SharedRawMutexGuard::new(self)
+        SharedRawMutexGuard::new(self, timestamp_us_t::MAX)
+    }
+
+    pub fn timed_lock_shared<'a>(
+        &'a self,
+        timeout: timestamp_us_t,
+    ) -> EResult<SharedRawMutexGuard<'a>> {
+        SharedRawMutexGuard::new(self, timeout)
+    }
+
+    /// Version of [`Self::lock`] that can't be interrupted.
+    pub fn unintr_lock<'a>(&'a self) -> RawMutexGuard<'a> {
+        // TODO: Can't *actually* be interrupted yet because of no signals being implemented.
+        self.lock().unwrap()
+    }
+
+    /// Version of [`Self::lock_shared`] that can't be interrupted.
+    pub fn unintr_lock_shared<'a>(&'a self) -> SharedRawMutexGuard<'a> {
+        // TODO: Can't *actually* be interrupted yet because of no signals being implemented.
+        self.lock_shared().unwrap()
     }
 }
 
@@ -41,7 +71,7 @@ pub struct RawMutexGuard<'a> {
 }
 
 impl<'a> RawMutexGuard<'a> {
-    pub fn new(mutex: &'a RawMutex) -> EResult<Self> {
+    fn new(mutex: &'a RawMutex, timeout: timestamp_us_t) -> EResult<Self> {
         // Fast path.
         for _ in 0..50 {
             if mutex
@@ -61,7 +91,7 @@ impl<'a> RawMutexGuard<'a> {
         {
             mutex
                 .waitlist
-                .block(|| mutex.shares.load(Ordering::Relaxed) != 0)?;
+                .block(timeout, || mutex.shares.load(Ordering::Relaxed) != 0)?;
         }
 
         Ok(Self { mutex })
@@ -81,7 +111,7 @@ pub struct SharedRawMutexGuard<'a> {
 }
 
 impl<'a> SharedRawMutexGuard<'a> {
-    pub fn new(mutex: &'a RawMutex) -> EResult<Self> {
+    fn new(mutex: &'a RawMutex, timeout: timestamp_us_t) -> EResult<Self> {
         // Fast path.
         let mut old = mutex.shares.load(Ordering::Relaxed);
         for _ in 0..50 {
@@ -117,7 +147,7 @@ impl<'a> SharedRawMutexGuard<'a> {
                     old = x;
                     mutex
                         .waitlist
-                        .block(|| mutex.shares.load(Ordering::Relaxed) != 0)?;
+                        .block(timeout, || mutex.shares.load(Ordering::Relaxed) != 0)?;
                 }
             }
         }
@@ -139,12 +169,15 @@ impl<'a> Drop for SharedRawMutexGuard<'a> {
 
 /// Mutex-protected resource.
 #[repr(C)]
-pub struct Mutex<T: Sized> {
+#[derive(Debug)]
+pub struct Mutex<T> {
     inner: RawMutex,
     data: UnsafeCell<T>,
 }
+unsafe impl<T> Send for Mutex<T> {}
+unsafe impl<T> Sync for Mutex<T> {}
 
-impl<T: Sized> Mutex<T> {
+impl<T> Mutex<T> {
     pub const fn new(data: T) -> Self {
         Self {
             inner: RawMutex::new(),
@@ -153,11 +186,38 @@ impl<T: Sized> Mutex<T> {
     }
 
     pub fn lock<'a>(&'a self) -> EResult<MutexGuard<'a, T>> {
-        MutexGuard::new(self)
+        MutexGuard::new(self, timestamp_us_t::MAX)
+    }
+
+    pub fn timed_lock<'a>(&'a self, timeout: timestamp_us_t) -> EResult<MutexGuard<'a, T>> {
+        MutexGuard::new(self, timeout)
     }
 
     pub fn lock_shared<'a>(&'a self) -> EResult<SharedMutexGuard<'a, T>> {
-        SharedMutexGuard::new(self)
+        SharedMutexGuard::new(self, timestamp_us_t::MAX)
+    }
+
+    pub fn timed_lock_shared<'a>(
+        &'a self,
+        timeout: timestamp_us_t,
+    ) -> EResult<SharedMutexGuard<'a, T>> {
+        SharedMutexGuard::new(self, timeout)
+    }
+
+    pub unsafe fn data(&self) -> &mut T {
+        unsafe { self.data.as_mut_unchecked() }
+    }
+
+    /// Version of [`Self::lock`] that can't be interrupted.
+    pub fn unintr_lock<'a>(&'a self) -> MutexGuard<'a, T> {
+        // TODO: Can't *actually* be interrupted yet because of no signals being implemented.
+        self.lock().unwrap()
+    }
+
+    /// Version of [`Self::lock_shared`] that can't be interrupted.
+    pub fn unintr_lock_shared<'a>(&'a self) -> SharedMutexGuard<'a, T> {
+        // TODO: Can't *actually* be interrupted yet because of no signals being implemented.
+        self.lock_shared().unwrap()
     }
 }
 
@@ -168,9 +228,18 @@ pub struct MutexGuard<'a, T> {
 }
 
 impl<'a, T> MutexGuard<'a, T> {
-    pub fn new(mutex: &'a Mutex<T>) -> EResult<Self> {
+    pub unsafe fn from_raw(inner: RawMutexGuard<'a>, data: *mut T) -> Self {
+        unsafe {
+            Self {
+                inner,
+                data: &mut *data,
+            }
+        }
+    }
+
+    fn new(mutex: &'a Mutex<T>, timeout: timestamp_us_t) -> EResult<Self> {
         Ok(Self {
-            inner: mutex.inner.lock()?,
+            inner: mutex.inner.timed_lock(timeout)?,
             data: unsafe { mutex.data.as_mut_unchecked() },
         })
     }
@@ -191,6 +260,13 @@ impl<'a, T> MutexGuard<'a, T> {
 
     pub fn write(&mut self, value: T) {
         *self.data = value
+    }
+
+    pub fn convert<U: 'a>(self, f: impl FnOnce(&'a mut T) -> &'a mut U) -> MutexGuard<'a, U> {
+        MutexGuard {
+            inner: self.inner,
+            data: f(self.data),
+        }
     }
 }
 
@@ -215,9 +291,18 @@ pub struct SharedMutexGuard<'a, T> {
 }
 
 impl<'a, T> SharedMutexGuard<'a, T> {
-    pub fn new(mutex: &'a Mutex<T>) -> EResult<Self> {
+    pub unsafe fn from_raw(inner: SharedRawMutexGuard<'a>, data: *const T) -> Self {
+        unsafe {
+            Self {
+                inner,
+                data: &*data,
+            }
+        }
+    }
+
+    fn new(mutex: &'a Mutex<T>, timeout: timestamp_us_t) -> EResult<Self> {
         Ok(Self {
-            inner: mutex.inner.lock_shared()?,
+            inner: mutex.inner.timed_lock_shared(timeout)?,
             data: unsafe { mutex.data.as_ref_unchecked() },
         })
     }
@@ -242,6 +327,13 @@ impl<'a, T> SharedMutexGuard<'a, T> {
     {
         self.data.clone()
     }
+
+    pub fn convert<U: 'a>(self, f: impl FnOnce(&'a T) -> &'a U) -> SharedMutexGuard<'a, U> {
+        SharedMutexGuard {
+            inner: self.inner,
+            data: f(self.data),
+        }
+    }
 }
 
 impl<T> Deref for SharedMutexGuard<'_, T> {
@@ -250,4 +342,34 @@ impl<T> Deref for SharedMutexGuard<'_, T> {
     fn deref(&self) -> &Self::Target {
         self.data
     }
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn mutex_lock(mutex: &RawMutex) -> errno_t {
+    Errno::extract(try { core::mem::forget(mutex.lock()?) })
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn mutex_lock_shared(mutex: &RawMutex) -> errno_t {
+    Errno::extract(try { core::mem::forget(mutex.lock_shared()?) })
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn mutex_timed_lock(mutex: &RawMutex, timeout: timestamp_us_t) -> errno_t {
+    Errno::extract(try { core::mem::forget(mutex.timed_lock(timeout)?) })
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn mutex_timed_lock_shared(mutex: &RawMutex, timeout: timestamp_us_t) -> errno_t {
+    Errno::extract(try { core::mem::forget(mutex.timed_lock_shared(timeout)?) })
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn mutex_unlock(mutex: &RawMutex) {
+    drop(RawMutexGuard { mutex })
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn mutex_unlock_shared(mutex: &RawMutex) {
+    drop(SharedRawMutexGuard { mutex })
 }

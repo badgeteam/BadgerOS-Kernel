@@ -26,7 +26,7 @@
 SYSCALL_DEF_V(1, SYSCALL_THREAD_YIELD, syscall_thread_yield)
 
 // Sleep for a certain amount of time.
-SYSCALL_DEF_V(53, SYSCALL_THREAD_SLEEP, syscall_thread_sleep, int64_t delay)
+SYSCALL_DEF(53, SYSCALL_THREAD_SLEEP, syscall_thread_sleep, int, int64_t delay)
 
 // Create a new thread.
 // Returns thread ID or -errno.
@@ -50,12 +50,6 @@ SYSCALL_DEF_V(5, SYSCALL_THREAD_EXIT, syscall_thread_exit, int code)
 
 // Exit the process; exit code can be read by parent process.
 SYSCALL_DEF_V(8, SYSCALL_PROC_EXIT, syscall_proc_exit, int code)
-
-// Get the command-line arguments (i.e. argc+argv) of the current process.
-// If memory is large enough, a NULL-terminated argv array of C-string pointers and their data is stored in `memory`.
-// The function returns how many bytes would be needed to store the structure.
-// If the memory was not large enough, it it not modified.
-SYSCALL_DEF(9, SYSCALL_PROC_GETARGS, syscall_proc_getargs, size_t, size_t cap, void *memory)
 
 // Create a copy of the running process and return its PID (to the parent) or -1 (to the child).
 SYSCALL_DEF(10, SYSCALL_PROC_FORK, syscall_proc_fork, int64_t)

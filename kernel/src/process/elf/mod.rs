@@ -28,6 +28,13 @@ pub const ELF_MACHINE: u16 = 243;
 #[cfg(target_arch = "x86_64")]
 pub const ELF_MACHINE: u16 = 62;
 
+/// Auxiliary vector entry.
+#[repr(C)]
+pub struct AuxvEntry {
+    pub type_: usize,
+    pub value: usize,
+}
+
 /// Header that identifies a file as an ELF file.
 #[repr(C)]
 #[derive(Clone, Copy, NoUninit, AnyBitPattern, Default)]

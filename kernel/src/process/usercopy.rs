@@ -2,22 +2,20 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::{
-    ffi::{c_char, c_void},
-    marker::PhantomData,
-    mem::MaybeUninit,
-    ops::Range,
-    ptr::NonNull,
-};
+use core::{ffi::c_char, marker::PhantomData, mem::MaybeUninit, ops::Range, ptr::NonNull};
 
 use alloc::{ffi::CString, vec::Vec};
 
 use crate::{
     bindings::{
         error::{EResult, Errno},
-        raw::{isr_noexc_copy_u8, isr_noexc_mem_copy, sigaction, stat_t},
+        raw::{sigaction, stat_t},
     },
-    cpu, mem,
+    cpu::{
+        self,
+        usercopy::{copy_from_user, copy_to_user, fallible_load_u8},
+    },
+    mem,
 };
 
 pub type AccessResult<T> = Result<T, Errno>;
@@ -101,12 +99,14 @@ impl<'a, T: UserCopyable> UserSlice<'a, T, false> {
     /// Create a new user-access slice; will validate that the range is user memory.
     pub fn new(ptr: *const T, length: usize) -> AccessResult<Self> {
         let vaddr = ptr as usize;
-        if !mem::vmm::pagetable::is_canon_user_range(
-            vaddr
-                ..vaddr
-                    .checked_add(length.checked_mul(size_of::<T>()).ok_or(AccessFault)?)
-                    .ok_or(AccessFault)?,
-        ) {
+        if !ptr.is_aligned()
+            || !mem::vmm::pagetable::is_canon_user_range(
+                vaddr
+                    ..vaddr
+                        .checked_add(length.checked_mul(size_of::<T>()).ok_or(AccessFault)?)
+                        .ok_or(AccessFault)?,
+            )
+        {
             return Err(AccessFault);
         }
         Ok(Self {
@@ -171,14 +171,16 @@ impl<'a, T: UserCopyable, const MUTABLE: bool> UserSlice<'a, T, MUTABLE> {
             out.len(),
             self.len()
         );
-        let faulted = unsafe {
-            isr_noexc_mem_copy(
-                out.as_ptr() as *mut c_void,
-                self.ptr.add(index).as_ptr() as *const c_void,
+        unsafe { cpu::mmu::enable_sum() };
+        let res = unsafe {
+            copy_from_user(
+                out.as_ptr() as *mut (),
+                self.ptr.add(index).as_ptr() as *const (),
                 size_of::<T>() * out.len(),
             )
         };
-        if faulted { Err(AccessFault) } else { Ok(()) }
+        unsafe { cpu::mmu::disable_sum() };
+        res
     }
 
     /// Try to read an element from the slice.
@@ -191,19 +193,15 @@ impl<'a, T: UserCopyable, const MUTABLE: bool> UserSlice<'a, T, MUTABLE> {
         );
         let mut tmp = MaybeUninit::uninit();
         unsafe { cpu::mmu::enable_sum() };
-        let faulted = unsafe {
-            isr_noexc_mem_copy(
-                &raw mut tmp as *mut c_void,
-                self.ptr.add(index).as_ptr() as *const c_void,
+        let res = unsafe {
+            copy_from_user(
+                &raw mut tmp as *mut (),
+                self.ptr.add(index).as_ptr() as *const (),
                 size_of::<T>(),
             )
         };
         unsafe { cpu::mmu::disable_sum() };
-        if faulted {
-            Err(AccessFault)
-        } else {
-            Ok(unsafe { tmp.assume_init() })
-        }
+        res.map(|_| unsafe { tmp.assume_init() })
     }
 
     /// Pointer inside this slice.
@@ -242,14 +240,14 @@ impl<'a, T: UserCopyable> UserSlice<'a, T, true> {
             data.len(),
             self.len()
         );
-        let faulted = unsafe {
-            isr_noexc_mem_copy(
-                self.ptr.add(index).as_ptr() as *mut c_void,
-                data.as_ptr() as *const c_void,
+        let res = unsafe {
+            copy_to_user(
+                self.ptr.add(index).as_ptr() as *mut (),
+                data.as_ptr() as *const (),
                 size_of::<T>() * data.len(),
             )
         };
-        if faulted { Err(AccessFault) } else { Ok(()) }
+        res
     }
 
     /// Try to write an element to the slice.
@@ -261,35 +259,36 @@ impl<'a, T: UserCopyable> UserSlice<'a, T, true> {
             self.len()
         );
         unsafe { cpu::mmu::enable_sum() };
-        let faulted = unsafe {
-            isr_noexc_mem_copy(
-                self.ptr.add(index).as_ptr() as *mut c_void,
-                &raw const data as *const c_void,
+        let res = unsafe {
+            copy_to_user(
+                self.ptr.add(index).as_ptr() as *mut (),
+                &raw const data as *const (),
                 size_of::<T>(),
             )
         };
         unsafe { cpu::mmu::disable_sum() };
-        if faulted { Err(AccessFault) } else { Ok(()) }
+        res
     }
 
     /// Fill this slice with a certain value.
     pub fn fill(&mut self, data: T) -> AccessResult<()> {
         unsafe { cpu::mmu::enable_sum() };
-        let mut faulted = false;
         unsafe {
             for i in 0..self.length {
-                if isr_noexc_mem_copy(
-                    self.ptr.add(i).as_ptr() as *mut c_void,
-                    &raw const data as *const c_void,
+                if copy_to_user(
+                    self.ptr.add(i).as_ptr() as *mut (),
+                    &raw const data as *const (),
                     size_of::<T>(),
-                ) {
-                    faulted = true;
-                    break;
+                )
+                .is_err()
+                {
+                    cpu::mmu::disable_sum();
+                    return Err(AccessFault);
                 }
             }
         };
         unsafe { cpu::mmu::disable_sum() };
-        if faulted { Err(AccessFault) } else { Ok(()) }
+        Ok(())
     }
 
     /// Pointer inside this slice.
@@ -332,9 +331,11 @@ impl<'a, T: UserCopyable> UserPtr<'a, T, false> {
     /// Create a new user-access pointer; will validate that the range is user memory.
     pub fn new(ptr: *const T) -> AccessResult<Self> {
         let vaddr = ptr as usize;
-        if !mem::vmm::pagetable::is_canon_user_range(
-            vaddr..vaddr.checked_add(size_of::<T>()).ok_or(AccessFault)?,
-        ) {
+        if !ptr.is_aligned()
+            || !mem::vmm::pagetable::is_canon_user_range(
+                vaddr..vaddr.checked_add(size_of::<T>()).ok_or(AccessFault)?,
+            )
+        {
             return Err(AccessFault);
         }
         Ok(Self {
@@ -405,19 +406,15 @@ impl<'a, T: UserCopyable, const MUTABLE: bool> UserPtr<'a, T, MUTABLE> {
     pub fn read(&self) -> AccessResult<T> {
         let mut tmp = MaybeUninit::uninit();
         unsafe { cpu::mmu::enable_sum() };
-        let faulted = unsafe {
-            isr_noexc_mem_copy(
-                &raw mut tmp as *mut c_void,
-                self.ptr.as_ptr() as *const c_void,
+        let res = unsafe {
+            copy_from_user(
+                &raw mut tmp as *mut (),
+                self.ptr.as_ptr() as *const (),
                 size_of::<T>(),
             )
         };
         unsafe { cpu::mmu::disable_sum() };
-        if faulted {
-            Err(AccessFault)
-        } else {
-            Ok(unsafe { tmp.assume_init() })
-        }
+        res.map(|_| unsafe { tmp.assume_init() })
     }
 
     /// Get the pointer.
@@ -430,15 +427,15 @@ impl<'a, T: UserCopyable> UserPtr<'a, T, true> {
     /// Try to write an element to the slice.
     pub fn write(&mut self, data: T) -> AccessResult<()> {
         unsafe { cpu::mmu::enable_sum() };
-        let faulted = unsafe {
-            isr_noexc_mem_copy(
-                self.ptr.as_ptr() as *mut c_void,
-                &raw const data as *const c_void,
+        let res = unsafe {
+            copy_to_user(
+                self.ptr.as_ptr() as *mut (),
+                &raw const data as *const (),
                 size_of::<T>(),
             )
         };
         unsafe { cpu::mmu::disable_sum() };
-        if faulted { Err(AccessFault) } else { Ok(()) }
+        res
     }
 
     /// Get the pointer.
@@ -456,12 +453,11 @@ pub fn read_user_cstr(mut user_cstr: *const c_char, buffer: &mut [u8]) -> Access
             unsafe { cpu::mmu::disable_sum() };
             return Err(AccessFault);
         }
-        let mut c = 0;
-        let faulted = unsafe { isr_noexc_copy_u8(&raw mut c, user_cstr as *const u8) };
-        if faulted {
+        let c = unsafe { fallible_load_u8(user_cstr as *const u8) };
+        if c.is_err() {
             unsafe { cpu::mmu::disable_sum() };
-            return Err(AccessFault);
         }
+        let c = c?;
         if c == 0 {
             break;
         }
@@ -483,12 +479,11 @@ pub fn copy_user_cstr(mut user_cstr: *const c_char) -> EResult<CString> {
             unsafe { cpu::mmu::disable_sum() };
             return Err(AccessFault);
         }
-        let mut c = 0;
-        let faulted = unsafe { isr_noexc_copy_u8(&raw mut c, user_cstr as *const u8) };
-        if faulted {
+        let c = unsafe { fallible_load_u8(user_cstr as *const u8) };
+        if c.is_err() {
             unsafe { cpu::mmu::disable_sum() };
-            return Err(AccessFault);
         }
+        let c = c?;
         if c == 0 {
             break;
         }
@@ -499,4 +494,35 @@ pub fn copy_user_cstr(mut user_cstr: *const c_char) -> EResult<CString> {
 
     unsafe { cpu::mmu::disable_sum() };
     Ok(unsafe { CString::from_vec_unchecked(res) })
+}
+
+mod c_api {
+    use core::ffi::c_void;
+
+    use crate::{
+        bindings::{error::Errno, raw::errno_t},
+        cpu,
+    };
+
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn copy_to_user(
+        dest: *mut c_void,
+        src: *const c_void,
+        size: usize,
+    ) -> errno_t {
+        Errno::extract(unsafe {
+            cpu::usercopy::copy_to_user(dest as *mut (), src as *const (), size)
+        })
+    }
+
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn copy_from_user(
+        dest: *mut c_void,
+        src: *const c_void,
+        size: usize,
+    ) -> errno_t {
+        Errno::extract(unsafe {
+            cpu::usercopy::copy_from_user(dest as *mut (), src as *const (), size)
+        })
+    }
 }

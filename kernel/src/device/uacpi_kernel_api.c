@@ -2,17 +2,21 @@
 // SPDX-License-Identifier: MIT
 
 #include "assertions.h"
-#include "housekeeping.h"
+#include "errno.h"
 #include "interrupt.h"
 #include "log.h"
-#include "malloc.h"
 #include "mem/vmm.h"
-#include "scheduler/scheduler.h"
-#include "semaphore.h"
+#include "sched/sched.h"
+#include "sched/sync/mutex.h"
+#include "sched/sync/sem.h"
 #include "spinlock.h"
 #include "time.h"
 #include "uacpi/kernel_api.h"
 #include "uacpi/status.h"
+
+#include <stdatomic.h>
+
+#include <malloc.h>
 
 #ifdef __x86_64__
 #include "cpu/x86_ioport.h"
@@ -222,12 +226,14 @@ uacpi_handle uacpi_kernel_create_mutex(void) {
     mutex_t *mutex = calloc(1, sizeof(mutex_t));
     if (!mutex)
         return NULL;
-    mutex_init(mutex, false);
+    *mutex = MUTEX_T_INIT;
+    atomic_store(&mutex->shares, 0); // Causes release fence.
     return mutex;
 }
 
 void uacpi_kernel_free_mutex(uacpi_handle handle) {
-    mutex_destroy(handle);
+    mutex_t *mutex = handle;
+    assert_dev_drop(atomic_load(&mutex->shares) == 0);
     free(handle);
 }
 
@@ -236,13 +242,14 @@ void uacpi_kernel_free_mutex(uacpi_handle handle) {
  */
 uacpi_handle uacpi_kernel_create_event() {
     sem_t *sem = malloc(sizeof(sem_t));
-    sem_init(sem);
+    *sem       = SEM_T_INIT;
+    atomic_store(&sem->counter, 0); // Causes release fence.
     return sem;
 }
 
 void uacpi_kernel_free_event(uacpi_handle handle) {
     sem_t *sem = handle;
-    sem_destroy(sem);
+    assert_dev_drop(atomic_load(&sem->counter) == 0);
     free(sem);
 }
 
@@ -252,7 +259,7 @@ void uacpi_kernel_free_event(uacpi_handle handle) {
  * The returned thread id cannot be UACPI_THREAD_ID_NONE.
  */
 uacpi_thread_id uacpi_kernel_get_thread_id(void) {
-    return (uacpi_thread_id)(size_t)sched_current_tid();
+    return (uacpi_thread_id)thread_current();
 }
 
 /*
@@ -273,11 +280,18 @@ uacpi_thread_id uacpi_kernel_get_thread_id(void) {
  */
 uacpi_status uacpi_kernel_acquire_mutex(uacpi_handle handle, uacpi_u16 timeout0) {
     timestamp_us_t timeout = timeout0 == 0xffff ? TIMESTAMP_US_MAX : (timestamp_us_t)timeout0 * 1000;
-    return mutex_acquire(handle, timeout) ? UACPI_STATUS_OK : UACPI_STATUS_TIMEOUT;
+    errno_t        res     = mutex_timed_lock(handle, timeout);
+    if (res >= 0) {
+        return UACPI_STATUS_OK;
+    } else if (res == -ETIMEDOUT) {
+        return UACPI_STATUS_TIMEOUT;
+    } else {
+        return UACPI_STATUS_INTERNAL_ERROR;
+    }
 }
 
 void uacpi_kernel_release_mutex(uacpi_handle handle) {
-    mutex_release(handle);
+    mutex_unlock(handle);
 }
 
 /*
@@ -290,7 +304,7 @@ void uacpi_kernel_release_mutex(uacpi_handle handle) {
  */
 uacpi_bool uacpi_kernel_wait_for_event(uacpi_handle handle, uacpi_u16 timeout0) {
     timestamp_us_t timeout = timeout0 == 0xffff ? TIMESTAMP_US_MAX : (timestamp_us_t)timeout0 * 1000;
-    return sem_await(handle, timeout);
+    return sem_timed_wait(handle, timeout) >= 0;
 }
 
 /*
@@ -306,7 +320,8 @@ void uacpi_kernel_signal_event(uacpi_handle handle) {
  * Reset the event counter to 0.
  */
 void uacpi_kernel_reset_event(uacpi_handle handle) {
-    sem_reset(handle);
+    sem_t *sem = handle;
+    atomic_store(&sem->counter, 0);
 }
 
 /*
@@ -401,33 +416,12 @@ void uacpi_kernel_unlock_spinlock(uacpi_handle handle, uacpi_cpu_flags flags) {
 
 
 
-static atomic_int inflight_count;
-
-static void deferred_work_handler(int taskno, void *arg) {
-    void             **cookie  = arg;
-    uacpi_work_handler handler = cookie[0];
-    uacpi_handle       ctx     = cookie[1];
-    handler(ctx);
-    free(arg);
-    atomic_fetch_sub(&inflight_count, 1);
-}
-
 /*
  * Schedules deferred work for execution.
  * Might be invoked from an interrupt context.
  */
 uacpi_status uacpi_kernel_schedule_work(uacpi_work_type type, uacpi_work_handler handler, uacpi_handle ctx) {
-    static bool gpe_warn = 0;
-    if (type == UACPI_WORK_GPE_EXECUTION && !gpe_warn) {
-        logk(LOG_WARN, "GPE work scheduled, which should be pinned to CPU0, but core pinning is unsupported");
-        gpe_warn = 1;
-    }
-    void **cookie = malloc(2 * sizeof(void *));
-    cookie[0]     = handler;
-    cookie[1]     = ctx;
-    atomic_fetch_add(&inflight_count, 1);
-    hk_add_once(0, deferred_work_handler, cookie);
-    return UACPI_STATUS_OK;
+    return UACPI_STATUS_UNIMPLEMENTED;
 }
 
 /*
@@ -438,6 +432,5 @@ uacpi_status uacpi_kernel_schedule_work(uacpi_work_type type, uacpi_work_handler
  * Note that the waits must be done in this order specifically.
  */
 uacpi_status uacpi_kernel_wait_for_work_completion(void) {
-    while (atomic_load(&inflight_count));
     return UACPI_STATUS_OK;
 }
