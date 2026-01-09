@@ -51,7 +51,7 @@ pub unsafe fn exit_signal(regs: &mut GpRegfile, sregs: &mut SpRegfile) -> bool {
 }
 
 /// Call into userspace from this thread.
-pub fn call_usermode(entry: *const (), stack: *mut ()) {
+pub fn call_usermode(regs: &GpRegfile) {
     unsafe {
         let uctx = &mut (&mut *Thread::current()).runtime().uctx;
         debug_assert!(uctx.pc == 0, "Cannot recursively call into usermode");
@@ -60,8 +60,7 @@ pub fn call_usermode(entry: *const (), stack: *mut ()) {
         let cpulocal = &mut *CpuLocal::get();
         let runtime = (&*Thread::current()).runtime();
         enter_usermode_asm(
-            entry,
-            stack,
+            regs,
             uctx,
             &mut cpulocal.arch.irq_stack,
             &mut runtime.irq_stack,
@@ -70,41 +69,12 @@ pub fn call_usermode(entry: *const (), stack: *mut ()) {
     }
 }
 
-#[unsafe(naked)]
-unsafe extern "C" fn enter_usermode_asm(
-    entry: *const (),
-    stack: *mut (),
-    savestate: &mut ThreadUContext,
-    irq_stack: &mut *mut (),
-    irq_stack_2: &mut *mut (),
-) {
-    naked_asm!(
-        // Saving callee-saved regs to uctx.
-        "sd ra, 0*8(a2)",
-        "sd sp, 1*8(a2)",
-        "sd s0, 2*8(a2)",
-        "sd s1, 3*8(a2)",
-        "sd s2, 4*8(a2)",
-        "sd s3, 5*8(a2)",
-        "sd s4, 6*8(a2)",
-        "sd s5, 7*8(a2)",
-        "sd s6, 8*8(a2)",
-        "sd s7, 9*8(a2)",
-        "sd s8, 10*8(a2)",
-        "sd s9, 11*8(a2)",
-        "sd s10, 12*8(a2)",
-        "sd s11, 13*8(a2)",
-        // The old sp is also the new interrupt stack.
-        "sd sp, 0(a3)",
-        "sd sp, 0(a4)",
-        // Setting up for sret into U-mode.
-        "li t0, (1<<8)",
-        "csrc sstatus, t0", // -SPP
-        "li t0, (1<<5)",
-        "csrs sstatus, t0", // +SPIE
-        "csrw sepc, a0",
-        "mv sp, a1",
-        "sret"
+unsafe extern "C" {
+    fn enter_usermode_asm(
+        regs: &GpRegfile,
+        savestate: &mut ThreadUContext,
+        irq_stack: &mut *mut (),
+        irq_stack_2: &mut *mut (),
     );
 }
 

@@ -9,6 +9,7 @@ set(cpu_src
     
     ${CMAKE_CURRENT_LIST_DIR}/src/entrypoint.S
     ${CMAKE_CURRENT_LIST_DIR}/src/exception.S
+    ${CMAKE_CURRENT_LIST_DIR}/src/usermode.S
 
     ${CMAKE_CURRENT_LIST_DIR}/src/kmodule.c
     ${CMAKE_CURRENT_LIST_DIR}/src/sbi_time.c

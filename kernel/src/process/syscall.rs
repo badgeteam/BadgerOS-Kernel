@@ -51,16 +51,16 @@ pub fn dispatch(regs: &mut GpRegfile, sregs: &mut SpRegfile, args: [usize; 6], s
             SYSCALL_THREAD_SLEEP => {
                 regs.set_retval(syscall_thread_sleep(args[0] as timestamp_us_t) as usize)
             }
-            SYSCALL_THREAD_CREATE => regs.set_retval(syscall_thread_create(
-                args[0] as *mut c_void,
-                args[1] as *mut c_void,
-                args[2] as c_int,
-            ) as usize),
+            SYSCALL_THREAD_CREATE => {
+                regs.set_retval(
+                    syscall_thread_create(args[0] as _, args[1] as _, args[2] as _) as _,
+                )
+            }
             SYSCALL_THREAD_DETACH => regs.set_retval(syscall_thread_detach(args[0] as _) as _),
             SYSCALL_THREAD_JOIN => regs.set_retval(syscall_thread_join(args[0] as _) as _),
             SYSCALL_THREAD_EXIT => syscall_thread_exit(args[0] as _),
             SYSCALL_PROC_EXIT => syscall_proc_exit(args[0] as _),
-            SYSCALL_PROC_FORK => regs.set_retval(syscall_proc_fork() as _),
+            SYSCALL_PROC_FORK => regs.set_retval(syscall_proc_fork(regs) as _),
             SYSCALL_PROC_EXEC => {
                 regs.set_retval(syscall_proc_exec(args[0] as _, args[1] as _, args[2] as _) as _)
             }

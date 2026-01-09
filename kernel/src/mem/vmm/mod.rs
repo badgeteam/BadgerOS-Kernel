@@ -464,21 +464,31 @@ impl Memmap {
     pub fn page_fault(&self, vpn: VPN, access: u32, allow_sum: bool) -> bool {
         // Inhibit concurrent changes to the mappings.
         let _guard = self.vma_alloc.unintr_lock();
-
         let mapping = self.pagetable.walk(vpn);
-        if mapping.valid
-            // Correct access permissions set
-            && mapping.flags & access == access
-            // Privilege levels match.
-            && (mapping.flags & flags::U == access & flags::U
-                || access & flags::U == 0 && allow_sum)
-        {
+
+        if !mapping.valid {
+            // TODO: In the future, e.g. file mmap()s may have invalid non-null PTEs which need to be handled.
+            return false;
+        }
+
+        // Match privilege levels.
+        if mapping.flags & flags::U != 0 {
+            if access & flags::U == 0 && !allow_sum {
+                // Kernel can only read user memory if SUM is enabled.
+                return false;
+            }
+        } else if access & flags::U != 0 {
+            // User can't read kernel memory.
+            return false;
+        }
+
+        if (mapping.flags ^ access) & flags::RWX == 0 {
             // TLB was likely outdated; retry.
             cpu::mmu::vmem_fence(Some(vpn * PAGE_SIZE as usize), None);
             return true;
         }
 
-        if mapping.valid && mapping.flags & flags::COW != 0 && access == flags::W {
+        if mapping.flags & flags::MODE == flags::COW && access & flags::RWX == flags::W {
             // Write access to copy-on-write page.
             let res: EResult<()> = try {
                 let page = PhysPtr::new(0, PageUsage::UserAnon)?;

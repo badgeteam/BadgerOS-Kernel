@@ -27,7 +27,7 @@ use crate::{
         log::LogLevel,
     },
     config::{PAGE_SIZE, STACK_SIZE},
-    cpu::{self, usercopy::copy_to_user, usermode::call_usermode},
+    cpu::{self, thread::GpRegfile, usercopy::copy_to_user, usermode::call_usermode},
     filesystem::{self, File, SeekMode, mode, oflags},
     kernel::{
         sched::Thread,
@@ -259,7 +259,7 @@ impl Process {
     }
 
     /// Fork this process.
-    pub fn fork(self: &Arc<Self>) -> EResult<Arc<Process>> {
+    pub fn fork(self: &Arc<Self>, regs: &GpRegfile) -> EResult<Arc<Process>> {
         let pid = PID_COUNTER.fetch_add(1, Ordering::Relaxed);
 
         let child = Process {
@@ -281,14 +281,25 @@ impl Process {
             }),
         };
         let child = Arc::try_new(child)?;
-        self.pcr.lock()?.children.insert(pid, child.clone());
-        PROCESSES.unintr_lock().insert(pid, child.clone());
+        let mut pcr = self.pcr.unintr_lock();
+        let mut processes = PROCESSES.unintr_lock();
 
-        let thread = unsafe {
-            todo!("Fork threads");
-        };
+        let mut regs2 = regs.clone();
+        let thread = Thread::new(
+            move || {
+                // Clone the calling thread and start it.
+                regs2.set_retval(0);
+                call_usermode(&regs2);
+
+                // TODO: Clean up the stack.
+            },
+            Some(child.clone()),
+            None,
+        )?;
         child.threads.unintr_lock().threads.insert(0, thread);
 
+        pcr.children.insert(pid, child.clone());
+        processes.insert(pid, child.clone());
         logkf!(
             LogLevel::Debug,
             "Process {} forked into {}",
@@ -427,7 +438,10 @@ impl Process {
                 let (pc, sp) = setup(u_stack_top);
 
                 // Call user mode.
-                call_usermode(pc, sp);
+                let mut regs = GpRegfile::default();
+                regs.set_pc(pc as _);
+                regs.set_stack(sp as _);
+                call_usermode(&regs);
 
                 // Clean up the stack.
                 unsafe {

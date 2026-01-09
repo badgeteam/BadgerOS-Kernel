@@ -13,6 +13,7 @@ use crate::{
         thread::{GpRegfile, SpRegfile},
         usermode::enter_signal,
     },
+    kernel::sched::Thread,
     process::current,
 };
 
@@ -186,4 +187,5 @@ pub fn signal_die(signal: i32) {
     // W_SIGNALLED
     let status = (signal << 8) | 0x40;
     proc.kill(status);
+    unsafe { (&*Thread::current()).die() };
 }

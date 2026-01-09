@@ -14,6 +14,7 @@ use crate::{
         error::{EResult, Errno},
         raw::{SIGKILL, SIGSEGV, SIGSTOP, rawputc, sigaction, sigaction__bindgen_ty_1},
     },
+    cpu::thread::GpRegfile,
     kernel::sched::Thread,
     process::{signal::signal_die, usercopy},
 };
@@ -47,9 +48,9 @@ pub unsafe extern "C" fn syscall_proc_exit(code: c_int) {
 
 /// Create a copy of the running process and return its PID (to the parent) or -1 (to the child).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn syscall_proc_fork() -> i64 {
+pub unsafe extern "C" fn syscall_proc_fork(regs: &GpRegfile) -> i64 {
     let proc = current().unwrap();
-    Errno::extract_i64(try { proc.fork()?.pid })
+    Errno::extract_i64(try { proc.fork(regs)?.pid })
 }
 
 /// Execute the program at `path`, replacing the calling program's code and data in the process.

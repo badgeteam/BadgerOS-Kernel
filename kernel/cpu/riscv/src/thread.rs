@@ -126,6 +126,14 @@ impl GpRegfile {
         self.a0 = val[0];
         self.a1 = val[1];
     }
+
+    pub fn set_pc(&mut self, val: usize) {
+        self.pc = val;
+    }
+
+    pub fn set_stack(&mut self, val: usize) {
+        self.sp = val;
+    }
 }
 
 impl Display for GpRegfile {
