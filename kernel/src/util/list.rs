@@ -6,6 +6,35 @@ use core::{marker::PhantomData, ptr::null_mut};
 
 use alloc::sync::Arc;
 
+#[macro_export]
+macro_rules! impl_has_list_node {
+    ($Type: ty, $field: tt) => {
+        impl HasListNode<$Type> for $Type {
+            fn list_node(&self) -> &InvasiveListNode<$Type> {
+                &self.$field
+            }
+
+            fn list_node_mut(&mut self) -> &mut InvasiveListNode<$Type> {
+                &mut self.$field
+            }
+
+            unsafe fn from_node(node: &InvasiveListNode<$Type>) -> &$Type {
+                unsafe {
+                    &*((node as *const InvasiveListNode<$Type>).byte_sub(offset_of!($Type, node))
+                        as *const $Type)
+                }
+            }
+
+            unsafe fn from_node_mut(node: &mut InvasiveListNode<$Type>) -> &mut $Type {
+                unsafe {
+                    &mut *((node as *mut InvasiveListNode<$Type>).byte_sub(offset_of!($Type, node))
+                        as *mut $Type)
+                }
+            }
+        }
+    };
+}
+
 /// Trait for types that can be stored in an [`InvasiveList`].
 pub trait HasListNode<T: HasListNode<T>> {
     unsafe fn from_node(node: &InvasiveListNode<T>) -> &T;

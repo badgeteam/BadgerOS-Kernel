@@ -49,7 +49,15 @@ endif()
 
 config_enum(
     STACK_SIZE 16384 "Kernel stack size"
-    8192 16384 32768 65536
+    8192 16384 32768 65536 131072 262144
+)
+config_enum(
+    TICKS_PER_SEC 1000 "How many tick interrupts happen per second"
+    100 200 500 1000 2000 4000
+)
+config_enum(
+    MAX_CPUS 32 "Maximum number of usable CPUs (more will be ignored)"
+    32 64 128 256
 )
 
 if("${CONFIG_BOOT_PROTOCOL}" STREQUAL "limine" AND "${CONFIG_CPU}" STREQUAL "riscv64")

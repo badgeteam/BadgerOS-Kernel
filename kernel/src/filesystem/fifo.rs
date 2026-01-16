@@ -14,7 +14,7 @@ use crate::{
         spinlock::Spinlock,
     },
     cpu::irq,
-    kernel::waitlist::Waitlist,
+    kernel::sync::waitlist::Waitlist,
     process::usercopy::{UserSlice, UserSliceMut},
 };
 

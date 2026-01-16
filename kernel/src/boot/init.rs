@@ -10,14 +10,16 @@ use crate::{
     bindings::{
         log::{LogLevel, logk_unlocked},
         raw::{
-            bootp_early_init, bootp_full_init, bootp_postheap_init, kernel_heap_init, kmodule_t,
+            bootp_early_init, bootp_full_init, bootp_postheap_init, bootp_reclaim_mem,
+            kernel_heap_init, kmodule_t,
         },
     },
-    cpu::spinup::arch_cpu_spinup,
+    cpu::{self, spinup::arch_cpu_spinup},
     filesystem::mount_root::mount_root_fs,
     kernel::{
         cpulocal::CpuLocal,
         sched::{Scheduler, Thread},
+        smp,
         sync::mutex::Mutex,
     },
     ktest::{KTestWhen, ktests_runlevel},
@@ -96,9 +98,20 @@ unsafe fn general_init() {
 
         // Finish bootloader hand-over.
         bootp_full_init();
+        // Scheduler is already running on BSP so we start the tick timer retroactively for it.
+        cpu::timer::start_tick_timer();
 
-        // TODO: Bring up APs.
-        // bootp_reclaim_mem();
+        // Bring up APs.
+        match smp::poweron_all_aps() {
+            Ok(_) => {
+                // We have now definitely stopped using all memory in bootloader reclaimable regions.
+                // Exit the bootloader's services and reclaim all reclaimable memory.
+                bootp_reclaim_mem()
+            }
+            Err(x) => {
+                logkf!(LogLevel::Error, "Failed to power on APs: {}", x)
+            }
+        }
     }
 
     let init_block_threads = &mut *INIT_BLOCK_THREADS.unintr_lock();

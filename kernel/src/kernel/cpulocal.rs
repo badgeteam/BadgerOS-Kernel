@@ -11,7 +11,7 @@ use crate::{
         device::{BaseDevice, DeviceFromRaw},
         raw::device_t,
     },
-    cpu::{CpuFeatures, cpulocal::ArchCpuLocal},
+    cpu::{CpuFeatures, CpuID, cpulocal::ArchCpuLocal},
     kernel::sched::{Scheduler, Thread},
 };
 
@@ -22,6 +22,8 @@ pub struct CpuLocal {
     /// Architecture-specific CPU-local data.
     /// Must be the first member of this struct.
     pub arch: ArchCpuLocal,
+    /// What CPU ID this processor is.
+    pub cpuid: CpuID,
     /// What SMP index this CPU is.
     pub smp_index: u32,
     /// What features this CPU has.

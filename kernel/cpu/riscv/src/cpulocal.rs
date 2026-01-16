@@ -4,7 +4,7 @@
 
 use core::arch::asm;
 
-use crate::{cpu::CpuID, kernel::cpulocal::CpuLocal};
+use crate::kernel::cpulocal::CpuLocal;
 
 /// Architecture-specific CPU-local data.
 #[repr(C)]
@@ -14,8 +14,6 @@ pub struct ArchCpuLocal {
     pub irq_stack: *mut (),
     /// Scratch space used by the trap and interrupt handlers.
     pub scratch: [usize; 3],
-    /// What CPU ID this processor is.
-    pub hartid: CpuID,
 }
 
 impl CpuLocal {

@@ -291,7 +291,7 @@ void dtparse(void *dtb_ptr) {
     uint32_t    soc_slen = dtb_read_uint(handle, soc, "#size-cells");
 
     // Initialise timers.
-    time_init_dtb(handle);
+    time_init_dtb(cpus);
     // Initialise SMP.
     smp_init_dtb(cpus);
 

@@ -10,8 +10,10 @@ pub mod exception;
 pub mod irq;
 pub mod mmu;
 pub mod panic;
+mod sbi;
 pub mod spinup;
 pub mod thread;
+pub mod timer;
 pub mod usercopy;
 pub mod usermode;
 

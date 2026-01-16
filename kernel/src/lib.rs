@@ -27,6 +27,8 @@
 #![feature(generic_atomic)]
 #![feature(btree_cursors)]
 #![feature(linked_list_cursors)]
+#![feature(bigint_helper_methods)]
+#![feature(int_roundings)]
 
 #[macro_use]
 extern crate alloc;
@@ -56,7 +58,7 @@ pub mod cpu;
 pub mod cpu;
 
 use bindings::log::*;
-use core::{alloc::GlobalAlloc, ffi::c_void, panic::PanicInfo};
+use core::{alloc::GlobalAlloc, ffi::c_void};
 
 #[global_allocator]
 pub static BADGEROS_RUST_MALLOC: BadgerOSMalloc = BadgerOSMalloc {};
@@ -78,28 +80,5 @@ unsafe impl GlobalAlloc for BadgerOSMalloc {
 
     unsafe fn realloc(&self, ptr: *mut u8, _: core::alloc::Layout, new_size: usize) -> *mut u8 {
         unsafe { bindings::raw::realloc(ptr as *mut c_void, new_size) as *mut u8 }
-    }
-}
-
-#[panic_handler]
-#[inline(never)]
-pub fn panic_impl(info: &PanicInfo) -> ! {
-    unsafe {
-        bindings::raw::claim_panic();
-
-        if let Some(loc) = info.location() {
-            logkf_unlocked!(
-                LogLevel::Fatal,
-                "{}:{}:{}: {}",
-                loc.file(),
-                loc.line(),
-                loc.column(),
-                info.message()
-            );
-        } else {
-            logkf_unlocked(LogLevel::Fatal, &info.message());
-        }
-
-        bindings::raw::panic_abort_unchecked()
     }
 }

@@ -282,12 +282,12 @@ unsafe extern "C" fn thread_trampoline_1() {
     naked_asm!(
         "ld   a0, 0(sp)",
         "ld   a1, 8(sp)",
-        "j    thread_trampoline_2"
+        "j    {}",
+        sym thread_trampoline_2
     );
 }
 
 /// Part 2: Reconstruct and call the `Box<dyn FnOnce()>`.
-#[unsafe(no_mangle)]
 unsafe extern "C" fn thread_trampoline_2(ptr: *mut (), meta: *mut ()) {
     unsafe {
         let code: *mut dyn FnOnce() = ptr::from_raw_parts_mut(ptr, core::mem::transmute(meta));

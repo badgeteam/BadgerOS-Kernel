@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 Julian Scheffers <julian@scheffers.net>
+// SPDX-FileCopyrightText: 2025-2026 Julian Scheffers <julian@scheffers.net>
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
@@ -6,17 +6,22 @@ use core::{
     cell::UnsafeCell,
     mem::offset_of,
     ptr::{null_mut, slice_from_raw_parts_mut},
-    sync::atomic::{AtomicU32, Ordering, fence},
+    sync::atomic::{AtomicI64, AtomicU32, Ordering, fence},
 };
 
 use alloc::{boxed::Box, string::String, sync::Arc};
 
 use crate::{
     badgelib::irq::IrqGuard,
-    bindings::{error::EResult, raw::timestamp_us_t, time_us},
-    config::{PAGE_SIZE, STACK_SIZE},
+    bindings::{error::EResult, log::LogLevel, raw::timestamp_us_t, time_us},
+    config::{self, PAGE_SIZE, STACK_SIZE},
     cpu::{self, thread::context_switch, usermode::ThreadUContext},
-    kernel::{cpulocal::CpuLocal, smp, sync::rcu::RcuCtx, waitlist::Waitlist},
+    impl_has_list_node,
+    kernel::{
+        cpulocal::CpuLocal,
+        smp,
+        sync::{rcu::RcuCtx, waitlist::Waitlist},
+    },
     mem::vmm::{self, Memmap, kernel_mm},
     process::Process,
     util::list::{ArcList, HasListNode, InvasiveListNode},
@@ -32,6 +37,8 @@ pub struct ThreadRuntime {
     pub irq_stack: *mut (),
     /// Context for running in userspace.
     pub uctx: ThreadUContext,
+    /// Timestamp until which to keep the thread blocked.
+    pub timeout: timestamp_us_t,
 }
 
 impl ThreadRuntime {
@@ -59,6 +66,7 @@ impl ThreadRuntime {
                 stack_bottom,
                 stack_ptr,
                 uctx: ThreadUContext::default(),
+                timeout: 0,
             })
         }
     }
@@ -74,43 +82,35 @@ impl Drop for ThreadRuntime {
 }
 
 pub mod tflags {
-    pub const STOPPED: u32 = 1;
-    pub const BLOCKED: u32 = 2;
-    pub const STOPPING: u32 = 4;
+    /// Thread is no longer running.
+    pub const STOPPED: u32 = 1 << 0;
+    /// Request for thread to stop running (causes termination of user-mode code).
+    pub const STOPPING: u32 = 1 << 1;
+    /// Thread is blocked on a synchronization object.
+    pub const BLOCKED: u32 = 1 << 2;
+    /// Thread blocking is interruptible by signals.
+    pub const SIGNALABLE: u32 = 1 << 3;
 }
 
 /// Thread control block.
 pub struct Thread {
     node: InvasiveListNode<Thread>,
+    /// Flags about the blocking status, lifetime, etc.
     flags: AtomicU32,
+    /// Dynamic state only alive while the thread is runnable.
     runtime: UnsafeCell<Option<ThreadRuntime>>,
+    /// How many microseconds of CPU time this thread has spent in kernel mode.
+    ktime: AtomicI64,
+    /// How many microseconds of CPU time this thread has spent in user mode.
+    utime: AtomicI64,
+    /// Waitlist for objects blocking on a state update of this thread.
     pub waitlist: Waitlist,
+    /// Process with which this thread is associated.
     pub process: Option<Arc<Process>>,
+    /// Thread name for debugging purposes.
     pub name: Option<String>,
 }
-impl HasListNode<Thread> for Thread {
-    fn list_node(&self) -> &InvasiveListNode<Thread> {
-        &self.node
-    }
-
-    fn list_node_mut(&mut self) -> &mut InvasiveListNode<Thread> {
-        &mut self.node
-    }
-
-    unsafe fn from_node(node: &InvasiveListNode<Thread>) -> &Thread {
-        unsafe {
-            &*((node as *const InvasiveListNode<Thread>).byte_sub(offset_of!(Thread, node))
-                as *const Thread)
-        }
-    }
-
-    unsafe fn from_node_mut(node: &mut InvasiveListNode<Thread>) -> &mut Thread {
-        unsafe {
-            &mut *((node as *mut InvasiveListNode<Thread>).byte_sub(offset_of!(Thread, node))
-                as *mut Thread)
-        }
-    }
-}
+impl_has_list_node!(Thread, node);
 
 impl Thread {
     /// Prepare thread control block but do not add it to a scheduler.
@@ -123,6 +123,8 @@ impl Thread {
             flags: AtomicU32::new(0),
             node: InvasiveListNode::new(),
             runtime: UnsafeCell::new(Some(ThreadRuntime::new(code)?)),
+            ktime: AtomicI64::new(0),
+            utime: AtomicI64::new(0),
             waitlist: Waitlist::new(),
             process,
             name,
@@ -223,6 +225,9 @@ pub struct Scheduler {
     zombies: ArcList<Thread>,
     /// Implements RCU semantics.
     rcu: RcuCtx,
+    /// How many ticks until the current thread is preempted.
+    /// If set to 0, the thread will not be preempted.
+    preempt_ticks: u32,
 }
 
 impl Scheduler {
@@ -233,11 +238,21 @@ impl Scheduler {
             Some(format!("Idle for CPU{}", smp::cur_cpu())),
         )?;
 
+        let up_reporter = Thread::new_tcb_only(
+            Box::try_new(|| smp::report_online())?,
+            None,
+            Some(format!("Up-reporter for CPU{}", smp::cur_cpu())),
+        )?;
+
+        let mut queue = ArcList::new();
+        let _ = queue.push_front(up_reporter);
+
         Ok(Self {
             idle: Some(idle),
-            queue: ArcList::new(),
+            queue,
             zombies: ArcList::new(),
             rcu: RcuCtx::new(),
+            preempt_ticks: 0,
         })
     }
 
@@ -252,6 +267,7 @@ impl Scheduler {
     pub unsafe fn exec(&mut self) -> ! {
         RUNNING_SCHED_COUNT.fetch_add(1, Ordering::Relaxed);
         self.rcu.post_start_callback();
+        cpu::timer::start_tick_timer();
         self.reschedule();
         unreachable!();
     }
@@ -276,7 +292,7 @@ impl Scheduler {
 
     /// Yield the current thread's execution.
     fn reschedule(&mut self) {
-        // TODO: Time accounting.
+        debug_assert!(!cpu::irq::is_enabled());
         self.rcu.sched_callback();
         unsafe {
             let cpulocal = &mut *CpuLocal::get();
@@ -302,6 +318,8 @@ impl Scheduler {
                 next.unwrap()
             });
 
+            self.preempt_ticks = (config::TICKS_PER_SEC as u32).div_ceil(100);
+
             // Switch to next page table.
             let new_mm: &Memmap;
             if let Some(process) = next.process.as_ref() {
@@ -310,12 +328,38 @@ impl Scheduler {
                 new_mm = kernel_mm();
             }
             cpu::mmu::set_page_table(new_mm.root_ppn(), 0);
+            cpu::mmu::vmem_fence(None, None);
 
             cpulocal.arch.set_irq_stack(next.runtime().irq_stack);
             let new_stack = &raw const next.runtime().stack_ptr;
             cpulocal.thread = Some(next);
             context_switch(new_stack, old_stack_out);
         }
+    }
+
+    /// Account current thread's time usage since it was last accounted.
+    /// If `as_user_time` is true, it is counted as userspace time.
+    /// Otherwise, it is counted as kernel time.
+    pub fn account_time(&mut self, as_user_time: bool) {}
+
+    /// Called every time a timer tick interrupt happens.
+    /// Accounts thread time usage and manages preemption.
+    /// If `as_user_time` is true, it is counted as userspace time.
+    /// Otherwise, it is counted as kernel time.
+    pub fn tick_interrupt(&mut self, is_user_time: bool) {
+        self.account_time(is_user_time);
+        cpu::timer::start_tick_timer();
+
+        if self.preempt_ticks > 0 {
+            self.preempt_ticks -= 1;
+            if self.preempt_ticks == 0 {
+                self.reschedule();
+            }
+        }
+    }
+
+    pub fn get() -> *mut Self {
+        unsafe { &mut *CpuLocal::get() }.sched.as_mut().unwrap()
     }
 }
 

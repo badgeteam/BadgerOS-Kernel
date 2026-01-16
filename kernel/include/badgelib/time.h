@@ -52,7 +52,7 @@ timestamp_us_t time_us();
 
 #if CONFIG_ENABLE_DTB
 // Initialise timer using the DTB.
-void time_init_dtb(dtb_handle_t *dtb);
+void time_init_dtb(dtb_node_t *cpus_node);
 #endif
 #if CONFIG_ENABLE_ACPI
 // Early timer init before ACPI (but not DTB).

@@ -14,7 +14,7 @@ use crate::{
         error::{EResult, Errno},
         raw::{errno_t, timestamp_us_t},
     },
-    kernel::waitlist::Waitlist,
+    kernel::sync::waitlist::Waitlist,
 };
 
 /// Raw mutually-exclusive resource access guard.
@@ -66,6 +66,7 @@ impl RawMutex {
 }
 
 /// Exclusive access held to a [`RawMutex`].
+#[repr(transparent)]
 pub struct RawMutexGuard<'a> {
     mutex: &'a RawMutex,
 }
@@ -95,6 +96,13 @@ impl<'a> RawMutexGuard<'a> {
         }
 
         Ok(Self { mutex })
+    }
+
+    pub fn demote(self) -> SharedRawMutexGuard<'a> {
+        let mutex: &'a RawMutex = unsafe { core::mem::transmute(self) };
+        mutex.shares.store(1, Ordering::Release);
+        mutex.waitlist.notify_all();
+        SharedRawMutexGuard { mutex }
     }
 }
 
@@ -162,8 +170,9 @@ impl<'a> SharedRawMutexGuard<'a> {
 
 impl<'a> Drop for SharedRawMutexGuard<'a> {
     fn drop(&mut self) {
-        self.mutex.shares.store(0, Ordering::Release);
-        self.mutex.waitlist.notify();
+        if self.mutex.shares.fetch_sub(1, Ordering::Release) == 1 {
+            self.mutex.waitlist.notify();
+        }
     }
 }
 
@@ -266,6 +275,13 @@ impl<'a, T> MutexGuard<'a, T> {
         MutexGuard {
             inner: self.inner,
             data: f(self.data),
+        }
+    }
+
+    pub fn demote(self) -> SharedMutexGuard<'a, T> {
+        SharedMutexGuard {
+            inner: self.inner.demote(),
+            data: self.data,
         }
     }
 }

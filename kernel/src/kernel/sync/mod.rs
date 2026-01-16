@@ -5,3 +5,4 @@
 pub mod mutex;
 pub mod rcu;
 pub mod semaphore;
+pub mod waitlist;

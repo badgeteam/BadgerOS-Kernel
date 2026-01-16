@@ -2,10 +2,13 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::{
+    panic::PanicInfo,
+    sync::atomic::{AtomicU32, Ordering},
+};
 
 use crate::{
-    bindings::log::write_unlocked,
+    bindings::log::{LogLevel, logkf_unlocked, write_unlocked},
     cpu::{
         backtrace::{backtrace, get_frame_ptr},
         panic::panic_cpu_shutdown,
@@ -14,6 +17,27 @@ use crate::{
 };
 
 static IS_PANICKING: AtomicU32 = AtomicU32::new(0);
+
+#[panic_handler]
+#[inline(never)]
+pub fn rust_panic(info: &PanicInfo) -> ! {
+    claim_panic();
+
+    if let Some(loc) = info.location() {
+        logkf_unlocked!(
+            LogLevel::Fatal,
+            "{}:{}:{}: {}",
+            loc.file(),
+            loc.line(),
+            loc.column(),
+            info.message()
+        );
+    } else {
+        logkf_unlocked(LogLevel::Fatal, &info.message());
+    }
+
+    kernel_panic_unchecked();
+}
 
 /// Panic due to an unhandled exception.
 pub fn unhandled_trap(regs: &GpRegfile, sregs: &SpRegfile) -> ! {
@@ -70,12 +94,14 @@ pub fn kernel_panic_unchecked() -> ! {
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn panic_abort() -> ! {
-    kernel_panic();
+    claim_panic();
+    kernel_panic_unchecked();
 }
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn abort() -> ! {
-    kernel_panic();
+    claim_panic();
+    kernel_panic_unchecked();
 }
 
 #[unsafe(no_mangle)]

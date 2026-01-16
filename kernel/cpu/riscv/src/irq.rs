@@ -3,7 +3,7 @@ use core::arch::asm;
 use crate::bindings::raw::CSR_STATUS_IE_BIT;
 
 /// Check whether interrupts are enabled.
-pub unsafe fn is_enabled() -> bool {
+pub fn is_enabled() -> bool {
     let mut mask: usize;
     unsafe {
         asm!("csrr {tmp}, sstatus", tmp = out(reg) mask);

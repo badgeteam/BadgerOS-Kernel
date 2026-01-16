@@ -2,8 +2,6 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::ffi::{c_int, c_void};
-
 use crate::{
     bindings::{error::Errno, log::LogLevel, raw::timestamp_us_t},
     cpu::thread::{GpRegfile, SpRegfile},
@@ -44,7 +42,7 @@ pub const SYSCALL_MEM_UNMAP: usize = 25;
 pub const SYSCALL_SYS_SHUTDOWN: usize = 45;
 pub const SYSCALL_TEMP_WRITE: usize = 46;
 
-pub fn dispatch(regs: &mut GpRegfile, sregs: &mut SpRegfile, args: [usize; 6], sysno: usize) {
+pub fn dispatch(regs: &mut GpRegfile, _sregs: &mut SpRegfile, args: [usize; 6], sysno: usize) {
     unsafe {
         match sysno {
             SYSCALL_THREAD_YIELD => syscall_thread_yield(),

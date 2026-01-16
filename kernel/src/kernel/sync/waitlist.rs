@@ -10,11 +10,22 @@ use crate::{
 /// Helper struct used to construct types that block threads.
 #[repr(C)]
 #[derive(Debug)]
-pub struct Waitlist {}
+pub struct Waitlist {
+    marker: (),
+}
 
 impl Waitlist {
     pub const fn new() -> Self {
-        Waitlist {}
+        Waitlist { marker: () }
+    }
+
+    /// Block on this list if a condition is met.
+    /// May spuriously return early.
+    pub fn unintr_block(&self, timeout: timestamp_us_t, condition: impl FnOnce() -> bool) {
+        // TODO: Currently a no-op.
+        let _ = condition();
+        let _ = timeout;
+        thread_yield();
     }
 
     /// Block on this list if a condition is met.

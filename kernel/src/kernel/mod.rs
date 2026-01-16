@@ -7,4 +7,3 @@ pub mod sched;
 pub mod smp;
 pub mod sync;
 pub mod sysimpl;
-pub mod waitlist;

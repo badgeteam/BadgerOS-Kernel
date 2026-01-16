@@ -8,11 +8,14 @@ use crate::{
     bindings::{device::HasBaseDevice, raw::irqno_t},
     config,
     cpu::{
-        self,
+        self, irq,
         thread::{GpRegfile, SpRegfile},
         usermode::exit_usermode,
     },
-    kernel::{cpulocal::CpuLocal, sched::Thread},
+    kernel::{
+        cpulocal::CpuLocal,
+        sched::{Scheduler, Thread},
+    },
     mem::vmm::{self},
     misc::panic::unhandled_trap,
     process::{self, syscall},
@@ -70,20 +73,36 @@ pub unsafe extern "C" fn riscv_exception_handler(regs: &mut GpRegfile, sregs: &m
         let cpulocal = CpuLocal::get();
         let old_irq_stack = (*cpulocal).arch.irq_stack;
         (*cpulocal).arch.irq_stack = null_mut();
+        if let Some(thread) = (*cpulocal).thread.as_deref() {
+            thread.runtime().irq_stack = null_mut();
+        }
         riscv_exception_handler_impl(regs, sregs);
+        if let Some(thread) = (*cpulocal).thread.as_deref() {
+            thread.runtime().irq_stack = old_irq_stack;
+        }
         (*cpulocal).arch.irq_stack = old_irq_stack;
     }
 }
 
 unsafe fn riscv_exception_handler_impl(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
-    if sregs.scause < 0 {
+    if sregs.scause < 0 && sregs.scause & 0xff == 5 {
+        // Timer interrupt.
         unsafe {
-            let cpulocal = &*CpuLocal::get();
-            cpulocal
+            (*Scheduler::get()).tick_interrupt(!sregs.is_kernel_mode());
+        }
+        return;
+    } else if sregs.scause < 0 {
+        // Other interrups.
+        unsafe {
+            let cpulocal = &mut *CpuLocal::get();
+            let handled = cpulocal
                 .irqctl
                 .as_ref()
                 .expect("Missing interrupt controller")
                 .interrupt(sregs.scause as irqno_t);
+            if !handled {
+                unhandled_trap(regs, sregs);
+            }
         }
         return;
     }
@@ -97,13 +116,20 @@ unsafe fn riscv_exception_handler_impl(regs: &mut GpRegfile, sregs: &mut SpRegfi
 
     if sregs.scause == 8 {
         // ECALL from U-mode.
+        let sched = unsafe { &mut *Scheduler::get() };
+        sched.account_time(true);
         regs.pc += 4;
+
+        unsafe { irq::enable() };
         syscall::dispatch(
             regs,
             sregs,
             [regs.a0, regs.a1, regs.a2, regs.a3, regs.a4, regs.a5],
             regs.a7,
         );
+        unsafe { irq::disable() };
+
+        sched.account_time(false);
         return;
     }
 

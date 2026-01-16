@@ -28,7 +28,7 @@ use crate::{
     },
     mem::{
         pmm::{self, PPN, PageUsage},
-        vmm::{flags::A, pagetable::PageTable, vma_alloc::VmaAlloc},
+        vmm::{pagetable::PageTable, vma_alloc::VmaAlloc},
     },
 };
 

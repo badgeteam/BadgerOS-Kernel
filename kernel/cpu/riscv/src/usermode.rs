@@ -2,7 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::arch::{asm, naked_asm};
+use core::arch::asm;
 
 use crate::{
     bindings::raw::siginfo_t,

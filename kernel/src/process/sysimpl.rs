@@ -66,28 +66,37 @@ pub unsafe extern "C" fn syscall_proc_exec(
 
             let path = usercopy::copy_user_cstr(path)?;
 
-            let mut argv = UserPtr::new(argv)?;
             let mut argbuf = Vec::<CString>::new();
-            loop {
-                let ptr = argv.read()?;
-                if ptr.is_null() {
-                    break;
-                }
+            if argv.is_null() {
                 argbuf.try_reserve(1).map_err(Into::into)?;
-                argbuf.push(usercopy::copy_user_cstr(ptr)?);
-                argv = UserPtr::new(argv.as_ptr().wrapping_add(1))?;
+                argbuf.push(path.clone());
+            } else {
+                let mut argv = UserPtr::new(argv)?;
+                loop {
+                    let ptr = argv.read()?;
+                    if ptr.is_null() {
+                        break;
+                    }
+                    argbuf.try_reserve(1).map_err(Into::into)?;
+                    argbuf.push(usercopy::copy_user_cstr(ptr)?);
+                    argv = UserPtr::new(argv.as_ptr().wrapping_add(1))?;
+                }
             }
 
-            let mut envp = UserPtr::new(envp)?;
             let mut envbuf = Vec::<CString>::new();
-            loop {
-                let ptr = envp.read()?;
-                if ptr.is_null() {
-                    break;
+            if envp.is_null() {
+                envbuf = proc.cmdline().envp.clone();
+            } else {
+                let mut envp = UserPtr::new(envp)?;
+                loop {
+                    let ptr = envp.read()?;
+                    if ptr.is_null() {
+                        break;
+                    }
+                    envbuf.try_reserve(1).map_err(Into::into)?;
+                    envbuf.push(usercopy::copy_user_cstr(ptr)?);
+                    envp = UserPtr::new(envp.as_ptr().wrapping_add(1))?;
                 }
-                envbuf.try_reserve(1).map_err(Into::into)?;
-                envbuf.push(usercopy::copy_user_cstr(ptr)?);
-                envp = UserPtr::new(envp.as_ptr().wrapping_add(1))?;
             }
 
             proc.exec(Cmdline {

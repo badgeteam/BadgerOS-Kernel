@@ -4,7 +4,10 @@
 
 use core::arch::{asm, naked_asm};
 
-use crate::{bindings::raw::limine_smp_info, boot::spinup::common_cpu_spinup};
+use crate::{
+    bindings::raw::limine_smp_info, boot::spinup::common_cpu_spinup,
+    kernel::smp::limine_trampoline_2,
+};
 
 unsafe extern "C" {
     /// RISC-V interrupt vector table.
@@ -23,12 +26,13 @@ pub unsafe extern "C" fn arch_cpu_spinup() {
 
 /// First stage trampoline for transferring control from Limine to BadgerOS.
 #[unsafe(naked)]
-unsafe extern "C" fn limine_trampoline_1(info: *mut limine_smp_info) {
+pub unsafe extern "C" fn limine_trampoline_1(info: *mut limine_smp_info) {
     naked_asm!(
         ".option push",
         ".option norelax",
         "la gp, __global_pointer$",
         ".option pop",
-        "j limine_trampoline_2",
+        "j {}",
+        sym limine_trampoline_2
     );
 }
