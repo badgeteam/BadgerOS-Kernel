@@ -4,7 +4,7 @@
 
 use core::{
     cell::UnsafeCell,
-    ops::{Deref, DerefMut},
+    ops::{Deref, DerefMut, FromResidual, Try},
     sync::atomic::{AtomicU32, Ordering},
 };
 
@@ -97,7 +97,7 @@ impl<'a> SharedRawSpinlockGuard<'a> {
 
 impl<'a> Drop for SharedRawSpinlockGuard<'a> {
     fn drop(&mut self) {
-        self.lock.shares.fetch_sub(1, Ordering::Release);
+        self.lock.shares.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -169,6 +169,23 @@ impl<'a, T> SpinlockGuard<'a, T> {
             data: f(self.data),
         }
     }
+
+    /// Like [`Self::convert`], but for [`Try`] types.
+    /// For example, creating [`Option<SpinlockGuard<U>>`] from [`SpinlockGuard<Option<U>>`].
+    pub fn try_convert<
+        U: 'a,
+        V: Try<Output = &'a mut U>,
+        W: Try<Output = SpinlockGuard<'a, U>> + FromResidual<V::Residual>,
+        F: FnOnce(&'a mut T) -> V,
+    >(
+        self,
+        f: F,
+    ) -> W {
+        W::from_output(SpinlockGuard {
+            inner: self.inner,
+            data: f(self.data)?,
+        })
+    }
 }
 
 impl<'a, T> Deref for SpinlockGuard<'a, T> {
@@ -211,6 +228,23 @@ impl<'a, T> SharedSpinlockGuard<'a, T> {
             inner: self.inner,
             data: f(self.data),
         }
+    }
+
+    /// Like [`Self::convert`], but for [`Try`] types.
+    /// For example, creating [`Option<SharedSpinlockGuard<U>>`] from [`SharedSpinlockGuard<Option<U>>`].
+    pub fn try_convert<
+        U: 'a,
+        V: Try<Output = &'a U>,
+        W: Try<Output = SharedSpinlockGuard<'a, U>> + FromResidual<V::Residual>,
+        F: FnOnce(&'a T) -> V,
+    >(
+        self,
+        f: F,
+    ) -> W {
+        W::from_output(SharedSpinlockGuard {
+            inner: self.inner,
+            data: f(self.data)?,
+        })
     }
 }
 

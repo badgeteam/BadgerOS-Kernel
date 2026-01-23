@@ -4,7 +4,7 @@
 
 use core::{
     cell::UnsafeCell,
-    ops::{Deref, DerefMut},
+    ops::{Deref, DerefMut, FromResidual, Try},
     sync::atomic::{AtomicU32, Ordering},
     u32,
 };
@@ -142,6 +142,9 @@ impl<'a> SharedRawMutexGuard<'a> {
         loop {
             if old == u32::MAX {
                 old = mutex.shares.load(Ordering::Relaxed);
+                mutex
+                    .waitlist
+                    .block(timeout, || mutex.shares.load(Ordering::Relaxed) == u32::MAX)?;
                 continue;
             }
             match mutex.shares.compare_exchange_weak(
@@ -153,9 +156,6 @@ impl<'a> SharedRawMutexGuard<'a> {
                 Ok(_) => return Ok(Self { mutex }),
                 Err(x) => {
                     old = x;
-                    mutex
-                        .waitlist
-                        .block(timeout, || mutex.shares.load(Ordering::Relaxed) != 0)?;
                 }
             }
         }
@@ -271,6 +271,23 @@ impl<'a, T> MutexGuard<'a, T> {
         }
     }
 
+    /// Like [`Self::convert`], but for [`Try`] types.
+    /// For example, creating [`Option<MutexGuard<U>>`] from [`MutexGuard<Option<U>>`].
+    pub fn try_convert<
+        U: 'a,
+        V: Try<Output = &'a mut U>,
+        W: Try<Output = MutexGuard<'a, U>> + FromResidual<V::Residual>,
+        F: FnOnce(&'a mut T) -> V,
+    >(
+        self,
+        f: F,
+    ) -> W {
+        W::from_output(MutexGuard {
+            inner: self.inner,
+            data: f(self.data)?,
+        })
+    }
+
     pub fn demote(self) -> SharedMutexGuard<'a, T> {
         SharedMutexGuard {
             inner: self.inner.demote(),
@@ -335,6 +352,23 @@ impl<'a, T> SharedMutexGuard<'a, T> {
             inner: self.inner,
             data: f(self.data),
         }
+    }
+
+    /// Like [`Self::convert`], but for [`Try`] types.
+    /// For example, creating [`Option<SharedMutexGuard<U>>`] from [`SharedMutexGuard<Option<U>>`].
+    pub fn try_convert<
+        U: 'a,
+        V: Try<Output = &'a U>,
+        W: Try<Output = SharedMutexGuard<'a, U>> + FromResidual<V::Residual>,
+        F: FnOnce(&'a T) -> V,
+    >(
+        self,
+        f: F,
+    ) -> W {
+        W::from_output(SharedMutexGuard {
+            inner: self.inner,
+            data: f(self.data)?,
+        })
     }
 }
 

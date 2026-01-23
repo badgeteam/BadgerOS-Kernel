@@ -25,7 +25,7 @@ use crate::{
     kernel::{
         cpulocal::CpuLocal,
         sched::{Scheduler, thread_yield},
-        sync::mutex::Mutex,
+        sync::mutex::{Mutex, SharedMutexGuard},
     },
     util::bitset::BitSet,
 };
@@ -275,6 +275,20 @@ pub unsafe extern "C" fn limine_trampoline_2(info: *mut limine_smp_info) -> ! {
         arch_cpu_spinup();
         (*cpulocal).sched.as_mut().unwrap().exec();
     }
+}
+
+/// One more than the maximum allocated SMP index.
+pub fn cpu_index_end() -> u32 {
+    SMP_MAPS.unintr_lock_shared().cpu_index_end
+}
+
+/// Get scheduler for some CPU.
+pub fn get_sched_for(cpu: u32) -> Option<SharedMutexGuard<'static, Scheduler>> {
+    let maps = SMP_MAPS.unintr_lock_shared();
+    if !maps.by_index.contains_key(&cpu) {
+        return None;
+    }
+    maps.try_convert(|x| try { x.by_index.get(&cpu)?.cpulocal.sched.as_ref()? })
 }
 
 pub fn cur_cpu() -> u32 {

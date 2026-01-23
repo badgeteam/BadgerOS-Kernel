@@ -15,7 +15,11 @@ use crate::{
     badgelib::irq::IrqGuard,
     bindings::{error::EResult, log::LogLevel, raw::timestamp_us_t, time_us},
     config::{self, PAGE_SIZE, STACK_SIZE},
-    cpu::{self, thread::context_switch, usermode::ThreadUContext},
+    cpu::{
+        self, irq,
+        thread::{context_switch, pause_hint},
+        usermode::ThreadUContext,
+    },
     impl_has_list_node,
     kernel::{
         cpulocal::CpuLocal,
@@ -30,6 +34,27 @@ use crate::{
         list::{ArcList, HasListNode, InvasiveListNode},
     },
 };
+
+mod rr;
+
+/// Thread queue(s) and scheduling algorithm.
+trait SchedAlgorithm {
+    /// Notify the algorithm that a thread has yielded and may be chosen again.
+    fn return_thread(&mut self, thread: Arc<Thread>);
+    /// Remove a thread from the queue.
+    fn remove_thread(&mut self, thread: Arc<Thread>);
+    /// Add a thread to the queue.
+    fn add_thread(&mut self, thread: Arc<Thread>);
+    /// Add a thread to the front of the queue.
+    fn add_thread_front(&mut self, thread: Arc<Thread>);
+    /// Choose the next thread that should run.
+    /// The same thread may not be chosen again until it is returned via [`SchedAlgorithm::return_thread`].
+    fn choose_thread(&mut self) -> Option<Arc<Thread>>;
+    /// How many threads are in the queue.
+    fn len(&self) -> usize;
+}
+
+type ActiveSchedAlgorithm = rr::RoundRobinAlgorithm;
 
 /// Dynamic thread runtime state.
 pub struct ThreadRuntime {
@@ -154,8 +179,7 @@ impl Thread {
                 .unwrap()
                 .queue
                 .lock()
-                .push_back(tcb.clone())
-                .unwrap();
+                .add_thread(tcb.clone());
         }
 
         Ok(tcb)
@@ -229,7 +253,7 @@ pub struct Scheduler {
     /// Idle thread for this scheduler.
     idle: Option<Arc<Thread>>,
     /// Runnable thread queue.
-    queue: Spinlock<ArcList<Thread>>,
+    queue: Spinlock<ActiveSchedAlgorithm>,
     /// Implements RCU semantics.
     rcu: RcuCtx,
     /// How many ticks until the current thread is preempted.
@@ -247,7 +271,7 @@ pub struct Scheduler {
 
 impl Scheduler {
     pub fn new() -> EResult<Self> {
-        let mut queue = ArcList::new();
+        let mut queue = ActiveSchedAlgorithm::new();
 
         // Idle power management and work stealing.
         let idle = Thread::new_tcb_only(
@@ -262,7 +286,7 @@ impl Scheduler {
             None,
             Some(format!("Up-reporter for CPU{}", smp::cur_cpu())),
         )?;
-        let _ = queue.push_front(up_reporter);
+        let _ = queue.add_thread_front(up_reporter);
 
         {
             let _noirq = IrqGuard::new();
@@ -275,7 +299,7 @@ impl Scheduler {
                     Some("Threads reaper".into()),
                 )?;
                 *reaper = Some(tcb.clone());
-                let _ = queue.push_back(tcb);
+                let _ = queue.add_thread(tcb);
             }
         }
 
@@ -322,8 +346,43 @@ impl Scheduler {
 
     /// Scheduler idle function.
     fn idle_func() -> ! {
+        unsafe { irq::disable() };
+        let cur_cpu = smp::cur_cpu();
+        let cur_sched = unsafe { &mut *Scheduler::get() };
         loop {
+            /*
+            let mut highest_load = 0;
+            let mut busiest_cpu = None;
+
+            for cpu in 0..smp::cpu_index_end() {
+                let sched = if cpu != cur_cpu
+                    && let Some(sched) = smp::get_sched_for(cpu)
+                {
+                    sched
+                } else {
+                    continue;
+                };
+
+                let load = sched.load_average.load(Ordering::Relaxed);
+                if busiest_cpu.is_some() && highest_load >= load {
+                    continue;
+                }
+
+                busiest_cpu = Some(cpu);
+                highest_load = load;
+            }
+
+            let _ = try {
+                let sched = smp::get_sched_for(busiest_cpu?)?;
+                let mut queue = sched.queue.lock();
+                let thread = queue.choose_thread()?;
+                // queue.remove_thread(thread);
+                cur_sched.queue.lock().add_thread(thread);
+            };
+            */
+
             thread_yield();
+            pause_hint();
         }
     }
 
@@ -332,37 +391,12 @@ impl Scheduler {
         RUNNING_SCHED_COUNT.fetch_add(1, Ordering::Relaxed);
         self.rcu.post_start_callback();
         cpu::timer::start_tick_timer();
-        self.reschedule();
+        self.sched_yield();
         unreachable!();
     }
 
-    /// Choose the next thread to run and remove it from the queue.
-    fn choose_thread(&mut self) -> Option<Arc<Thread>> {
-        let mut queue = self.queue.lock();
-        for _ in 0..queue.len() {
-            let node = queue.pop_front().unwrap();
-            let flags = node.flags.load(Ordering::Relaxed);
-
-            if flags & tflags::STOPPED != 0 {
-                ZOMBIES.lock().push_back(node).unwrap();
-                REAPER
-                    .lock_shared()
-                    .as_deref()
-                    .unwrap()
-                    .flags
-                    .fetch_and(!tflags::BLOCKED, Ordering::Relaxed);
-                continue;
-            } else if flags & tflags::BLOCKED == 0 {
-                return Some(node);
-            }
-
-            queue.push_back(node).unwrap();
-        }
-        None
-    }
-
     /// Yield the current thread's execution.
-    fn reschedule(&mut self) {
+    fn sched_yield(&mut self) {
         debug_assert!(!cpu::irq::is_enabled());
         self.rcu.sched_callback();
         unsafe {
@@ -379,13 +413,13 @@ impl Scheduler {
                     // Or in the idle slot, if the idle thread was running.
                     self.idle = Some(old);
                 } else {
-                    self.queue.lock().push_back(old).unwrap();
+                    self.queue.lock().return_thread(old);
                 }
             } else {
                 old_stack_out = &raw mut dummy;
             }
 
-            let next = self.choose_thread().unwrap_or_else(|| {
+            let next = self.queue.lock().choose_thread().unwrap_or_else(|| {
                 let mut next = None;
                 core::mem::swap(&mut next, &mut self.idle);
                 next.unwrap()
@@ -445,7 +479,7 @@ impl Scheduler {
         if self.preempt_ticks > 0 {
             self.preempt_ticks -= 1;
             if self.preempt_ticks == 0 {
-                self.reschedule();
+                self.sched_yield();
             }
         }
     }
@@ -461,7 +495,7 @@ pub extern "C" fn thread_yield() {
     unsafe {
         let _noirq = IrqGuard::new();
         if let Some(sched) = (*CpuLocal::get()).sched.as_mut() {
-            sched.reschedule();
+            sched.sched_yield();
         }
     }
 }
