@@ -168,12 +168,13 @@ impl Process {
             // Null auxvec entry.
             let zero = 0usize;
             let zero_ptr = &raw const zero as *const ();
+            stack_top = stack_top.byte_sub(size_of::<usize>());
             cpu::mmu::enable_sum();
             copy_to_user(stack_top, zero_ptr, size_of::<usize>())?;
             cpu::mmu::disable_sum();
-            stack_top = stack_top.byte_sub(size_of::<usize>());
 
             // Envp.
+            stack_top = stack_top.byte_sub(envp.len() * size_of::<usize>());
             cpu::mmu::enable_sum();
             copy_to_user(
                 stack_top,
@@ -181,9 +182,9 @@ impl Process {
                 envp.len() * size_of::<usize>(),
             )?;
             cpu::mmu::disable_sum();
-            stack_top = stack_top.byte_sub(envp.len() * size_of::<usize>());
 
             // Argv.
+            stack_top = stack_top.byte_sub(argv.len() * size_of::<usize>());
             cpu::mmu::enable_sum();
             copy_to_user(
                 stack_top,
@@ -191,15 +192,14 @@ impl Process {
                 argv.len() * size_of::<usize>(),
             )?;
             cpu::mmu::disable_sum();
-            stack_top = stack_top.byte_sub(argv.len() * size_of::<usize>());
 
             // Argc.
             let argc = argv.len();
             let argc_ptr = &raw const argc as *const ();
+            stack_top = stack_top.byte_sub(size_of::<usize>());
             cpu::mmu::enable_sum();
             copy_to_user(stack_top, argc_ptr, size_of::<usize>())?;
             cpu::mmu::disable_sum();
-            stack_top = stack_top.byte_sub(size_of::<usize>());
         }
 
         Ok(stack_top)
