@@ -12,6 +12,8 @@ use core::{
 pub struct RawSpinlock {
     shares: AtomicU32,
 }
+unsafe impl Send for RawSpinlock {}
+unsafe impl Sync for RawSpinlock {}
 
 impl RawSpinlock {
     pub const fn new() -> Self {
@@ -22,6 +24,14 @@ impl RawSpinlock {
 
     pub fn lock<'a>(&'a self) -> RawSpinlockGuard<'a> {
         RawSpinlockGuard::new(self)
+    }
+
+    pub fn lock_shared(&'_ self) -> SharedRawSpinlockGuard<'_> {
+        SharedRawSpinlockGuard::new(self)
+    }
+
+    pub fn is_locked(&self) -> bool {
+        self.shares.load(Ordering::Relaxed) == u32::MAX
     }
 }
 
@@ -96,6 +106,8 @@ pub struct Spinlock<T> {
     inner: RawSpinlock,
     data: UnsafeCell<T>,
 }
+unsafe impl<T> Send for Spinlock<T> {}
+unsafe impl<T> Sync for Spinlock<T> {}
 
 impl<T> Spinlock<T> {
     pub const fn new(data: T) -> Self {
@@ -119,6 +131,10 @@ impl<T> Spinlock<T> {
             inner: raw,
             data: unsafe { self.data.as_ref_unchecked() },
         }
+    }
+
+    pub fn is_locked(&self) -> bool {
+        self.inner.is_locked()
     }
 }
 
