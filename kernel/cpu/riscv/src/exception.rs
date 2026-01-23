@@ -155,8 +155,8 @@ unsafe fn riscv_exception_handler_impl(regs: &mut GpRegfile, sregs: &mut SpRegfi
         unsafe {
             let mut cur = &raw const __start_noexc;
             while cur != &raw const __stop_noexc {
-                if (*cur).start == sregs.sepc {
-                    sregs.sepc = (*cur).end;
+                if (*cur).start == regs.pc {
+                    regs.pc = (*cur).end;
                     regs.a0 = 1;
                     return;
                 }
