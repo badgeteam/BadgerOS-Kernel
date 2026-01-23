@@ -253,13 +253,6 @@ impl<'a, T> MutexGuard<'a, T> {
         })
     }
 
-    pub fn map<U>(self, f: impl FnOnce(&'a mut T) -> &'a mut U) -> MutexGuard<'a, U> {
-        MutexGuard {
-            inner: self.inner,
-            data: f(self.data),
-        }
-    }
-
     pub fn read(&self) -> T
     where
         T: Clone,
@@ -321,13 +314,6 @@ impl<'a, T> SharedMutexGuard<'a, T> {
             inner: mutex.inner.timed_lock_shared(timeout)?,
             data: unsafe { mutex.data.as_ref_unchecked() },
         })
-    }
-
-    pub fn map<U>(self, f: impl FnOnce(&'a T) -> &'a U) -> SharedMutexGuard<'a, U> {
-        SharedMutexGuard {
-            inner: self.inner,
-            data: f(self.data),
-        }
     }
 
     pub fn share(&self) -> Self {
