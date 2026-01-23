@@ -68,7 +68,7 @@ impl<'a, T: HasListNode<T>> Iterator for InvasiveListIter<'a, T> {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<&'a T> {
-        if self.cur.is_null() {
+        if self.cur < 1 as _ {
             return None;
         }
         unsafe {
@@ -89,7 +89,7 @@ impl<'a, T: HasListNode<T>> Iterator for InvasiveListIterMut<'a, T> {
     type Item = &'a mut T;
 
     fn next(&mut self) -> Option<&'a mut T> {
-        if self.cur.is_null() {
+        if self.cur < 1 as _ {
             return None;
         }
         unsafe {
@@ -265,7 +265,7 @@ impl<T: HasListNode<T>> InvasiveList<T> {
         self.last = null_mut();
 
         unsafe {
-            while !cur.is_null() {
+            while cur > 1 as _ {
                 let next = (*cur).next;
                 (*cur).next = null_mut();
                 (*cur).prev = null_mut();
@@ -370,9 +370,10 @@ impl<T: HasListNode<T>> ArcList<T> {
         let mut cur = self.inner.first;
         self.inner.first = null_mut();
         self.inner.last = null_mut();
+        self.inner.len = 0;
 
         unsafe {
-            while !cur.is_null() {
+            while cur > 1 as _ {
                 let next = (*cur).next;
                 (*cur).next = null_mut();
                 (*cur).prev = null_mut();

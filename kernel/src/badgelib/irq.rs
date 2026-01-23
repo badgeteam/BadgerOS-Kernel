@@ -6,7 +6,7 @@ pub struct IrqGuard {
 }
 
 impl IrqGuard {
-    pub unsafe fn new() -> Self {
+    pub fn new() -> Self {
         IrqGuard {
             was_enabled: unsafe { cpu::irq::disable() },
         }

@@ -20,9 +20,10 @@ use crate::{
     kernel::{
         cpulocal::CpuLocal,
         smp,
-        sync::{rcu::RcuCtx, waitlist::Waitlist},
+        sync::{rcu::RcuCtx, spinlock::Spinlock, waitlist::Waitlist},
     },
     mem::vmm::{self, Memmap, kernel_mm},
+    misc::panic,
     process::Process,
     util::list::{ArcList, HasListNode, InvasiveListNode},
 };
@@ -214,6 +215,10 @@ impl Thread {
 
 /// Number of currently running schedulers.
 pub(super) static RUNNING_SCHED_COUNT: AtomicU32 = AtomicU32::new(0);
+/// Global list of threads to be reaped.
+static ZOMBIES: Spinlock<ArcList<Thread>> = Spinlock::new(ArcList::new());
+/// The thread reaper thread.
+static REAPER: Spinlock<Option<Arc<Thread>>> = Spinlock::new(None);
 
 /// Instance of a scheduler running on one CPU.
 pub struct Scheduler {
@@ -221,8 +226,6 @@ pub struct Scheduler {
     idle: Option<Arc<Thread>>,
     /// Runnable thread queue.
     queue: ArcList<Thread>,
-    /// Threads to reap queue.
-    zombies: ArcList<Thread>,
     /// Implements RCU semantics.
     rcu: RcuCtx,
     /// How many ticks until the current thread is preempted.
@@ -232,28 +235,73 @@ pub struct Scheduler {
 
 impl Scheduler {
     pub fn new() -> EResult<Self> {
+        let mut queue = ArcList::new();
+
+        // Idle power management and work stealing.
         let idle = Thread::new_tcb_only(
             Box::try_new(|| Self::idle_func())?,
             None,
             Some(format!("Idle for CPU{}", smp::cur_cpu())),
         )?;
 
+        // Reports that the CPU is up; should ideally be the first in the queue.
         let up_reporter = Thread::new_tcb_only(
             Box::try_new(|| smp::report_online())?,
             None,
             Some(format!("Up-reporter for CPU{}", smp::cur_cpu())),
         )?;
-
-        let mut queue = ArcList::new();
         let _ = queue.push_front(up_reporter);
+
+        {
+            let _noirq = IrqGuard::new();
+            let mut reaper = REAPER.lock();
+            if reaper.is_none() {
+                // Reaps the control blocks of dead threads.
+                let tcb = Thread::new_tcb_only(
+                    Box::new(|| Self::reaper_func()),
+                    None,
+                    Some("Threads reaper".into()),
+                )?;
+                *reaper = Some(tcb.clone());
+                let _ = queue.push_back(tcb);
+            }
+        }
 
         Ok(Self {
             idle: Some(idle),
             queue,
-            zombies: ArcList::new(),
             rcu: RcuCtx::new(),
             preempt_ticks: 0,
         })
+    }
+
+    /// Thread reaper function.
+    fn reaper_func() -> ! {
+        let thread_self = unsafe { &*Thread::current() };
+        loop {
+            thread_yield();
+
+            // Threads are transferred to this list and dropped at the end of the loop.
+            let mut threads = ArcList::new();
+
+            let _noirq = IrqGuard::new();
+
+            thread_self
+                .flags
+                .fetch_or(tflags::BLOCKED, Ordering::Relaxed);
+
+            let mut zombies = ZOMBIES.lock();
+            core::mem::swap(&mut threads, &mut *zombies);
+            drop(zombies);
+
+            if threads.len() != 0 {
+                thread_self
+                    .flags
+                    .fetch_and(!tflags::BLOCKED, Ordering::Relaxed);
+            }
+
+            logkf!(LogLevel::Debug, "Reaping {} threads", threads.len());
+        }
     }
 
     /// Scheduler idle function.
@@ -279,7 +327,13 @@ impl Scheduler {
             let flags = node.flags.load(Ordering::Relaxed);
 
             if flags & tflags::STOPPED != 0 {
-                self.zombies.push_back(node).unwrap();
+                ZOMBIES.lock().push_back(node).unwrap();
+                REAPER
+                    .lock_shared()
+                    .as_deref()
+                    .unwrap()
+                    .flags
+                    .fetch_and(!tflags::BLOCKED, Ordering::Relaxed);
                 continue;
             } else if flags & tflags::BLOCKED == 0 {
                 return Some(node);
@@ -349,6 +403,7 @@ impl Scheduler {
     pub fn tick_interrupt(&mut self, is_user_time: bool) {
         self.account_time(is_user_time);
         cpu::timer::start_tick_timer();
+        panic::check_for_panic();
 
         if self.preempt_ticks > 0 {
             self.preempt_ticks -= 1;

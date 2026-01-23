@@ -11,6 +11,7 @@ use crate::{
     bindings::log::{LogLevel, logkf_unlocked, write_unlocked},
     cpu::{
         backtrace::{backtrace, get_frame_ptr},
+        irq,
         panic::panic_cpu_shutdown,
         thread::{GpRegfile, SpRegfile},
     },
@@ -129,6 +130,7 @@ pub extern "C" fn claim_panic() {
     if IS_PANICKING.fetch_add(1, Ordering::Relaxed) != 0 {
         panic_cpu_shutdown();
     }
+    unsafe { irq::disable() };
 }
 
 pub fn kekw() {
