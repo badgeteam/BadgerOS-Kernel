@@ -6,7 +6,7 @@ use core::{
     cell::UnsafeCell,
     mem::offset_of,
     ptr::{null_mut, slice_from_raw_parts_mut},
-    sync::atomic::{AtomicI64, AtomicU32, Ordering, fence},
+    sync::atomic::{AtomicI32, AtomicI64, AtomicU32, Ordering, fence},
 };
 
 use alloc::{boxed::Box, string::String, sync::Arc};
@@ -25,7 +25,10 @@ use crate::{
     mem::vmm::{self, Memmap, kernel_mm},
     misc::panic,
     process::Process,
-    util::list::{ArcList, HasListNode, InvasiveListNode},
+    util::{
+        bitset::BitSet,
+        list::{ArcList, HasListNode, InvasiveListNode},
+    },
 };
 
 /// Dynamic thread runtime state.
@@ -150,6 +153,7 @@ impl Thread {
                 .as_mut()
                 .unwrap()
                 .queue
+                .lock()
                 .push_back(tcb.clone())
                 .unwrap();
         }
@@ -225,12 +229,20 @@ pub struct Scheduler {
     /// Idle thread for this scheduler.
     idle: Option<Arc<Thread>>,
     /// Runnable thread queue.
-    queue: ArcList<Thread>,
+    queue: Spinlock<ArcList<Thread>>,
     /// Implements RCU semantics.
     rcu: RcuCtx,
     /// How many ticks until the current thread is preempted.
     /// If set to 0, the thread will not be preempted.
     preempt_ticks: u32,
+    /// Last microsecond timestamp at which time usage was accounted.
+    last_account_us: i64,
+    /// Bit-set used as a ringbuffer to measure load average.
+    active_set: BitSet<{ config::LOAD_MEASURE_WINDOW as usize }>,
+    /// Which bit within `active_ticks` is written next.
+    active_next: u32,
+    /// Atomically-updated sum of active ticks within the last LOAD_MEASURE_WINDOW ticks.
+    load_average: AtomicI32,
 }
 
 impl Scheduler {
@@ -269,9 +281,13 @@ impl Scheduler {
 
         Ok(Self {
             idle: Some(idle),
-            queue,
+            queue: Spinlock::new(queue),
             rcu: RcuCtx::new(),
             preempt_ticks: 0,
+            last_account_us: time_us(),
+            active_set: BitSet::EMPTY,
+            active_next: 0,
+            load_average: AtomicI32::new(0),
         })
     }
 
@@ -322,8 +338,9 @@ impl Scheduler {
 
     /// Choose the next thread to run and remove it from the queue.
     fn choose_thread(&mut self) -> Option<Arc<Thread>> {
-        for _ in 0..self.queue.len() {
-            let node = self.queue.pop_front().unwrap();
+        let mut queue = self.queue.lock();
+        for _ in 0..queue.len() {
+            let node = queue.pop_front().unwrap();
             let flags = node.flags.load(Ordering::Relaxed);
 
             if flags & tflags::STOPPED != 0 {
@@ -339,7 +356,7 @@ impl Scheduler {
                 return Some(node);
             }
 
-            self.queue.push_back(node).unwrap();
+            queue.push_back(node).unwrap();
         }
         None
     }
@@ -353,14 +370,16 @@ impl Scheduler {
             let mut old = None;
             core::mem::swap(&mut old, &mut cpulocal.thread);
 
+            // Put the running thread back in the queue.
             let mut dummy = null_mut();
             let old_stack_out: *mut *mut ();
             if let Some(old) = old {
                 old_stack_out = &raw mut old.runtime.as_mut_unchecked().as_mut().unwrap().stack_ptr;
                 if self.idle.is_none() {
+                    // Or in the idle slot, if the idle thread was running.
                     self.idle = Some(old);
                 } else {
-                    self.queue.push_back(old).unwrap();
+                    self.queue.lock().push_back(old).unwrap();
                 }
             } else {
                 old_stack_out = &raw mut dummy;
@@ -384,6 +403,7 @@ impl Scheduler {
             cpu::mmu::set_page_table(new_mm.root_ppn(), 0);
             cpu::mmu::vmem_fence(None, None);
 
+            // Context switch into new thread.
             cpulocal.arch.set_irq_stack(next.runtime().irq_stack);
             let new_stack = &raw const next.runtime().stack_ptr;
             cpulocal.thread = Some(next);
@@ -394,7 +414,17 @@ impl Scheduler {
     /// Account current thread's time usage since it was last accounted.
     /// If `as_user_time` is true, it is counted as userspace time.
     /// Otherwise, it is counted as kernel time.
-    pub fn account_time(&mut self, as_user_time: bool) {}
+    pub fn account_time(&mut self, as_user_time: bool) {
+        let now = time_us();
+        let delta = now - self.last_account_us;
+        self.last_account_us = now;
+        let thread = unsafe { &*Thread::current() };
+        if as_user_time {
+            thread.utime.fetch_add(delta, Ordering::Relaxed);
+        } else {
+            thread.ktime.fetch_add(delta, Ordering::Relaxed);
+        }
+    }
 
     /// Called every time a timer tick interrupt happens.
     /// Accounts thread time usage and manages preemption.
@@ -404,6 +434,13 @@ impl Scheduler {
         self.account_time(is_user_time);
         cpu::timer::start_tick_timer();
         panic::check_for_panic();
+
+        // Measure load average.
+        let was_active = self.active_set.test(self.active_next as usize);
+        let now_active = self.idle.is_none();
+        let delta = now_active as i32 - was_active as i32;
+        self.load_average.fetch_add(delta, Ordering::Relaxed);
+        self.active_next = (self.active_next + 1) % config::LOAD_MEASURE_WINDOW as u32;
 
         if self.preempt_ticks > 0 {
             self.preempt_ticks -= 1;

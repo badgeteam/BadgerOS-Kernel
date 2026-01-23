@@ -5,6 +5,8 @@ use uuid::Uuid;
 
 use crate::bindings::error::EResult;
 
+pub mod atomic_bitset;
+pub mod bitset;
 pub mod list;
 
 /// Enum that represents either a const or a mut reference.

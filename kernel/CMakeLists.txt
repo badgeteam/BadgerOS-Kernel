@@ -52,12 +52,16 @@ config_enum(
     8192 16384 32768 65536 131072 262144
 )
 config_enum(
-    TICKS_PER_SEC 1000 "How many tick interrupts happen per second"
-    100 200 500 1000 2000 4000
+    TICKS_PER_SEC 500 "How many tick interrupts happen per second"
+    100 200 250 500 1000
 )
 config_enum(
     MAX_CPUS 32 "Maximum number of usable CPUs (more will be ignored)"
     32 64 128 256
+)
+config_enum(
+    LOAD_MEASURE_WINDOW 200 "How many ticks to average over for load CPU measurement"
+    25 50 100 200 500 1000
 )
 
 if("${CONFIG_BOOT_PROTOCOL}" STREQUAL "limine" AND "${CONFIG_CPU}" STREQUAL "riscv64")

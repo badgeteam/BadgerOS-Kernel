@@ -5,7 +5,7 @@
 use core::{
     mem::swap,
     ptr::{null_mut, slice_from_raw_parts_mut},
-    sync::atomic::{Atomic, AtomicU32, AtomicUsize, Ordering},
+    sync::atomic::{AtomicU32, AtomicUsize, Ordering},
 };
 
 use alloc::{boxed::Box, collections::btree_map::BTreeMap};
@@ -24,17 +24,17 @@ use crate::{
     },
     kernel::{
         cpulocal::CpuLocal,
-        sched::{Scheduler, thread_sleep, thread_yield},
+        sched::{Scheduler, thread_yield},
         sync::mutex::Mutex,
     },
+    util::bitset::BitSet,
 };
 
 use super::sync::mutex::MutexGuard;
 
-pub mod atomic_cpuset;
-pub mod cpuset;
-
 pub const CPU_SET_LEN: usize = config::MAX_CPUS.div_ceil(32) as usize;
+pub type CpuSet = BitSet<CPU_SET_LEN>;
+pub type AtomicCpuSet = BitSet<CPU_SET_LEN>;
 
 /// Power status for a CPU.
 #[repr(u32)]
