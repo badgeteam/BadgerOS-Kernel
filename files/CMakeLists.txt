@@ -21,6 +21,7 @@ add_compile_options(
     -fno-omit-frame-pointer            # Always use frame pointer
     -fno-stack-protector
     -fno-exceptions
+    -masm=intel
     -ggdb
 )
 add_link_options(

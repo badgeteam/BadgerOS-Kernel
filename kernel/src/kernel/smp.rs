@@ -10,9 +10,10 @@ use core::{
 
 use alloc::{boxed::Box, collections::btree_map::BTreeMap};
 
+#[cfg(feature = "dtb")]
+use crate::bindings::device::dtb::DtbNode;
 use crate::{
     bindings::{
-        device::dtb::DtbNode,
         error::{EResult, Errno},
         log::LogLevel,
         raw::{limine_smp_info, limine_smp_request},

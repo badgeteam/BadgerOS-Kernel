@@ -29,9 +29,20 @@ __attribute__((format(printf, 1, 2))) void printf(char const *fmt, ...) {
 
 
 
+#ifdef __riscv__
 #pragma GCC disagnostic "-Wno-unused-parameter"
 #define SYSCALL_DEF(no, enum, name, returns, ...)                                                                      \
     __attribute__((naked)) returns name(__VA_ARGS__) {                                                                 \
         asm volatile("li a7, %0; ecall; ret" ::"i"(no));                                                               \
     }
 #include "syscall_defs.inc"
+#endif
+
+#ifdef __x86_64__
+#pragma GCC disagnostic "-Wno-unused-parameter"
+#define SYSCALL_DEF(no, enum, name, returns, ...)                                                                      \
+    __attribute__((naked)) returns name(__VA_ARGS__) {                                                                 \
+        asm volatile("mov r10, rcx; mov rax, %0; syscall" ::"i"(no));                                                  \
+    }
+#include "syscall_defs.inc"
+#endif

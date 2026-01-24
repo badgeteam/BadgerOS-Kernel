@@ -156,3 +156,17 @@ pub fn vmem_fence(vaddr: Option<usize>, _asid: Option<usize>) {
         }
     }
 }
+
+#[inline(always)]
+/// Enable kernel access to user memory.
+pub unsafe fn enable_sum() {}
+
+#[inline(always)]
+/// Disable kernel access to user memory.
+pub unsafe fn disable_sum() {}
+
+#[inline(always)]
+/// Determine whether kernel access to user memory is allowed.
+pub fn check_sum() -> bool {
+    true
+}

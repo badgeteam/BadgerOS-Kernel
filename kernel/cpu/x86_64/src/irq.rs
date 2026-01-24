@@ -2,7 +2,7 @@ use core::arch::asm;
 
 /// Check whether interrupts are enabled.
 #[inline(always)]
-pub unsafe fn is_enabled() -> bool {
+pub fn is_enabled() -> bool {
     let tmp: usize;
     // Pure and readonly options mean this will be eliminated if the result is unused.
     unsafe { asm!("pushf; pop {tmp}", tmp = out(reg) tmp, options(pure, readonly)) };
