@@ -6,6 +6,8 @@ use core::arch::asm;
 
 use crate::kernel::cpulocal::CpuLocal;
 
+use super::msr;
+
 /// Architecture-specific CPU-local data.
 #[repr(C)]
 #[derive(Default)]
@@ -20,7 +22,7 @@ impl CpuLocal {
     pub fn get() -> *mut CpuLocal {
         unsafe {
             let ptr: *mut Self;
-            asm!("mov {ptr}, [gs:0]", ptr=out(reg)ptr);
+            asm!("mov {ptr}, gs:[0]", ptr=out(reg)ptr, options(pure, readonly, nostack));
             ptr
         }
     }
@@ -30,6 +32,7 @@ impl CpuLocal {
     pub unsafe fn set(ptr: *mut Self) {
         unsafe {
             (*ptr).arch.self_ptr = ptr;
+            msr::write(msr::gsbase::ADDR, ptr as u64);
         };
     }
 }

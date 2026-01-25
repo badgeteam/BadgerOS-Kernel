@@ -5,16 +5,18 @@ use core::arch::asm;
 pub fn is_enabled() -> bool {
     let tmp: usize;
     // Pure and readonly options mean this will be eliminated if the result is unused.
-    unsafe { asm!("pushf; pop {tmp}", tmp = out(reg) tmp, options(pure, readonly)) };
+    unsafe {
+        asm!("pushf; pop {tmp}", tmp = out(reg) tmp, options(pure, readonly, preserves_flags));
+    }
     tmp & (1 << 9) != 0
 }
 
 /// Disable interrupts if some condition holds.
 #[inline(always)]
 pub unsafe fn disable_if(cond: bool) -> bool {
-    let enabled = unsafe { is_enabled() };
+    let enabled = is_enabled();
     if cond {
-        unsafe { asm!("cli") };
+        unsafe { asm!("cli", options(nomem, nostack, preserves_flags)) };
     }
     enabled
 }
@@ -23,7 +25,7 @@ pub unsafe fn disable_if(cond: bool) -> bool {
 #[inline(always)]
 pub unsafe fn enable_if(cond: bool) {
     if cond {
-        unsafe { asm!("sti") };
+        unsafe { asm!("sti", options(nomem, nostack, preserves_flags)) };
     }
 }
 

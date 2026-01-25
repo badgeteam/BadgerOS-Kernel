@@ -23,60 +23,67 @@ pub struct SpRegfile {
     pub rsp: usize,
     pub ss: usize,
     pub err_code: usize,
+    pub irq: isize,
+    pub cr2: usize,
 }
 
 impl SpRegfile {
     pub const fn fault_code(&self) -> isize {
-        self.scause
-    }
-
-    pub const fn fault_vaddr(&self) -> usize {
-        self.stval
+        self.irq
     }
 
     pub const fn fault_pc(&self) -> usize {
-        self.sepc
+        self.rip
     }
 
     pub const fn fault_name(&self) -> Option<&'static str> {
-        match self.scause {
-            0 => Some("Instruction address misaligned"),
-            1 => Some("Instruction access fault"),
-            2 => Some("Illegal instruction"),
+        match self.irq {
+            0 => Some("Division by zero"),
+            1 => Some("Debug exception"),
+            2 => Some("Non-maskable interrupt"),
             3 => Some("Breakpoint"),
-            4 => Some("Load address misaligned"),
-            5 => Some("Load access fault"),
-            6 => Some("Store address misaligned"),
-            7 => Some("Store access fault"),
-            8 => Some("E-call from U-mode"),
-            9 => Some("E-call from S-mode"),
-            12 => Some("Instruction page fault"),
-            13 => Some("Load page fault"),
-            15 => Some("Store page fault"),
-            18 => Some("Software check"),
-            19 => Some("Hardware error"),
+            4 => Some("Integer overflow"),
+            5 => Some("Bound range exceeded"),
+            6 => Some("Illegal instruction"),
+            8 => Some("Double fault"),
+            10 => Some("Invalid TSS"),
+            11 => Some("Segment not present"),
+            12 => Some("Stack-segment fault"),
+            13 => Some("General protection fault"),
+            14 => Some("Page fault"),
+            17 => Some("Alignment check"),
+            18 => Some("Machine check"),
+            19 => Some("SIMD floating-point exception"),
+            20 => Some("Virtualization exception"),
+            21 => Some("Control protection exception"),
             _ => None,
         }
     }
 
     pub const fn is_mem_trap(&self) -> Option<usize> {
-        match self.scause {
-            0 | 1 | 4 | 5 | 6 | 7 | 12 | 13 | 15 => Some(self.stval),
-            2 | 3 => Some(self.sepc),
+        match self.irq {
+            14 => Some(self.cr2), // Page fault
             _ => None,
         }
     }
 
     pub const fn is_kernel_mode(&self) -> bool {
-        self.sstatus & 0x100 != 0
+        self.cs & 3 == 0
     }
 }
 
 impl Display for SpRegfile {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_fmt(format_args!(
-            "  SSTATUS  0x{:x}\n  SCAUSE   0x{:x}\n  STVAL    0x{:x}\n",
-            self.sstatus, self.scause, self.stval
+            "  RIP    0x{:016x}\n  CS     0x{:04x}\n  RFLAGS 0x{:016x}\n  RSP    0x{:016x}\n  SS     0x{:04x}\n  ERR#   0x{:016x}\n  IRQ#   0x{:02x}\n  CR2    0x{:016x}",
+            self.rip,
+            self.cs,
+            self.rflags,
+            self.rsp,
+            self.ss,
+            self.err_code,
+            self.irq,
+            self.cr2,
         ))
     }
 }
@@ -121,6 +128,13 @@ impl GpRegfile {
     pub fn set_stack(&mut self, val: usize) {
         self.rsp = val;
     }
+    pub fn get_pc(&self) -> usize {
+        self.rip
+    }
+
+    pub fn get_stack(&self) -> usize {
+        self.rsp
+    }
 }
 
 impl Display for GpRegfile {
@@ -153,7 +167,7 @@ impl Display for GpRegfile {
 /// Set up the entrypoint for a thread given its kernel stack.
 /// Returns how many words of stack were used.
 pub fn prepare_entry(stack: &mut [usize], code: Box<dyn FnOnce() + Send + 'static>) -> usize {
-    const WORDS: usize = 16;
+    const WORDS: usize = 10;
     let len = stack.len();
     let stack = &mut stack[len - WORDS..];
     stack.fill(0);
@@ -163,10 +177,10 @@ pub fn prepare_entry(stack: &mut [usize], code: Box<dyn FnOnce() + Send + 'stati
     let meta: *const () = unsafe { core::mem::transmute(ptr::metadata(code)) };
 
     // Entrypoint for trampoline.
-    stack[15] = meta as usize;
-    stack[14] = data as usize;
+    stack[8] = meta as usize;
+    stack[7] = data as usize;
     // Return address for `context_switch`.
-    stack[12] = thread_trampoline_1 as *const fn() as usize;
+    stack[6] = thread_trampoline_1 as *const fn() as usize;
 
     WORDS
 }
@@ -175,9 +189,9 @@ pub fn prepare_entry(stack: &mut [usize], code: Box<dyn FnOnce() + Send + 'stati
 #[unsafe(naked)]
 unsafe extern "C" fn thread_trampoline_1() {
     naked_asm!(
-        "ld   a0, 0(sp)",
-        "ld   a1, 8(sp)",
-        "j    {}",
+        "mov rdi, [rsp+0]",
+        "mov rsi, [rsp+8]",
+        "jmp {}",
         sym thread_trampoline_2
     );
 }
@@ -198,38 +212,22 @@ unsafe extern "C" fn thread_trampoline_2(ptr: *mut (), meta: *mut ()) {
 pub unsafe extern "C" fn context_switch(new_stack: *const *mut (), old_stack_out: *mut *mut ()) {
     naked_asm!(
         // Save old context to stack.
-        "addi sp, sp, -14*8",
-        "sd   s0, 8*0(sp)",
-        "sd   s1, 8*1(sp)",
-        "sd   s2, 8*2(sp)",
-        "sd   s3, 8*3(sp)",
-        "sd   s4, 8*4(sp)",
-        "sd   s5, 8*5(sp)",
-        "sd   s6, 8*6(sp)",
-        "sd   s7, 8*7(sp)",
-        "sd   s8, 8*8(sp)",
-        "sd   s9, 8*9(sp)",
-        "sd   s10, 8*10(sp)",
-        "sd   s11, 8*11(sp)",
-        "sd   ra, 8*12(sp)",
+        "push rbp",
+        "push r15",
+        "push r14",
+        "push r13",
+        "push r12",
+        "push rbx",
         // Swap out stack pointers.
-        "sd   sp, 0(a1)",
-        "ld   sp, 0(a0)",
+        "mov [rsi], rsp",
+        "mov rsp, [rdi]",
         // Restore new context from stack.
-        "ld   s0, 8*0(sp)",
-        "ld   s1, 8*1(sp)",
-        "ld   s2, 8*2(sp)",
-        "ld   s3, 8*3(sp)",
-        "ld   s4, 8*4(sp)",
-        "ld   s5, 8*5(sp)",
-        "ld   s6, 8*6(sp)",
-        "ld   s7, 8*7(sp)",
-        "ld   s8, 8*8(sp)",
-        "ld   s9, 8*9(sp)",
-        "ld   s10, 8*10(sp)",
-        "ld   s11, 8*11(sp)",
-        "ld   ra, 8*12(sp)",
-        "addi sp, sp, 14*8",
+        "pop rbx",
+        "pop r12",
+        "pop r13",
+        "pop r14",
+        "pop r15",
+        "pop rbp",
         // Return to the new thread context.
         "ret"
     );
@@ -238,7 +236,5 @@ pub unsafe extern "C" fn context_switch(new_stack: *const *mut (), old_stack_out
 /// Run a CPU pause hint instruction.
 #[inline(always)]
 pub fn pause_hint() {
-    // RISC-V Zihintpause instruction.
-    // This is a fence with PRED=W and SUCC=none.
-    unsafe { asm!(".word 0x0100000f") };
+    unsafe { asm!("pause", options(nomem, preserves_flags)) };
 }

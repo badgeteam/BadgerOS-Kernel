@@ -68,3 +68,27 @@ impl Semaphore {
         Ok(())
     }
 }
+
+mod c_api {
+    use crate::bindings::{
+        error::Errno,
+        raw::{errno_t, timestamp_us_t},
+    };
+
+    use super::Semaphore;
+
+    #[unsafe(no_mangle)]
+    extern "C" fn sem_post(sem: &Semaphore) {
+        sem.post();
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn sem_wait(sem: &Semaphore) -> errno_t {
+        Errno::extract(sem.wait())
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn sem_timed_wait(sem: &Semaphore, timeout: timestamp_us_t) -> errno_t {
+        Errno::extract(sem.timed_wait(timeout))
+    }
+}

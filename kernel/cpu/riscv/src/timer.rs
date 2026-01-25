@@ -12,7 +12,7 @@ use core::arch::asm;
 /// Whether the new SBI timer extension is in use.
 static mut SUPPORTS_SBI_TIME: bool = false;
 /// Raw timer ticks that happen per second.
-static mut TICKS_PER_SEC: u32 = 0;
+static mut TICKS_PER_SEC: u64 = 0;
 /// Microseconds per tick in 32.32 fixed-point format.
 static mut MICROS_PER_TICK: u64 = 0;
 /// Nanoseconds per ticks in 32.32 fixed-point format.
@@ -20,7 +20,7 @@ static mut NANOS_PER_TICK: u64 = 0;
 /// Offset subtracted from the raw timer value to get time since boot.
 static mut BASE_TICK: u64 = 0;
 /// Tick interval between the scheduler tick interrupt.
-static mut TICK_INTERVAL: u32 = 0;
+static mut TICK_INTERVAL: u64 = 0;
 
 /// Get the current time in ticks.
 #[cfg(target_arch = "riscv32")]
@@ -85,11 +85,8 @@ pub fn init_dtb(cpus_node: &DtbNode) {
     let timebase_freq = cpus_node
         .get_prop("timebase-frequency")
         .expect("Missing DTB prop /cpus/timebase-frequency");
-    if timebase_freq.bytes().len() != 4 {
-        panic!("Expected DTB prop /cpus/timebase-frequency to have content length 4");
-    }
     // SAFETY: This value is only written to during initialization.
-    unsafe { TICKS_PER_SEC = timebase_freq.read_cell(0) };
+    unsafe { TICKS_PER_SEC = timebase_freq.read_uint() as u64 };
     init_common();
 }
 
@@ -101,7 +98,7 @@ fn init_common() {
     unsafe {
         SUPPORTS_SBI_TIME = sbi_time;
         BASE_TICK = base_tick;
-        TICK_INTERVAL = TICKS_PER_SEC / config::TICKS_PER_SEC as u32;
+        TICK_INTERVAL = TICKS_PER_SEC / config::TICKS_PER_SEC as u64;
         MICROS_PER_TICK = (1_000_000 << 32) / TICKS_PER_SEC as u64;
         NANOS_PER_TICK = (1_000_000_000 << 32) / TICKS_PER_SEC as u64;
     }

@@ -86,7 +86,7 @@ pub fn run_sigsegv_handler(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
             si_code: 0,
             si_pid: current().unwrap().pid,
             si_uid: 0,
-            si_addr: sregs.fault_vaddr() as *mut c_void,
+            si_addr: sregs.is_mem_trap().unwrap_or(0) as *mut c_void,
             si_status: 0,
         },
         regs,

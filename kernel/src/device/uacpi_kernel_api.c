@@ -343,11 +343,6 @@ uacpi_status uacpi_kernel_handle_firmware_request(uacpi_firmware_request *req) {
     }
 }
 
-static void uacpi_isr_wrapper(int irq, void *cookie0) {
-    void **cookie = cookie0;
-    ((uacpi_interrupt_handler)cookie[0])(cookie[1]);
-}
-
 /*
  * Install an interrupt handler at 'irq', 'ctx' is passed to the provided
  * handler for every invocation.
@@ -358,12 +353,7 @@ static void uacpi_isr_wrapper(int irq, void *cookie0) {
 uacpi_status uacpi_kernel_install_interrupt_handler(
     uacpi_u32 irq, uacpi_interrupt_handler isr, uacpi_handle ctx, uacpi_handle *out_irq_handle
 ) {
-    void **cookie   = malloc(3 * sizeof(void *));
-    cookie[0]       = isr;
-    cookie[1]       = ctx;
-    cookie[2]       = isr_install((int)irq, uacpi_isr_wrapper, cookie);
-    *out_irq_handle = cookie;
-    return UACPI_STATUS_OK;
+    return UACPI_STATUS_UNIMPLEMENTED;
 }
 
 /*
@@ -371,10 +361,7 @@ uacpi_status uacpi_kernel_install_interrupt_handler(
  * 'out_irq_handle' during installation.
  */
 uacpi_status uacpi_kernel_uninstall_interrupt_handler(uacpi_interrupt_handler isr, uacpi_handle irq_handle) {
-    void **cookie = irq_handle;
-    isr_remove(cookie[2]);
-    free(cookie);
-    return UACPI_STATUS_OK;
+    return UACPI_STATUS_UNIMPLEMENTED;
 }
 
 /*

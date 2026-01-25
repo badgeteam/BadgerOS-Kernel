@@ -28,10 +28,6 @@ impl SpRegfile {
         self.scause
     }
 
-    pub const fn fault_vaddr(&self) -> usize {
-        self.stval
-    }
-
     pub const fn fault_pc(&self) -> usize {
         self.sepc
     }
@@ -133,6 +129,14 @@ impl GpRegfile {
 
     pub fn set_stack(&mut self, val: usize) {
         self.sp = val;
+    }
+
+    pub fn get_pc(&self) -> usize {
+        self.pc
+    }
+
+    pub fn get_stack(&self) -> usize {
+        self.sp
     }
 }
 

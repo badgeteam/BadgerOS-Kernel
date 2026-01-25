@@ -20,7 +20,7 @@ use crate::{
     },
     config,
     cpu::{
-        self, CpuID,
+        self, PhysCpuID,
         spinup::{arch_cpu_spinup, limine_trampoline_1},
     },
     kernel::{
@@ -73,7 +73,7 @@ struct SmpMaps {
     /// Map from SMP index to SMP status struct.
     by_index: BTreeMap<u32, SmpStatus>,
     /// Map from CPU ID to SMP index.
-    by_cpuid: BTreeMap<CpuID, u32>,
+    by_cpuid: BTreeMap<PhysCpuID, u32>,
     /// One more than the maximum allocated SMP index.
     cpu_index_end: u32,
 }
@@ -101,18 +101,18 @@ static mut SMP_REQ: limine_smp_request = limine_smp_request {
 /// Initialize the SMP subsystem from DTB.
 #[cfg(feature = "dtb")]
 pub fn init_dtb(cpus_node: &DtbNode) {
-    let bsp_cpuid: CpuID;
+    let bsp_cpuid: PhysCpuID;
     unsafe {
         if SMP_REQ.response.is_null() {
             panic!("Missing Limine SMP response");
         }
         #[cfg(target_arch = "riscv64")]
         {
-            bsp_cpuid = (*SMP_REQ.response).bsp_hartid as CpuID;
+            bsp_cpuid = (*SMP_REQ.response).bsp_hartid as PhysCpuID;
         }
         #[cfg(target_arch = "x86_64")]
         {
-            bsp_cpuid = (*SMP_REQ.response).bsp_lapic_id as CpuID;
+            bsp_cpuid = (*SMP_REQ.response).bsp_lapic_id as PhysCpuID;
         }
     };
 
@@ -122,7 +122,7 @@ pub fn init_dtb(cpus_node: &DtbNode) {
         let _ = try {
             let features = cpu::dtb::is_usable(cpu)?;
             let reg = cpu.get_prop("reg")?;
-            let cpuid: CpuID = reg.read_uint() as CpuID;
+            let cpuid: PhysCpuID = reg.read_uint() as PhysCpuID;
 
             let smp_index: u32;
             let power;
@@ -198,7 +198,7 @@ fn poweron_from_prehandover<'a>(index: u32, mut maps: MutexGuard<'a, SmpMaps>) -
     #[cfg(target_arch = "x86_64")]
     let cpu = cpus
         .iter_mut()
-        .find(|x| x.lapic_id == status.cpulocal.cpuid as _)
+        .find(|x| x.hartid == status.cpulocal.cpuid as _)
         .unwrap();
 
     cpu.extra_argument = status.cpulocal.as_mut() as *mut _ as _;
@@ -325,7 +325,7 @@ mod c_api {
         SMP_MAPS
             .unintr_lock()
             .by_cpuid
-            .get(&(cpuid as CpuID))
+            .get(&(cpuid as PhysCpuID))
             .cloned()
             .unwrap_or(u32::MAX)
     }

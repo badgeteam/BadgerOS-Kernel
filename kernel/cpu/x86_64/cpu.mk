@@ -5,7 +5,7 @@ QEMU          ?= qemu-system-x86_64
 qemu-debug: build
 	$(QEMU) -s -S \
 		-d int -no-reboot -no-shutdown \
-		-smp 1 -m 1G -cpu max,tsc-frequency=1000000000 \
+		-smp 1 -m 1G -cpu max \
 		-device pcie-root-port,bus=pci.0,id=pcisw0 \
 		-device qemu-xhci,bus=pcisw0 -device usb-kbd \
 		-device virtio-scsi-pci,id=scsi \
@@ -16,7 +16,7 @@ qemu-debug: build
 .PHONY: qemu
 qemu: build
 	$(QEMU) -s \
-		-smp 1 -m 1G -cpu max,tsc-frequency=1000000000 \
+		-smp 1 -m 1G -cpu max \
 		-device pcie-root-port,bus=pci.0,id=pcisw0 \
 		-device qemu-xhci,bus=pcisw0 -device usb-kbd \
 		-device virtio-scsi-pci,id=scsi \
@@ -27,7 +27,7 @@ qemu: build
 .PHONY: qemu-prof
 qemu-prof: build
 	$(QEMU) --plugin $(QEMU_PLUGINS)/libuftrace.so -s \
-		-smp 1 -m 1G -cpu max,tsc-frequency=1000000000 \
+		-smp 1 -m 1G -cpu max \
 		-device pcie-root-port,bus=pci.0,id=pcisw0 \
 		-device qemu-xhci,bus=pcisw0 -device usb-kbd \
 		-device virtio-scsi-pci,id=scsi \

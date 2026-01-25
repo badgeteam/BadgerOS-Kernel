@@ -511,13 +511,22 @@ pub fn thread_sleep(amount: timestamp_us_t) -> EResult<()> {
 }
 
 mod c_api {
+    use core::ffi::c_void;
+
     use crate::bindings::{
         error::Errno,
         raw::{errno_t, timestamp_us_t},
     };
 
+    use super::Thread;
+
     #[unsafe(no_mangle)]
     extern "C" fn thread_sleep(amount: timestamp_us_t) -> errno_t {
         Errno::extract(super::thread_sleep(amount))
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn thread_current() -> *mut c_void {
+        Thread::current() as *mut c_void
     }
 }
