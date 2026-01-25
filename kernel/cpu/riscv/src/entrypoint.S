@@ -1,22 +1,6 @@
 
 # SPDX-License-Identifier: MIT
 
-#include "cpu/regs.h"
-#include "cpu/riscv.h"
-
-    # This is the C entrypoint, which will be called when basic CRT is set up.
-    .global basic_runtime_init
-    # The global pointer is used for relaxation of `.data` accesses.
-    .global __global_pointer$
-    # First address in `.bss` (inclusive).
-    .global __start_bss
-    # Last address in `.bss` (exclusive).
-    .global __stop_bss
-    # First address in `.init_array` (inclusive).
-    .global __start_init_array
-    # Last address in `.init_array` (exclusive).
-    .global __stop_init_array
-
 
 
     # Entrypoint from the bootloader.
@@ -49,7 +33,9 @@ _start:
 #endif
     
     # Jump to the C entrypoint.
-    jal  basic_runtime_init
+    la   ra, basic_runtime_init
+    jalr ra
     # This function isn't allowed to return.
     ebreak
     .cfi_endproc
+    .size _start, .-_start

@@ -17,7 +17,7 @@ pub mod timer;
 pub mod usercopy;
 pub mod usermode;
 
-pub type CpuID = usize;
+pub type PhysCpuID = usize;
 
 /// Detectable features that BadgerOS can run without but needs to support for userspace to use it.
 #[derive(Default, Clone, Copy)]

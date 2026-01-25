@@ -7,6 +7,11 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS true)
 include(../.config/config.cmake)
 set(CMAKE_C_COMPILER ${CONFIG_COMPILER})
 
+if("${CONFIG_CPU}" STREQUAL "x86_64")
+add_compile_options(
+    -masm=intel
+)
+endif()
 add_compile_options(
     -static
     -ffreestanding
@@ -21,7 +26,6 @@ add_compile_options(
     -fno-omit-frame-pointer            # Always use frame pointer
     -fno-stack-protector
     -fno-exceptions
-    -masm=intel
     -ggdb
 )
 add_link_options(

@@ -29,7 +29,7 @@ __attribute__((format(printf, 1, 2))) void printf(char const *fmt, ...) {
 
 
 
-#ifdef __riscv__
+#ifdef __riscv
 #pragma GCC disagnostic "-Wno-unused-parameter"
 #define SYSCALL_DEF(no, enum, name, returns, ...)                                                                      \
     __attribute__((naked)) returns name(__VA_ARGS__) {                                                                 \

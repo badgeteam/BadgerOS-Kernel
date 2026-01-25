@@ -137,7 +137,7 @@ unsafe fn riscv_exception_handler_impl(regs: &mut GpRegfile, sregs: &mut SpRegfi
     if let CAUSE_IPAGE | CAUSE_LPAGE | CAUSE_SPAGE = sregs.scause {
         let is_sum = cpu::mmu::check_sum();
         if vmm::page_fault(
-            sregs.fault_vaddr() / config::PAGE_SIZE as usize,
+            sregs.stval / config::PAGE_SIZE as usize,
             match sregs.scause {
                 CAUSE_IPAGE => vmm::flags::X,
                 CAUSE_LPAGE => vmm::flags::R,
