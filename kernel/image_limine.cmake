@@ -41,7 +41,7 @@ add_custom_command(
     OUTPUT ${root_e2fs}
     
     COMMAND rm -f ${root_e2fs}
-    COMMAND dd if=/dev/zero bs=1M count=58 of=${root_e2fs}
+    COMMAND dd if=/dev/zero bs=1M count=57 of=${root_e2fs}
     COMMAND fakeroot mkfs.ext2 -i 16384 -d ${root_dir} ${root_e2fs}
     
     DEPENDS ${root_files}
