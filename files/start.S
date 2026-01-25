@@ -3,7 +3,7 @@
     .text
     .global _start
 _start:
-#ifdef __riscv__
+#ifdef __riscv
     .option push
     .option norelax
     la gp, __global_pointer$
