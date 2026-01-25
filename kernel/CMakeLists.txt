@@ -161,7 +161,6 @@ set(kernel_src
     ${CMAKE_CURRENT_LIST_DIR}/src/time.c
 )
 set(kernel_include
-    ${CMAKE_CURRENT_LIST_DIR}/lib/limine
     ${CMAKE_CURRENT_LIST_DIR}/lib/nanoprintf
     ${CMAKE_CURRENT_LIST_DIR}/include
     ${CMAKE_CURRENT_LIST_DIR}/include/badgelib
