@@ -207,9 +207,9 @@ static void dtparse_phandles(device_t *device) {
                     break;
                 }
             }
-
-            device_pop_ref(irq_parent);
         }
+
+        device_pop_ref(irq_parent);
 
     } else if (irq_ext_prop) {
         uint32_t tot_cells   = irq_ext_prop->content_len / 4;
