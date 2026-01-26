@@ -21,6 +21,7 @@ pub struct SpRegfile {
     pub scause: isize,
     pub stval: usize,
     pub sepc: usize,
+    pub fake_fp: *const (),
 }
 
 impl SpRegfile {
@@ -63,6 +64,10 @@ impl SpRegfile {
 
     pub const fn is_kernel_mode(&self) -> bool {
         self.sstatus & 0x100 != 0
+    }
+
+    pub(crate) fn fault_fake_frame_ptr(&self) -> *const () {
+        self.fake_fp
     }
 }
 
