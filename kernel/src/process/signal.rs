@@ -2,13 +2,10 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::ffi::c_void;
+use core::{ffi::c_void, ptr::null};
 
 use crate::{
-    bindings::{
-        log::LogLevel,
-        raw::{sigaction, sigaction__bindgen_ty_1, siginfo_t},
-    },
+    bindings::{error::Errno, log::LogLevel},
     cpu::{
         thread::{GpRegfile, SpRegfile},
         usermode::enter_signal,
@@ -17,62 +14,24 @@ use crate::{
     process::current,
 };
 
-/// Signal numbers recognised by BadgerOS.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[repr(i32)]
-pub enum Signal {
-    SIGHUP = 1,
-    SIGINT = 2,
-    SIGQUIT = 3,
-    SIGILL = 4,
-    SIGTRAP = 5,
-    SIGABRT = 6,
-    SIGBUS = 7,
-    SIGFPE = 8,
-    SIGKILL = 9,
-    SIGUSR1 = 10,
-    SIGSEGV = 11,
-    SIGUSR2 = 12,
-    SIGPIPE = 13,
-    SIGALRM = 14,
-    SIGTERM = 15,
-    SIGSTKFLT = 16,
-    SIGCHLD = 17,
-    SIGCONT = 18,
-    SIGSTOP = 19,
-    SIGTSTP = 20,
-    SIGTTIN = 21,
-    SIGTTOU = 22,
-    SIGURG = 23,
-    SIGXCPU = 24,
-    SIGXFSZ = 25,
-    SIGVTALRM = 26,
-    SIGPROF = 27,
-    SIGWINCH = 28,
-    SIGIO = 29,
-    SIGPWR = 30,
-    SIGSYS = 31,
-}
-pub const SIG_IGN: usize = 0;
-pub const SIG_DFL: usize = usize::MAX;
-pub const SIG_COUNT: i32 = 32;
+use super::uapi::{signal::*, sigset::sigset_t};
 
 /// A process' signal handler table.
 #[derive(Clone, Copy)]
 pub struct Sigtab {
-    pub(super) table: [sigaction; SIG_COUNT as usize],
+    pub(super) table: [sigaction; NSIG as usize],
 }
 
 impl Default for Sigtab {
     fn default() -> Self {
         Self {
             table: [sigaction {
-                __bindgen_anon_1: sigaction__bindgen_ty_1 {
-                    sa_handler_ptr: SIG_DFL as *mut c_void,
+                __sa_handler: __sa_handler_union {
+                    sa_handler: SIG_DFL as *const fn(i32),
                 },
-                sa_mask: 0,
                 sa_flags: 0,
-                sa_return_trampoline: 0 as *mut c_void,
+                sa_restorer: null(),
+                sa_mask: sigset_t { __sig: [0; _] },
             }; _],
         }
     }
@@ -84,10 +43,14 @@ pub fn run_sigsegv_handler(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
         siginfo_t {
             si_signo: Signal::SIGSEGV as i32,
             si_code: 0,
-            si_pid: current().unwrap().pid,
-            si_uid: 0,
-            si_addr: sregs.is_mem_trap().unwrap_or(0) as *mut c_void,
-            si_status: 0,
+            si_errno: Errno::EFAULT as i32,
+            __si_fields: siginfo::__si_field_union {
+                __sigfault: siginfo::__sigfault_struct {
+                    si_addr: sregs.is_mem_trap().unwrap_or(0) as *mut c_void,
+                    si_addr_lsb: 0,
+                    __first: siginfo::__sigfault___first_union { si_pkey: 0 },
+                },
+            },
         },
         regs,
         sregs,
@@ -100,10 +63,14 @@ pub fn run_sigill_handler(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
         siginfo_t {
             si_signo: Signal::SIGILL as i32,
             si_code: 0,
-            si_pid: current().unwrap().pid,
-            si_uid: 0,
-            si_addr: sregs.fault_pc() as *mut c_void,
-            si_status: 0,
+            si_errno: Errno::EFAULT as i32,
+            __si_fields: siginfo::__si_field_union {
+                __sigfault: siginfo::__sigfault_struct {
+                    si_addr: sregs.fault_pc() as *mut c_void,
+                    si_addr_lsb: 0,
+                    __first: siginfo::__sigfault___first_union { si_pkey: 0 },
+                },
+            },
         },
         regs,
         sregs,
@@ -116,10 +83,14 @@ pub fn run_sigtrap_handler(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
         siginfo_t {
             si_signo: Signal::SIGTRAP as i32,
             si_code: 0,
-            si_pid: current().unwrap().pid,
-            si_uid: 0,
-            si_addr: sregs.fault_pc() as *mut c_void,
-            si_status: 0,
+            si_errno: Errno::EFAULT as i32,
+            __si_fields: siginfo::__si_field_union {
+                __sigfault: siginfo::__sigfault_struct {
+                    si_addr: sregs.fault_pc() as *mut c_void,
+                    si_addr_lsb: 0,
+                    __first: siginfo::__sigfault___first_union { si_pkey: 0 },
+                },
+            },
         },
         regs,
         sregs,
@@ -130,8 +101,8 @@ pub fn run_sigtrap_handler(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
 pub fn run_handler(siginfo: siginfo_t, regs: &mut GpRegfile, sregs: &mut SpRegfile) {
     logkf!(
         LogLevel::Debug,
-        "Running signal handler for {:#?}",
-        &siginfo
+        "Running signal handler for {}",
+        siginfo.si_signo
     );
     if siginfo.si_signo == Signal::SIGKILL as i32 {
         // SIGKILL always kills the process; installing a handler does nothing.
@@ -142,16 +113,17 @@ pub fn run_handler(siginfo: siginfo_t, regs: &mut GpRegfile, sregs: &mut SpRegfi
     let proc = super::current().unwrap();
     let guard = proc.sigtab.unintr_lock_shared();
     let action = guard.table[siginfo.si_signo as usize];
-    let handler = unsafe { action.__bindgen_anon_1.sa_handler_ptr } as usize;
-    let returner = action.sa_return_trampoline as usize;
+    let handler = unsafe { action.__sa_handler.sa_handler as *mut c_void };
+    let returner = action.sa_restorer as usize;
 
     if handler == SIG_DFL {
-        use Signal::*;
+        use super::uapi::signal::Signal::*;
+        #[allow(non_snake_case)]
         match unsafe { core::mem::transmute(siginfo.si_signo) } {
             SIGABRT | SIGBUS | SIGFPE | SIGILL | SIGQUIT | SIGSEGV | SIGSYS | SIGTRAP | SIGXCPU
             | SIGXFSZ => signal_die(siginfo.si_signo), //TODO: With core dump.
-            SIGALRM | SIGHUP | SIGINT | SIGIO | SIGPIPE | SIGPROF | SIGPWR | SIGSTKFLT
-            | SIGTERM | SIGUSR1 | SIGUSR2 | SIGVTALRM => signal_die(siginfo.si_signo),
+            SIGALRM | SIGHUP | SIGINT | SIGPIPE | SIGPROF | SIGPWR | SIGSTKFLT | SIGTERM
+            | SIGUSR1 | SIGUSR2 | SIGVTALRM => signal_die(siginfo.si_signo),
             SIGSTOP | SIGTTIN | SIGTTOU => {
                 logkf!(LogLevel::Warning, "TODO: Signals stopping the process")
             }
@@ -160,12 +132,12 @@ pub fn run_handler(siginfo: siginfo_t, regs: &mut GpRegfile, sregs: &mut SpRegfi
         }
         return;
     } else if handler == SIG_IGN {
-        if siginfo.si_pid != proc.pid {
-            // Sent by another process, allowed to ignore.
-            return;
-        }
         match unsafe { core::mem::transmute(siginfo.si_signo) } {
             Signal::SIGSEGV | Signal::SIGTRAP | Signal::SIGILL | Signal::SIGFPE => {
+                if unsafe { siginfo.__si_fields.__si_common.__first.__piduid.si_pid } != proc.pid {
+                    // Sent by another process, allowed to ignore.
+                    return;
+                }
                 // Can't ignore synchronous traps.
                 signal_die(siginfo.si_signo);
             }
@@ -175,7 +147,7 @@ pub fn run_handler(siginfo: siginfo_t, regs: &mut GpRegfile, sregs: &mut SpRegfi
     }
 
     // TODO: Get rid of sched_signal_enter?
-    let success = unsafe { enter_signal(siginfo, handler, returner, regs, sregs) };
+    let success = unsafe { enter_signal(siginfo, handler as usize, returner, regs, sregs) };
     if !success {
         signal_die(Signal::SIGSEGV as i32);
     }

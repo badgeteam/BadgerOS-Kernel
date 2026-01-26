@@ -6,8 +6,8 @@
 #include "radixtree.h"
 
 #include "assertions.h"
+#include "badgeros-abi/errno.h"
 #include "cpu/interrupt.h"
-#include "errno.h"
 #include "rawprint.h"
 #include "sched/sync/rcu.h"
 #include "spinlock.h"

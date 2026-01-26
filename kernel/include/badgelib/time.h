@@ -19,9 +19,9 @@ typedef int64_t timestamp_us_t;
 /// Posix nanoseconds timestamp.
 typedef struct {
     /// Seconds (excluding leap) since 00:00, Jan 1 1970 UTC.
-    uint64_t sec;
+    long sec;
     /// Nanoseconds after [`Self::sec`].
-    uint32_t nsec;
+    long nsec;
 } timespec_t;
 
 // Timer callback function.

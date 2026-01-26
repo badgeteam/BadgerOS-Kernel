@@ -5,10 +5,10 @@
 
 #pragma once
 
+#include "badgeros-abi/errno.h"
 #include "device/dev_addr.h"
 #include "device/dev_class.h"
 #include "device/dtb/dtb.h"
-#include "errno.h"
 #include "filesystem.h"
 #include "map.h"
 #include "sched/sync/mutex.h"

@@ -7,10 +7,7 @@ use core::{ffi::c_char, marker::PhantomData, mem::MaybeUninit, ops::Range, ptr::
 use alloc::{ffi::CString, vec::Vec};
 
 use crate::{
-    bindings::{
-        error::{EResult, Errno},
-        raw::{sigaction, stat_t},
-    },
+    bindings::error::{EResult, Errno},
     cpu::{
         self,
         usercopy::{copy_from_user, copy_to_user, fallible_load_u8},
@@ -70,8 +67,6 @@ unsafe impl UserCopyable for isize {}
 unsafe impl<T: UserCopyable> UserCopyable for *mut T {}
 unsafe impl<T: UserCopyable> UserCopyable for *const T {}
 unsafe impl<T: UserCopyable, const L: usize> UserCopyable for [T; L] {}
-unsafe impl UserCopyable for stat_t {}
-unsafe impl UserCopyable for sigaction {}
 
 /// Represents a slice of user memory.
 /// Can be safely constructed from a (pointer, length) pair.

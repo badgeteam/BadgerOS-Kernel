@@ -5,8 +5,8 @@
 
 #pragma once
 
+#include "badgeros-abi/errno.h"
 #include "device/device.h"
-#include "errno.h"
 #include "process/process.h"
 
 

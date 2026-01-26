@@ -8,11 +8,12 @@ use core::{
 };
 
 use crate::{
-    bindings::{error::Errno, raw::stat_t},
+    bindings::error::Errno,
     filesystem::{self, PATH_MAX},
     process::{
         self,
         files::FileDesc,
+        uapi::stat::stat,
         usercopy::{self, UserPtrMut, UserSlice, UserSliceMut},
     },
 };
@@ -148,14 +149,14 @@ pub unsafe extern "C" fn syscall_fs_stat(
     fd: c_int,
     path: *const c_char,
     follow_link: bool,
-    stat_out: *mut stat_t,
+    stat_out: *mut stat,
 ) -> c_int {
     let proc = process::current().unwrap();
     Errno::extract(
         try {
             let files = proc.files.lock_shared()?;
             let mut stat_out = UserPtrMut::new_mut(stat_out)?;
-            let stat: stat_t;
+            let stat: stat;
             if path.is_null() {
                 stat = files.get_file(fd)?.stat()?.into();
             } else {

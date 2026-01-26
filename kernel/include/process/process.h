@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "badgeros-abi/pid_t.h"
 #include "mem/vmm.h"
 
 #include <stdatomic.h>
@@ -17,9 +18,6 @@
 #endif
 
 #define PROC_FLAG_STOPPING (1u << 0)
-
-// Unique process identifier.
-typedef int64_t pid_t;
 
 // The process descriptor structure.
 typedef struct process process_t;

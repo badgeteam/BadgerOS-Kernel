@@ -1,5 +1,4 @@
-use bytemuck::{Pod, Zeroable};
-use raw::{sigaction, stat_t, timestamp_us_t};
+use raw::timestamp_us_t;
 
 #[allow(non_upper_case_globals)]
 #[allow(non_camel_case_types)]
@@ -25,8 +24,3 @@ pub mod spinlock;
 pub fn time_us() -> timestamp_us_t {
     unsafe { raw::time_us() }
 }
-
-unsafe impl Zeroable for stat_t {}
-unsafe impl Pod for stat_t {}
-unsafe impl Zeroable for sigaction {}
-unsafe impl Pod for sigaction {}

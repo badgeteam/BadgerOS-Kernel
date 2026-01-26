@@ -4,7 +4,7 @@
 
 use core::{
     ffi::{c_char, c_int, c_void},
-    ptr::null_mut,
+    ptr::null,
 };
 
 use alloc::{ffi::CString, vec::Vec};
@@ -12,7 +12,7 @@ use alloc::{ffi::CString, vec::Vec};
 use crate::{
     bindings::{
         error::{EResult, Errno},
-        raw::{SIGKILL, SIGSEGV, SIGSTOP, rawputc, sigaction, sigaction__bindgen_ty_1},
+        raw::rawputc,
     },
     cpu::thread::GpRegfile,
     kernel::sched::Thread,
@@ -21,7 +21,15 @@ use crate::{
 
 use super::{
     Cmdline, PID, current,
-    signal::{SIG_COUNT, SIG_DFL},
+    uapi::{
+        self,
+        signal::{
+            __sa_handler_union, NSIG, SIG_DFL, Signal, sigaction,
+            siginfo::{__si_field_union, __sigfault___first_union, __sigfault_struct},
+            siginfo_t,
+        },
+        sigset::sigset_t,
+    },
     usercopy::{UserPtr, UserSlice},
 };
 
@@ -123,7 +131,10 @@ pub unsafe extern "C" fn syscall_proc_sigaction(
     old_act: *mut sigaction,
 ) -> c_int {
     let proc = current().unwrap();
-    if signum < 0 || signum >= SIG_COUNT || signum == SIGSTOP as c_int || signum == SIGKILL as c_int
+    if signum < 0
+        || signum >= NSIG
+        || signum == Signal::SIGSTOP as c_int
+        || signum == Signal::SIGKILL as c_int
     {
         return -(Errno::EINVAL as c_int);
     }
@@ -139,12 +150,12 @@ pub unsafe extern "C" fn syscall_proc_sigaction(
                 act.read()?
             } else {
                 sigaction {
-                    __bindgen_anon_1: sigaction__bindgen_ty_1 {
-                        sa_handler_ptr: SIG_DFL as *mut c_void,
+                    __sa_handler: __sa_handler_union {
+                        sa_handler: SIG_DFL as *const fn(i32),
                     },
-                    sa_mask: 0,
                     sa_flags: 0,
-                    sa_return_trampoline: null_mut(),
+                    sa_restorer: null(),
+                    sa_mask: sigset_t { __sig: [0; _] },
                 }
             };
         },
@@ -156,7 +167,7 @@ pub unsafe extern "C" fn syscall_proc_sigaction(
 pub unsafe extern "C" fn syscall_proc_sigret() {
     // if !unsafe { sched_signal_exit() } {
     // TODO.
-    signal_die(SIGSEGV as i32);
+    signal_die(uapi::signal::Signal::SIGSEGV as i32);
     // run_handler(siginfo_t {
     //     si_signo: SIGSEGV as c_int,
     //     si_code: 0,

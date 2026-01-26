@@ -5,8 +5,8 @@
 
 #pragma once
 
+#include "badgeros-abi/errno.h"
 #include "cpu/mmu.h"
-#include "errno.h"
 #include "sched/sync/mutex.h"
 
 #include <stdbool.h>

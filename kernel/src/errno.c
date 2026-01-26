@@ -1,7 +1,7 @@
 
 // SPDX-License-Identifier: MIT
 
-#include "errno.h"
+#include "badgeros-abi/errno.h"
 
 // Get the name of an ERRNO.
 char const *errno_get_name(int errno) {

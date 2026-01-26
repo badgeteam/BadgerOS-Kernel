@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "assertions.h"
-#include "errno.h"
+#include "badgeros-abi/errno.h"
 #include "interrupt.h"
 #include "log.h"
 #include "mem/vmm.h"

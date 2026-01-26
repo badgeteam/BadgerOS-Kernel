@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include "errno.h"
+#include "badgeros-abi/errno.h"
 #include "sched/waitlist.h"
 #include "time.h"
 

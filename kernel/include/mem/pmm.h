@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "errno.h"
+#include "badgeros-abi/errno.h"
 
 #include <stdatomic.h>
 #include <stdbool.h>

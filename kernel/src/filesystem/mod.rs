@@ -28,7 +28,7 @@ use crate::{
             class::{block::BlockDevice, char::CharDevice},
         },
         error::{EResult, Errno},
-        raw::{errno_t, file_t, stat_t},
+        raw::{errno_t, file_t},
     },
     filesystem::{
         c_api::ref_as_file,
@@ -36,7 +36,10 @@ use crate::{
         vfs::{VNodeMtxInner, mflags, vnflags},
     },
     kernel::sync::mutex::{Mutex, SharedMutexGuard},
-    process::usercopy::{UserSlice, UserSliceMut},
+    process::{
+        uapi::stat::stat,
+        usercopy::{UserSlice, UserSliceMut},
+    },
 };
 
 pub mod c_api;
@@ -195,22 +198,22 @@ pub struct Stat {
     pub ctim: Timespec,
 }
 
-impl Into<stat_t> for Stat {
-    fn into(self) -> stat_t {
-        stat_t {
-            dev: self.dev,
-            ino: self.ino,
-            mode: self.mode,
-            nlink: self.nlink,
-            uid: self.uid,
-            gid: self.gid,
-            rdev: self.rdev,
-            size: self.size,
-            blksize: self.blksize,
-            blocks: self.blocks,
-            atim: self.atim.into(),
-            mtim: self.mtim.into(),
-            ctim: self.ctim.into(),
+impl Into<stat> for Stat {
+    fn into(self) -> stat {
+        stat {
+            st_dev: self.dev,
+            st_ino: self.ino as i64,
+            st_mode: self.mode as u32,
+            st_nlink: self.nlink as u64,
+            st_uid: self.uid as u32,
+            st_gid: self.gid as u32,
+            st_rdev: self.rdev,
+            st_size: self.size as i64,
+            st_blksize: self.blksize,
+            st_blocks: self.blocks as i64,
+            st_atim: self.atim.into(),
+            st_mtim: self.mtim.into(),
+            st_ctim: self.ctim.into(),
         }
     }
 }

@@ -4,11 +4,11 @@
 #pragma once
 
 #include "badge_strings.h"
+#include "badgeros-abi/signal.h"
 #include "bootp.h"
 #include "device/class/union.h"
 #include "device/device.h"
 #include "device/dtb/dtb.h"
-#include "errno.h"
 #include "filesystem.h"
 #include "interrupt.h"
 #include "kmodule.h"
@@ -25,5 +25,4 @@
 #include "sched/sync/mutex.h"
 #include "sched/sync/rcu.h"
 #include "sched/sync/sem.h"
-#include "signal.h"
 #include "smp.h"

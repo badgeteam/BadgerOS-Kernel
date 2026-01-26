@@ -5,12 +5,12 @@
 use core::arch::asm;
 
 use crate::{
-    bindings::raw::siginfo_t,
     cpu::{
         irq,
         thread::{GpRegfile, SpRegfile},
     },
     kernel::{cpulocal::CpuLocal, sched::Thread},
+    process::uapi::signal::siginfo_t,
 };
 
 /// Thread's userspace context.

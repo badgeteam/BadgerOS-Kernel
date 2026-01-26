@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include "errno.h"
+#include "badgeros-abi/errno.h"
 #include "time.h"
 
 #include <stddef.h>

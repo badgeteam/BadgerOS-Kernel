@@ -4,7 +4,7 @@
 #pragma once
 
 #include "attributes.h"
-#include "errno.h"
+#include "badgeros-abi/errno.h"
 #include "time.h"
 
 #include <stdatomic.h>

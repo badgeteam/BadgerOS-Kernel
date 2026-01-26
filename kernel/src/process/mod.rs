@@ -47,6 +47,7 @@ pub mod signal;
 pub mod syscall;
 pub mod sysimpl;
 pub mod usercopy;
+pub mod uapi;
 
 pub mod flags {
     pub const STOPPING: u32 = 1 << 0;
