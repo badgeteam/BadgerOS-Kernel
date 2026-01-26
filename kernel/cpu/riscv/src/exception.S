@@ -147,12 +147,23 @@ riscv_exception_asm:
     csrr t1, sepc
     sd t1, 24(sp)
     
+    # Create a fake stack frame for kernel unwinding.
+    addi sp, sp, -16
+    .cfi_adjust_cfa_offset 16
+    csrr t1, sepc
+    sd   t1, 8(sp) # PC
+    sd   s0, 0(sp) # FP
+    addi s0, sp, 16
+    
     # Call C-ABI exception handler.
     la gp, __global_pointer$
-    addi a0, sp, 32 # Pointer to struct GpRegfile
-    mv a1, sp # Pointer to struct SpecialRegfile
+    addi a0, sp, 48 # Pointer to struct GpRegfile
+    addi a1, sp, 16 # Pointer to struct SpecialRegfile
     jal riscv_exception_handler
     csrr t0, sscratch
+    
+    # Delete fake unwind frame.
+    addi sp, sp, 16
     
     # Restore context from the stack.
     ld t1,   0(sp)

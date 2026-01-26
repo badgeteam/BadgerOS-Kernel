@@ -60,7 +60,7 @@ pub fn unhandled_trap(regs: &GpRegfile, sregs: &SpRegfile) -> ! {
         printf_unlocked!("While accessing 0x{:x}\n", vaddr);
     }
 
-    backtrace(regs.get_stack() as *const ());
+    backtrace(get_frame_ptr());
 
     printf_unlocked!(
         "**** BEGIN REGISTER DUMP ****\n{}{}**** END REGISTER DUMP ****\n",
