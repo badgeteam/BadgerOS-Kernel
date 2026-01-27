@@ -334,10 +334,11 @@ impl Memmap {
             }
         } else {
             // Immediately map memory.
-            let mem = PhysPtr::new(
-                (VPN::BITS - size.leading_zeros() - 1) as u8,
-                pmm::PageUsage::KernelAnon,
-            )?;
+            let mut order = size.ilog2(); // Effectively ceiling ilog2.
+            if 1 << order < size {
+                order += 1;
+            }
+            let mem = PhysPtr::new(order as u8, pmm::PageUsage::KernelAnon)?;
             let mut offset = 0;
             while offset < size {
                 let order =

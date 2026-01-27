@@ -20,7 +20,7 @@ pub mod siginfo {
     use core::ffi::{c_char, c_int, c_long, c_short, c_uint, c_void};
 
     #[repr(C)]
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     pub struct __si_common___first___piduid_struct {
         pub si_pid: pid_t,
         pub si_uid: uid_t,
@@ -28,7 +28,7 @@ pub mod siginfo {
     unsafe impl UserCopyable for __si_common___first___piduid_struct {}
 
     #[repr(C)]
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     pub struct __si_common___first___timer_struct {}
     unsafe impl UserCopyable for __si_common___first___timer_struct {}
 
@@ -38,10 +38,18 @@ pub mod siginfo {
         pub __piduid: __si_common___first___piduid_struct,
         pub __timer: __si_common___first___timer_struct,
     }
+    impl core::fmt::Debug for __si_common___first_union {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            f.debug_struct("__si_common___first_union")
+                .field("__piduid", unsafe { &self.__piduid })
+                .field("__timer", unsafe { &self.__timer })
+                .finish()
+        }
+    }
     unsafe impl UserCopyable for __si_common___first_union {}
 
     #[repr(C)]
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     pub struct __si_common___second___sigchld_struct {
         pub si_status: c_int,
         pub si_utime: clock_t,
@@ -55,10 +63,18 @@ pub mod siginfo {
         pub si_value: sigval,
         pub __sigchld: __si_common___second___sigchld_struct,
     }
+    impl core::fmt::Debug for __si_common___second_union {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            f.debug_struct("__si_common___second_union")
+                .field("si_value", unsafe { &self.si_value })
+                .field("__sigchld", unsafe { &self.__sigchld })
+                .finish()
+        }
+    }
     unsafe impl UserCopyable for __si_common___second_union {}
 
     #[repr(C)]
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     pub struct __si_common_struct {
         pub __first: __si_common___first_union,
         pub __second: __si_common___second_union,
@@ -66,7 +82,7 @@ pub mod siginfo {
     unsafe impl UserCopyable for __si_common_struct {}
 
     #[repr(C)]
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     pub struct __sigfault___first___addr_bnd_struct {
         pub si_lower: *mut c_void,
         pub si_upper: *mut c_void,
@@ -79,10 +95,18 @@ pub mod siginfo {
         pub __addr_bnd: __sigfault___first___addr_bnd_struct,
         pub si_pkey: c_uint,
     }
+    impl core::fmt::Debug for __sigfault___first_union {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            f.debug_struct("__sigfault___first_union")
+                .field("__addr_bnd", unsafe { &self.__addr_bnd })
+                .field("si_pkey", unsafe { &self.si_pkey })
+                .finish()
+        }
+    }
     unsafe impl UserCopyable for __sigfault___first_union {}
 
     #[repr(C)]
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     pub struct __sigfault_struct {
         pub si_addr: *mut c_void,
         pub si_addr_lsb: c_short,
@@ -91,7 +115,7 @@ pub mod siginfo {
     unsafe impl UserCopyable for __sigfault_struct {}
 
     #[repr(C)]
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     pub struct __sigpoll_struct {
         pub si_band: c_long,
         pub si_fd: c_long,
@@ -99,7 +123,7 @@ pub mod siginfo {
     unsafe impl UserCopyable for __sigpoll_struct {}
 
     #[repr(C)]
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     pub struct __sigsys_struct {
         pub si_call_addr: *mut c_void,
         pub si_syscall: c_int,
@@ -116,11 +140,21 @@ pub mod siginfo {
         pub __sigpoll: __sigpoll_struct,
         pub __sigsys: __sigsys_struct,
     }
+    impl core::fmt::Debug for __si_field_union {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            f.debug_struct("__si_field_union")
+                .field("__si_common", unsafe { &self.__si_common })
+                .field("__sigfault", unsafe { &self.__sigfault })
+                .field("__sigpoll", unsafe { &self.__sigpoll })
+                .field("__sigsys", unsafe { &self.__sigsys })
+                .finish()
+        }
+    }
     unsafe impl UserCopyable for __si_field_union {}
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct siginfo_t {
     pub si_signo: c_int,
     pub si_errno: c_int,
@@ -129,7 +163,7 @@ pub struct siginfo_t {
 }
 unsafe impl UserCopyable for siginfo_t {}
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(i32)]
 pub enum Signal {
     SIGHUP = 1,
@@ -171,7 +205,7 @@ pub enum Signal {
 
 pub const NSIG: i32 = 65;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct __stack {
     pub ss_sp: *mut c_void,
@@ -187,9 +221,17 @@ pub union __sa_handler_union {
     pub sa_handler: *const fn(c_int),
     pub sa_sigaction: *const fn(c_int, *mut siginfo_t, *mut c_void),
 }
+impl core::fmt::Debug for __sa_handler_union {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("__sa_handler_union")
+            .field("sa_handler", unsafe { &self.sa_handler })
+            .field("sa_sigaction", unsafe { &self.sa_sigaction })
+            .finish()
+    }
+}
 unsafe impl UserCopyable for __sa_handler_union {}
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct sigaction {
     pub __sa_handler: __sa_handler_union,

@@ -25,6 +25,7 @@ use crate::{
     },
     filesystem::{MakeFileSpec, NAME_MAX},
     kernel::sync::mutex::Mutex,
+    mem::vmm::flags::X,
     process::usercopy::{UserSlice, UserSliceMut},
     util::MaybeMut,
 };
@@ -64,58 +65,156 @@ impl E2VNode {
         let guard = self.inode.lock_shared()?;
         let mut res = self.get_block_unlocked(e2fs, block, MaybeMut::Const(&guard))?;
         drop(guard);
-        if de_sparse {
+        if de_sparse && res.is_none() {
             let mut guard = self.inode.lock()?;
             res = self.get_block_unlocked(e2fs, block, MaybeMut::Mut(&mut guard))?;
             debug_assert!(res.is_some());
         }
+        logkf!(LogLevel::Debug, "get_block({}) -> {:?}", block, &res);
         Ok(res)
     }
 
-    /// Recursive implementation of `get_block`.
-    fn get_block_impl(
+    /// Helper function for finding singly-indirect blocks.
+    fn get_indir3_block_impl(
         &self,
         e2fs: &E2Fs,
-        level: u8,
-        fileblk: u32,
-        block_ptr: NonZeroU32,
+        index: (u32, u32, u32, u32),
         group_hint: u32,
-        mut inode: MaybeMut<'_, Inode>,
+        inode: &mut MaybeMut<'_, Inode>,
     ) -> EResult<Option<NonZeroU32>> {
-        if level == 0 {
-            return Ok(Some(block_ptr));
-        }
-
-        let index =
-            (fileblk >> (e2fs.block_size_exp * level as u32)) % (1u32 << e2fs.block_size_exp);
-        let block_ptr = ((u32::from(block_ptr) as u64) << e2fs.block_size_exp) + 4 * index as u64;
-        let mut tmp = [0u8; 4];
-        e2fs.media.readk(block_ptr, &mut tmp)?;
-
-        let mut block = u32::from_le_bytes(tmp);
-        if block == 0 {
-            if let MaybeMut::Mut(inode) = &mut inode {
-                block = e2fs.alloc_block(group_hint)?.into();
-                e2fs.media.writek(block_ptr, &block.to_le_bytes())?;
-                inode.realsize += 1u32 << (e2fs.block_size_exp - 9);
-                e2fs.media.writek(
-                    self.inode_offset + offset_of!(Inode, realsize) as u64,
-                    &inode.realsize.to_le_bytes(),
-                )?;
-            } else {
-                return Ok(None);
-            }
-        }
-        let block = unsafe { NonZeroU32::new_unchecked(block) };
-
-        self.get_block_impl(
+        let ptr_block = match self.get_indir2_block_impl(
             e2fs,
-            level - 1,
-            fileblk,
-            block,
-            u32::from(block) / e2fs.blocks_per_group,
+            (index.1, index.2, index.3),
+            group_hint,
             inode,
-        )
+        )? {
+            Some(x) => x,
+            None => return Ok(None),
+        };
+
+        let ptr_block_diskoff = (u32::from(ptr_block) as u64) << e2fs.block_size_exp;
+        let block = NonZeroU32::new(e2fs.media.read_le(ptr_block_diskoff + 4 * index.0 as u64)?);
+
+        if let MaybeMut::Mut(inode) = inode
+            && block.is_none()
+        {
+            let block = e2fs.alloc_block(group_hint)?;
+            inode.realsize += 1 << (e2fs.block_size_exp - 9);
+
+            e2fs.media
+                .write_le(ptr_block_diskoff + 4 * index.0 as u64, u32::from(block))?;
+            e2fs.media.write_le(
+                self.inode_offset + offset_of!(Inode, realsize) as u64,
+                inode.realsize,
+            )?;
+
+            Ok(Some(block))
+        } else {
+            Ok(block)
+        }
+    }
+
+    /// Helper function for finding singly-indirect blocks.
+    fn get_indir2_block_impl(
+        &self,
+        e2fs: &E2Fs,
+        index: (u32, u32, u32),
+        group_hint: u32,
+        inode: &mut MaybeMut<'_, Inode>,
+    ) -> EResult<Option<NonZeroU32>> {
+        let ptr_block =
+            match self.get_indir1_block_impl(e2fs, (index.1, index.2), group_hint, inode)? {
+                Some(x) => x,
+                None => return Ok(None),
+            };
+
+        let ptr_block_diskoff = (u32::from(ptr_block) as u64) << e2fs.block_size_exp;
+        let block = NonZeroU32::new(e2fs.media.read_le(ptr_block_diskoff + 4 * index.0 as u64)?);
+
+        if let MaybeMut::Mut(inode) = inode
+            && block.is_none()
+        {
+            let block = e2fs.alloc_block(group_hint)?;
+            inode.realsize += 1 << (e2fs.block_size_exp - 9);
+
+            e2fs.media
+                .write_le(ptr_block_diskoff + 4 * index.0 as u64, u32::from(block))?;
+            e2fs.media.write_le(
+                self.inode_offset + offset_of!(Inode, realsize) as u64,
+                inode.realsize,
+            )?;
+
+            Ok(Some(block))
+        } else {
+            Ok(block)
+        }
+    }
+
+    /// Helper function for finding singly-indirect blocks.
+    fn get_indir1_block_impl(
+        &self,
+        e2fs: &E2Fs,
+        index: (u32, u32),
+        group_hint: u32,
+        inode: &mut MaybeMut<'_, Inode>,
+    ) -> EResult<Option<NonZeroU32>> {
+        let ptr_block = match self.get_direct_block_impl(e2fs, index.1, group_hint, inode)? {
+            Some(x) => x,
+            None => return Ok(None),
+        };
+
+        let ptr_block_diskoff = (u32::from(ptr_block) as u64) << e2fs.block_size_exp;
+        let block = NonZeroU32::new(e2fs.media.read_le(ptr_block_diskoff + 4 * index.0 as u64)?);
+
+        if let MaybeMut::Mut(inode) = inode
+            && block.is_none()
+        {
+            let block = e2fs.alloc_block(group_hint)?;
+            inode.realsize += 1 << (e2fs.block_size_exp - 9);
+
+            e2fs.media
+                .write_le(ptr_block_diskoff + 4 * index.0 as u64, u32::from(block))?;
+            e2fs.media.write_le(
+                self.inode_offset + offset_of!(Inode, realsize) as u64,
+                inode.realsize,
+            )?;
+
+            Ok(Some(block))
+        } else {
+            Ok(block)
+        }
+    }
+
+    /// Helper function for finding direct blocks.
+    fn get_direct_block_impl(
+        &self,
+        e2fs: &E2Fs,
+        index: u32,
+        group_hint: u32,
+        inode: &mut MaybeMut<'_, Inode>,
+    ) -> EResult<Option<NonZeroU32>> {
+        let block = NonZeroU32::new(inode.data_blocks[index as usize]);
+
+        if let MaybeMut::Mut(inode) = inode
+            && block.is_none()
+        {
+            let block = e2fs.alloc_block(group_hint)?;
+            inode.data_blocks[index as usize] = block.into();
+            inode.realsize += 1 << (e2fs.block_size_exp - 9);
+
+            e2fs.media.write_le(
+                self.inode_offset + offset_of!(Inode, data_blocks) as u64 + index as u64 * 4,
+                u32::from(block),
+            )?;
+            e2fs.media.write_le(
+                self.inode_offset + offset_of!(Inode, realsize) as u64,
+                inode.realsize,
+            )?;
+
+            Ok(Some(block))
+        } else {
+            Ok(block)
+        }
     }
 
     /// Helper function to get one block ID from the inode.
@@ -127,60 +226,44 @@ impl E2VNode {
     ) -> EResult<Option<NonZeroU32>> {
         let group_hint = self.group(e2fs);
 
-        let block_size_exp = e2fs.block_size_exp;
-        let block_ptrs_exp = block_size_exp - 2;
+        let block_ptrs_exp = e2fs.block_size_exp - 2;
         let ind1_blocks = 1u32 << block_ptrs_exp;
         let ind2_blocks = 1u32 << (2 * block_ptrs_exp);
         let ind3_blocks = 1u32 << (3 * block_ptrs_exp);
 
-        let index: usize;
-        let level: u8;
-        let fileblk: u32;
-
         if block < 12 {
             // Direct blocks.
-            index = block as usize;
-            fileblk = 0;
-            level = 0;
+            self.get_direct_block_impl(e2fs, block, group_hint, &mut inode)
         } else if block - 12 < ind1_blocks {
             // Indirect blocks.
-            index = 12;
-            fileblk = block - 12;
-            level = 1;
+            let index = block - 12;
+            self.get_indir1_block_impl(e2fs, (index, 12), group_hint, &mut inode)
         } else if block - 12 - ind1_blocks < ind2_blocks {
             // Doubly indirect blocks.
-            index = 13;
-            fileblk = block - 12 - ind1_blocks;
-            level = 2;
+            let index = block - 12 - ind1_blocks;
+            self.get_indir2_block_impl(
+                e2fs,
+                (index % ind1_blocks, index / ind1_blocks, 13),
+                group_hint,
+                &mut inode,
+            )
         } else if block - 12 - ind1_blocks - ind2_blocks < ind3_blocks {
             // Triply indirect blocks.
-            index = 13;
-            fileblk = block - 12 - ind1_blocks - ind2_blocks;
-            level = 3;
+            let index = block - 12 - ind1_blocks - ind2_blocks;
+            self.get_indir3_block_impl(
+                e2fs,
+                (
+                    index % ind1_blocks,
+                    index / ind1_blocks % ind1_blocks,
+                    index / ind2_blocks,
+                    14,
+                ),
+                group_hint,
+                &mut inode,
+            )
         } else {
             unreachable!("Block index into inode too high");
         }
-
-        let block_ptr = NonZeroU32::new(inode.data_blocks[index]);
-        let block_ptr = if let Some(x) = block_ptr {
-            x
-        } else if let Some(inode) = &mut inode.try_mut() {
-            let x = e2fs.alloc_block(group_hint)?;
-            (*inode).data_blocks[index] = x.into();
-            inode.realsize += 1u32 << (e2fs.block_size_exp - 9);
-            e2fs.media.writek(
-                self.inode_offset + offset_of!(Inode, data_blocks) as u64 + index as u64 * 4,
-                &inode.data_blocks[index].to_le_bytes(),
-            )?;
-            e2fs.media.writek(
-                self.inode_offset + offset_of!(Inode, realsize) as u64,
-                &inode.realsize.to_le_bytes(),
-            )?;
-            x
-        } else {
-            return Ok(None);
-        };
-        self.get_block_impl(&e2fs, level, fileblk, block_ptr, group_hint, inode)
     }
 
     /// Recursive implementation of `remove_block`.

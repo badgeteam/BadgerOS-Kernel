@@ -11,7 +11,7 @@ use crate::{
         error::{EResult, Errno},
         log::LogLevel,
     },
-    config::PAGE_SIZE,
+    config::{self, PAGE_SIZE},
     filesystem::File,
     mem::vmm::{self, Memmap},
     process::usercopy::UserSliceMut,
@@ -64,9 +64,12 @@ fn map_helper(
 ) -> EResult<()> {
     let start_page_fileoff = phdr.offset - phdr.offset % PAGE_SIZE as u64;
     let min_vaddr_real = (phdr.vaddr as usize).wrapping_add(load_offset);
+    let zinit_vaddr_real =
+        (phdr.vaddr.wrapping_add(phdr.file_size) as usize).wrapping_add(load_offset);
     let max_vaddr_real =
         (phdr.vaddr.wrapping_add(phdr.mem_size) as usize).wrapping_add(load_offset);
     let min_vpn_real = min_vaddr_real / PAGE_SIZE as usize;
+    let zinit_vpn_real = zinit_vaddr_real.div_ceil(PAGE_SIZE as usize);
     let max_vpn_real = max_vaddr_real.div_ceil(PAGE_SIZE as usize);
     let mut flags = vmm::flags::R;
     if phdr.flags & elf64::PF_W != 0 {
@@ -77,6 +80,7 @@ fn map_helper(
     }
 
     let page_count = max_vpn_real - min_vpn_real;
+    let load_page_count = zinit_vpn_real - min_vpn_real;
     logkf!(
         LogLevel::Debug,
         "Mapping 0x{:x} bytes at 0x{:x}",
@@ -85,9 +89,24 @@ fn map_helper(
     );
     unsafe { memmap.map_ram(Some(min_vpn_real), page_count, flags)? };
 
+    // Start by zeroing all the RAM.
     let mut page_offset = 0;
-    while page_offset < page_count {
+    while page_offset < load_page_count {
         let mapping = memmap.virt2phys((min_vpn_real + page_offset) * PAGE_SIZE as usize);
+        let hhdm_vaddr = mapping.page_paddr + unsafe { vmm::HHDM_OFFSET };
+        let hhdm_slice =
+            unsafe { &mut *slice_from_raw_parts_mut(hhdm_vaddr as *mut u8, mapping.size) };
+        hhdm_slice.fill(0);
+        page_offset += mapping.size / PAGE_SIZE as usize;
+    }
+
+    let mut page_offset = 0;
+    while page_offset < load_page_count {
+        let mut mapping = memmap.virt2phys((min_vpn_real + page_offset) * PAGE_SIZE as usize);
+        if min_vpn_real + page_offset + mapping.size / config::PAGE_SIZE as usize > zinit_vpn_real {
+            mapping.size =
+                (zinit_vpn_real - min_vpn_real - page_offset) * config::PAGE_SIZE as usize;
+        }
         logkf!(
             LogLevel::Debug,
             "Reading 0x{:x} bytes into 0x{:x} (paddr 0x{:x})",

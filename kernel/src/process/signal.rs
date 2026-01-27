@@ -99,11 +99,9 @@ pub fn run_sigtrap_handler(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
 
 /// Run the handler for some signal.
 pub fn run_handler(siginfo: siginfo_t, regs: &mut GpRegfile, sregs: &mut SpRegfile) {
-    logkf!(
-        LogLevel::Debug,
-        "Running signal handler for {}",
-        siginfo.si_signo
-    );
+    logkf!(LogLevel::Debug, "{:#?}", siginfo);
+    logkf!(LogLevel::Debug, "regs:\n{}", regs);
+    logkf!(LogLevel::Debug, "sregs:\n{}", sregs);
     if siginfo.si_signo == Signal::SIGKILL as i32 {
         // SIGKILL always kills the process; installing a handler does nothing.
         signal_die(siginfo.si_signo);
