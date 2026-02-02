@@ -32,7 +32,11 @@ pub struct FDTable {
     inner: BTreeMap<i32, FileDesc>,
 }
 
-pub const O_CLOEXEC: u32 = 0x00010000;
+pub mod fdflags {
+    pub const O_CLOEXEC: u32 = 0x0001_0000;
+
+    pub const O_NOCTTY: u32 = 0x0100_0000;
+}
 
 impl FDTable {
     /// If `fileno` is [`AT_FDCWD`], return `Ok(None)`; otherwise, the same as [`Self::get_file`].
@@ -109,7 +113,7 @@ impl FDTable {
     /// Helper that removes all [`O_CLOEXEC`] files.
     pub fn close_cloexec(&mut self) {
         self.inner
-            .retain(|_, v| v.flags.load(Ordering::Relaxed) & O_CLOEXEC == 0);
+            .retain(|_, v| v.flags.load(Ordering::Relaxed) & fdflags::O_CLOEXEC == 0);
     }
 
     /// Clear this files table.

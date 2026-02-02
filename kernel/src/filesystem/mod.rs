@@ -422,6 +422,8 @@ pub mod oflags {
     pub const TRUNCATE:   u32 = 0x0000_0100;
     /// Use non-blocking I/O.
     pub const NONBLOCK:   u32 = 0x0000_0200;
+    /// TODO: Delete file after last reference to it is dropped.
+    pub const TMPFILE:    u32 = 0x0000_0400;
 }
 
 #[rustfmt::skip]

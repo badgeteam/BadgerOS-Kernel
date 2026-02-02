@@ -156,7 +156,7 @@ impl Memmap {
 
         let pte = self.pagetable.walk(vaddr / PAGE_SIZE as usize);
 
-        let size = (PAGE_SIZE as usize) << (mmu::BITS_PER_LEVEL * pte.order as u32);
+        let size = (PAGE_SIZE as usize) << (mmu::BITS_PER_LEVEL * pte.level as u32);
         let page_vaddr = vaddr & !(size - 1);
         let page_paddr = pte.ppn * PAGE_SIZE as usize;
         let offset = vaddr - page_vaddr;
@@ -196,7 +196,7 @@ impl Memmap {
                 unsafe { new_mm.pagetable.map(vpn, OwnedPTE::from_raw_ref(pte)) }?;
             }
 
-            min_vpn = vpn + (1 << pte.order);
+            min_vpn = vpn + (1 << pte.level);
         }
 
         // TODO: Fallible clone of this structure.
@@ -359,11 +359,30 @@ impl Memmap {
     }
 
     /// Change the protection attributes for a region.
-    pub unsafe fn protect(&self, vpn: VPN, new_flags: u32) -> EResult<()> {
+    pub unsafe fn protect(
+        &self,
+        vpn: VPN,
+        size: VPN,
+        set_prot: u32,
+        clear_prot: u32,
+    ) -> EResult<()> {
+        debug_assert!(set_prot & !flags::RWX == 0);
+        debug_assert!(clear_prot & !flags::RWX == 0);
+
         // Inhibit concurrent changes to the mappings.
         let _guard = self.vma_alloc.unintr_lock();
 
-        todo!()
+        for vpn in vpn..vpn + size {
+            // TODO: This is awful. But at least it kinda works. Sorta.
+            let mut pte = self.pagetable.walk(vpn);
+            pte.flags = (pte.flags & !clear_prot) | set_prot;
+            pte.level = 0;
+            unsafe {
+                self.pagetable.map(vpn, OwnedPTE::from_raw_ref(pte))?;
+            }
+        }
+
+        Ok(())
     }
 
     /// Common implementation of all mapping functions.
@@ -447,7 +466,7 @@ impl Memmap {
                 }
             }
 
-            vpn += 1 << mmu::BITS_PER_LEVEL * pte.order as u32;
+            vpn += 1 << mmu::BITS_PER_LEVEL * pte.level as u32;
         }
     }
 

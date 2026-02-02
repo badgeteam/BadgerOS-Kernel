@@ -11,7 +11,6 @@ use crate::{
         usermode::enter_signal,
     },
     kernel::sched::Thread,
-    process::current,
 };
 
 use super::uapi::{signal::*, sigset::sigset_t};

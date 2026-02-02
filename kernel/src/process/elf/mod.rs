@@ -7,10 +7,7 @@ use core::ptr::slice_from_raw_parts_mut;
 use bytemuck_derive::{AnyBitPattern, NoUninit};
 
 use crate::{
-    bindings::{
-        error::{EResult, Errno},
-        log::LogLevel,
-    },
+    bindings::error::{EResult, Errno},
     config::{self, PAGE_SIZE},
     filesystem::File,
     mem::vmm::{self, Memmap},
@@ -81,12 +78,6 @@ fn map_helper(
 
     let page_count = max_vpn_real - min_vpn_real;
     let load_page_count = zinit_vpn_real - min_vpn_real;
-    logkf!(
-        LogLevel::Debug,
-        "Mapping 0x{:x} bytes at 0x{:x}",
-        page_count * PAGE_SIZE as usize,
-        min_vpn_real * PAGE_SIZE as usize
-    );
     unsafe { memmap.map_ram(Some(min_vpn_real), page_count, flags)? };
 
     // Start by zeroing all the RAM.
@@ -102,21 +93,17 @@ fn map_helper(
 
     let mut page_offset = 0;
     while page_offset < load_page_count {
-        let mut mapping = memmap.virt2phys((min_vpn_real + page_offset) * PAGE_SIZE as usize);
-        if min_vpn_real + page_offset + mapping.size / config::PAGE_SIZE as usize > zinit_vpn_real {
-            mapping.size =
-                (zinit_vpn_real - min_vpn_real - page_offset) * config::PAGE_SIZE as usize;
+        let mapping = memmap.virt2phys((min_vpn_real + page_offset) * PAGE_SIZE as usize);
+        let mut read_size = mapping.size;
+        if (min_vpn_real + page_offset) * config::PAGE_SIZE as usize + mapping.size
+            > zinit_vaddr_real
+        {
+            read_size =
+                zinit_vaddr_real - (min_vpn_real + page_offset) * config::PAGE_SIZE as usize;
         }
-        logkf!(
-            LogLevel::Debug,
-            "Reading 0x{:x} bytes into 0x{:x} (paddr 0x{:x})",
-            mapping.size,
-            mapping.page_vaddr,
-            mapping.page_paddr
-        );
         let hhdm_vaddr = mapping.page_paddr + unsafe { vmm::HHDM_OFFSET };
         let hhdm_slice =
-            unsafe { &mut *slice_from_raw_parts_mut(hhdm_vaddr as *mut u8, mapping.size) };
+            unsafe { &mut *slice_from_raw_parts_mut(hhdm_vaddr as *mut u8, read_size) };
         file.seek_strong(
             start_page_fileoff + page_offset as u64 * PAGE_SIZE as u64,
             Errno::ENOEXEC,

@@ -9,7 +9,10 @@ use core::{
 
 use super::*;
 use crate::{
-    bindings::{error::EResult, raw::phys_page_free},
+    bindings::{
+        error::{EResult, Errno},
+        raw::phys_page_free,
+    },
     cpu::mmu::{INVALID_PTE, PackedPTE},
     mem::pmm,
 };
@@ -22,7 +25,7 @@ pub struct PTE {
     /// Page protection flags, see [`super::flags`].
     pub flags: u32,
     /// At what level of the page table this PTE is stored.
-    pub order: u8,
+    pub level: u8,
     /// Whether this PTE is valid.
     pub valid: bool,
     /// Whether this is a leaf PTE.
@@ -33,7 +36,7 @@ impl PartialEq for PTE {
     fn eq(&self, other: &Self) -> bool {
         self.ppn == other.ppn
             && (self.flags & flags::RWX) == (other.flags & flags::RWX)
-            && self.order == other.order
+            && self.level == other.level
             && self.valid == other.valid
             && (self.leaf == other.leaf || !self.valid && !other.valid)
     }
@@ -44,7 +47,7 @@ impl PTE {
     pub const NULL: PTE = PTE {
         ppn: 0,
         flags: 0,
-        order: 0,
+        level: 0,
         valid: false,
         leaf: false,
     };
@@ -112,7 +115,7 @@ impl OwnedPTE {
         Self(PTE {
             ppn,
             flags: (flags & !flags::MODE) | flags::MMIO,
-            order,
+            level: order,
             valid: true,
             leaf: true,
         })
@@ -145,7 +148,7 @@ impl OwnedPTE {
         Self(PTE {
             ppn,
             flags,
-            order,
+            level: order,
             valid: true,
             leaf: true,
         })
@@ -163,7 +166,7 @@ impl OwnedPTE {
 
     /// At what level of the page table this PTE is stored.
     pub fn order(&self) -> u8 {
-        self.0.order
+        self.0.level
     }
 
     /// Whether this PTE is valid.
@@ -204,7 +207,7 @@ impl Drop for OwnedPTE {
                 unsafe { pmm::page_free(self.0.ppn) };
             }
         } else {
-            unsafe { PageTable::drop_impl(self.0.ppn, self.0.order) };
+            unsafe { PageTable::drop_impl(self.0.ppn, self.0.level) };
         }
     }
 }
@@ -227,6 +230,7 @@ pub struct PageTable {
     root_ppn: PPN,
 }
 
+// TODO: This has multiple possible race conditions if concurrently modified.
 impl PageTable {
     /// Create a new page table.
     pub fn new() -> EResult<Self> {
@@ -301,7 +305,7 @@ impl PageTable {
                             flags: global_flag,
                             valid: true,
                             leaf: false,
-                            order: level,
+                            level,
                         }
                         .pack(),
                     )
@@ -315,7 +319,7 @@ impl PageTable {
                     flags: pte.flags,
                     valid: true,
                     leaf: true,
-                    order: level - 1,
+                    level: level - 1,
                 }));
                 unsafe {
                     xchg_pte(
@@ -326,7 +330,7 @@ impl PageTable {
                             flags: global_flag,
                             valid: true,
                             leaf: false,
-                            order: level,
+                            level,
                         }
                         .pack(),
                     )
@@ -355,6 +359,46 @@ impl PageTable {
         Ok(old_pte.unwrap_or(OwnedPTE::NULL))
     }
 
+    /// Change the protection flags of a specific PTE.
+    /// Fails if there is not a protectable PTE present at the correct location.
+    pub fn protect(&self, vpn: VPN, level: u8, set_prot: u32, clear_prot: u32) -> Result<PTE, PTE> {
+        debug_assert!(set_prot & !flags::RWX == 0);
+        debug_assert!(clear_prot & !flags::RWX == 0);
+        let mut pgtable_ppn = self.root_ppn;
+        let mut pte;
+
+        let _noirq = IrqGuard::new();
+
+        // Descend the page until a leaf is found.
+        for _ in (level..unsafe { PAGING_LEVELS as u8 }).rev() {
+            let index = get_vpn_index(vpn, level as u8);
+            pte = PTE::unpack(unsafe { read_pte(pgtable_ppn, index) }, level as u8);
+
+            if !pte.valid || pte.leaf {
+                return Err(pte);
+            } else {
+                pgtable_ppn = pte.ppn;
+            }
+        }
+
+        let index = get_vpn_index(vpn, level as u8);
+
+        loop {
+            let old = unsafe { read_pte(pgtable_ppn, index) };
+            let mut pte = PTE::unpack(old, level as u8);
+            if !pte.valid || !pte.leaf {
+                return Err(pte);
+            }
+            pte.flags &= !clear_prot;
+            pte.flags |= set_prot;
+            let new = PTE::pack(pte);
+
+            if unsafe { cmpxchg_pte(pgtable_ppn, index, old, new) } {
+                return Ok(pte);
+            }
+        }
+    }
+
     /// Walk down the page table and read the target vaddr's PTE.
     #[inline(always)]
     pub fn walk(&self, vpn: VPN) -> PTE {
@@ -367,14 +411,14 @@ impl PageTable {
         let mut pgtable_ppn = self.root_ppn;
         let mut pte;
 
-        let _noirq = unsafe { IrqGuard::new() };
+        let _noirq = IrqGuard::new();
 
         // Descend the page until a leaf is found.
         for level in (0..unsafe { PAGING_LEVELS }).rev() {
             let index = get_vpn_index(vpn, level as u8);
             pte = PTE::unpack(unsafe { read_pte(pgtable_ppn, index) }, level as u8);
 
-            if !pte.valid && level > 0 {
+            if level == min_level || !pte.valid && level > 0 {
                 return pte;
             } else if pte.valid && !pte.leaf {
                 pgtable_ppn = pte.ppn;
@@ -404,7 +448,7 @@ impl PageTable {
                 };
                 return Some((canon_vpn, pte));
             }
-            min_vpn += 1 << (BITS_PER_LEVEL * pte.order as u32);
+            min_vpn += 1 << (BITS_PER_LEVEL * pte.level as u32);
         }
 
         None
@@ -476,11 +520,13 @@ pub static mut PAGING_LEVELS: u32 = 0;
 pub const PTE_PER_PAGE: usize = PAGE_SIZE as usize / size_of::<PackedPTE>();
 
 /// Get the index in the given page table level for the given virtual address.
+#[inline(always)]
 fn get_vpn_index(vpn: VPN, level: u8) -> usize {
     (vpn >> (level as u32 * BITS_PER_LEVEL)) % (1usize << BITS_PER_LEVEL)
 }
 
 /// Read a PTE without any fencing or flushing.
+#[inline(always)]
 unsafe fn read_pte(pgtable_ppn: PPN, index: usize) -> PackedPTE {
     let pte_vaddr =
         unsafe { HHDM_OFFSET } + pgtable_ppn * PAGE_SIZE as usize + index * size_of::<PackedPTE>();
@@ -488,10 +534,23 @@ unsafe fn read_pte(pgtable_ppn: PPN, index: usize) -> PackedPTE {
 }
 
 /// Write a PTE without any fencing or flushing.
+#[inline(always)]
 unsafe fn xchg_pte(pgtable_ppn: PPN, index: usize, pte: PackedPTE) -> PackedPTE {
     let pte_vaddr =
         unsafe { HHDM_OFFSET } + pgtable_ppn * PAGE_SIZE as usize + index * size_of::<PackedPTE>();
     unsafe { (*(pte_vaddr as *mut Atomic<PackedPTE>)).swap(pte, Ordering::AcqRel) }
+}
+
+/// Compare-exchange a PTE.
+#[inline(always)]
+unsafe fn cmpxchg_pte(pgtable_ppn: PPN, index: usize, old: PackedPTE, new: PackedPTE) -> bool {
+    let pte_vaddr =
+        unsafe { HHDM_OFFSET } + pgtable_ppn * PAGE_SIZE as usize + index * size_of::<PackedPTE>();
+    unsafe {
+        (*(pte_vaddr as *mut Atomic<PackedPTE>))
+            .compare_exchange_weak(old, new, Ordering::AcqRel, Ordering::Relaxed)
+            .is_ok()
+    }
 }
 
 /// Try to allocate a new page table page.
@@ -529,7 +588,7 @@ fn split_pgtable_leaf(orig: PTE, new_level: u8) -> EResult<PPN> {
                 i,
                 PTE {
                     ppn: orig.ppn + (i << (new_level as u32 * BITS_PER_LEVEL)),
-                    order: new_level,
+                    level: new_level,
                     ..orig
                 }
                 .pack(),

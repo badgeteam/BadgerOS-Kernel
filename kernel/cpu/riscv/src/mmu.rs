@@ -46,8 +46,8 @@ pub type PackedPTE = usize;
 pub const INVALID_PTE: PackedPTE = 0;
 
 impl PTE {
-    #[cfg(target_arch = "riscv32")]
     /// Unpack this PTE.
+    #[cfg(target_arch = "riscv32")]
     pub fn unpack(raw: PackedPTE, level: u8) -> PTE {
         PTE {
             ppn: (raw >> 10) % (1usize << 57),
@@ -58,26 +58,26 @@ impl PTE {
         }
     }
 
-    #[cfg(target_arch = "riscv64")]
     /// Unpack this PTE.
+    #[cfg(target_arch = "riscv64")]
     pub fn unpack(raw: PackedPTE, level: u8) -> PTE {
         PTE {
             ppn: (raw >> 10) % (1usize << 57),
             flags: ((raw & 0b11_1111_1110) + (((raw >> 61) & 0b11) << 10)) as u32,
             valid: raw & 1 != 0,
             leaf: raw & 0b1110 != 0,
-            order: level,
+            level,
         }
     }
 
-    #[cfg(target_arch = "riscv32")]
     /// Pack this PTE.
+    #[cfg(target_arch = "riscv32")]
     pub fn pack(self) -> PackedPTE {
         (self.ppn << 10) as usize + (self.flags & 0b11_1111_1110) as usize + self.valid as usize
     }
 
-    #[cfg(target_arch = "riscv64")]
     /// Pack this PTE.
+    #[cfg(target_arch = "riscv64")]
     pub fn pack(self) -> PackedPTE {
         let pbmt = if unsafe { HAS_PBMT } {
             ((self.flags as usize >> 10) & 3) << 61

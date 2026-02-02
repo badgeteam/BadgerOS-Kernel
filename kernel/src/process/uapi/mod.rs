@@ -9,4 +9,5 @@ pub mod sigset;
 pub mod sigval;
 pub mod stat;
 pub mod timespec;
+pub mod vm_flags;
 pub mod wait;

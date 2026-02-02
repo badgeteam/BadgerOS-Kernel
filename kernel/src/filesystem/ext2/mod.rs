@@ -25,7 +25,6 @@ use crate::{
     },
     filesystem::{MakeFileSpec, NAME_MAX},
     kernel::sync::mutex::Mutex,
-    mem::vmm::flags::X,
     process::usercopy::{UserSlice, UserSliceMut},
     util::MaybeMut,
 };
@@ -70,7 +69,6 @@ impl E2VNode {
             res = self.get_block_unlocked(e2fs, block, MaybeMut::Mut(&mut guard))?;
             debug_assert!(res.is_some());
         }
-        logkf!(LogLevel::Debug, "get_block({}) -> {:?}", block, &res);
         Ok(res)
     }
 
