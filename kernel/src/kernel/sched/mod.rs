@@ -24,7 +24,11 @@ use crate::{
     kernel::{
         cpulocal::CpuLocal,
         smp,
-        sync::{rcu::RcuCtx, spinlock::Spinlock, waitlist::Waitlist},
+        sync::{
+            rcu::RcuCtx,
+            spinlock::{RawSpinlockGuard, Spinlock},
+            waitlist::Waitlist,
+        },
     },
     mem::vmm::{self, Memmap, kernel_mm},
     misc::panic,
@@ -111,7 +115,7 @@ impl Drop for ThreadRuntime {
 }
 
 pub mod tflags {
-    /// Thread is no longer running.
+    /// Thread is no longer runnable.
     pub const STOPPED: u32 = 1 << 0;
     /// Request for thread to stop running (causes termination of user-mode code).
     pub const STOPPING: u32 = 1 << 1;
@@ -119,6 +123,8 @@ pub mod tflags {
     pub const BLOCKED: u32 = 1 << 2;
     /// Thread blocking is interruptible by signals.
     pub const SIGNALABLE: u32 = 1 << 3;
+    /// Thread is currently using the CPU.
+    pub const RUNNING: u32 = 1 << 4;
 }
 
 /// Thread control block.
@@ -142,6 +148,23 @@ pub struct Thread {
 impl_has_list_node!(Thread, node);
 
 impl Thread {
+    /// Part 2: Reconstruct and call the `Box<dyn FnOnce()>`.
+    pub unsafe extern "C" fn thread_trampoline_2(
+        sched: *const Scheduler,
+        ptr: *mut (),
+        meta: *mut (),
+    ) {
+        unsafe {
+            let code: *mut dyn FnOnce() =
+                core::ptr::from_raw_parts_mut(ptr, core::mem::transmute(meta));
+            fence(Ordering::Acquire);
+            drop(RawSpinlockGuard::from_raw(&(&*sched).queue.inner));
+            irq::enable();
+            Box::from_raw(code)();
+            (*Thread::current()).die();
+        }
+    }
+
     /// Prepare thread control block but do not add it to a scheduler.
     fn new_tcb_only(
         code: Box<dyn FnOnce() + 'static + Send>,
@@ -350,7 +373,6 @@ impl Scheduler {
         let cur_cpu = smp::cur_cpu();
         let cur_sched = unsafe { &mut *Scheduler::get() };
         loop {
-            /*
             let mut highest_load = 0;
             let mut busiest_cpu = None;
 
@@ -379,7 +401,6 @@ impl Scheduler {
                 // queue.remove_thread(thread);
                 cur_sched.queue.lock().add_thread(thread);
             };
-            */
 
             thread_yield();
             pause_hint();
@@ -405,25 +426,28 @@ impl Scheduler {
             core::mem::swap(&mut old, &mut cpulocal.thread);
 
             // Put the running thread back in the queue.
+            let mut queue = self.queue.lock();
             let mut dummy = null_mut();
             let old_stack_out: *mut *mut ();
             if let Some(old) = old {
+                old.flags.fetch_and(!tflags::RUNNING, Ordering::Relaxed);
                 old_stack_out = &raw mut old.runtime.as_mut_unchecked().as_mut().unwrap().stack_ptr;
                 if self.idle.is_none() {
                     // Or in the idle slot, if the idle thread was running.
                     self.idle = Some(old);
                 } else {
-                    self.queue.lock().return_thread(old);
+                    queue.return_thread(old);
                 }
             } else {
                 old_stack_out = &raw mut dummy;
             }
 
-            let next = self.queue.lock().choose_thread().unwrap_or_else(|| {
+            let next = queue.choose_thread().unwrap_or_else(|| {
                 let mut next = None;
                 core::mem::swap(&mut next, &mut self.idle);
                 next.unwrap()
             });
+            next.flags.fetch_or(tflags::RUNNING, Ordering::Relaxed);
 
             self.preempt_ticks = (config::TICKS_PER_SEC as u32).div_ceil(100);
 
@@ -441,7 +465,11 @@ impl Scheduler {
             cpulocal.arch.set_irq_stack(next.runtime().irq_stack);
             let new_stack = &raw const next.runtime().stack_ptr;
             cpulocal.thread = Some(next);
-            context_switch(new_stack, old_stack_out);
+
+            // The queue cannot be transmitted through this so we will manually unlock it afterward.
+            core::mem::forget(queue);
+            let prev = context_switch(self, new_stack, old_stack_out);
+            drop(RawSpinlockGuard::from_raw(&(&*prev).queue.inner))
         }
     }
 

@@ -101,7 +101,6 @@ unsafe fn general_init() {
         // Scheduler is already running on BSP so we start the tick timer retroactively for it.
         cpu::timer::start_tick_timer();
 
-        /*
         // Bring up APs.
         match smp::poweron_all_aps() {
             Ok(_) => {
@@ -113,7 +112,6 @@ unsafe fn general_init() {
                 logkf!(LogLevel::Error, "Failed to power on APs: {}", x)
             }
         }
-        */
     }
 
     let init_block_threads = &mut *INIT_BLOCK_THREADS.unintr_lock();

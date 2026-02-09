@@ -72,6 +72,10 @@ pub struct RawMutexGuard<'a> {
 }
 
 impl<'a> RawMutexGuard<'a> {
+    pub unsafe fn from_raw(mutex: &'a RawMutex) -> Self {
+        Self { mutex }
+    }
+
     fn new(mutex: &'a RawMutex, timeout: timestamp_us_t) -> EResult<Self> {
         // Fast path.
         for _ in 0..50 {
@@ -119,6 +123,10 @@ pub struct SharedRawMutexGuard<'a> {
 }
 
 impl<'a> SharedRawMutexGuard<'a> {
+    pub unsafe fn from_raw(mutex: &'a RawMutex) -> Self {
+        Self { mutex }
+    }
+
     fn new(mutex: &'a RawMutex, timeout: timestamp_us_t) -> EResult<Self> {
         // Fast path.
         let mut old = mutex.shares.load(Ordering::Relaxed);
@@ -180,7 +188,7 @@ impl<'a> Drop for SharedRawMutexGuard<'a> {
 #[repr(C)]
 #[derive(Debug)]
 pub struct Mutex<T> {
-    inner: RawMutex,
+    pub inner: RawMutex,
     data: UnsafeCell<T>,
 }
 unsafe impl<T> Send for Mutex<T> {}
@@ -244,6 +252,10 @@ impl<'a, T> MutexGuard<'a, T> {
                 data: &mut *data,
             }
         }
+    }
+
+    pub fn into_raw(self) -> RawMutexGuard<'a> {
+        self.inner
     }
 
     fn new(mutex: &'a Mutex<T>, timeout: timestamp_us_t) -> EResult<Self> {
@@ -324,6 +336,10 @@ impl<'a, T> SharedMutexGuard<'a, T> {
                 data: &*data,
             }
         }
+    }
+
+    pub fn into_raw(self) -> SharedRawMutexGuard<'a> {
+        self.inner
     }
 
     fn new(mutex: &'a Mutex<T>, timeout: timestamp_us_t) -> EResult<Self> {

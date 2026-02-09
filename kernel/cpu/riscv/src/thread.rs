@@ -6,12 +6,11 @@ use core::{
     arch::{asm, naked_asm},
     fmt::Display,
     ptr,
-    sync::atomic::{Ordering, fence},
 };
 
 use alloc::boxed::Box;
 
-use crate::{cpu::irq, kernel::sched::Thread};
+use crate::kernel::sched::Thread;
 
 /// Special registers state for threads.
 #[repr(C)]
@@ -279,38 +278,33 @@ pub fn prepare_entry(stack: &mut [usize], code: Box<dyn FnOnce() + Send + 'stati
     stack[15] = meta as usize;
     stack[14] = data as usize;
     // Return address for `context_switch`.
-    stack[12] = thread_trampoline_1 as *const fn() as usize;
+    stack[12] = Thread::thread_trampoline_1 as *const fn() as usize;
 
     WORDS
 }
 
-/// Part 1: Load the raw parts of the `Box<dyn FnOnce()>`.
-#[unsafe(naked)]
-#[cfg(target_arch = "riscv64")]
-unsafe extern "C" fn thread_trampoline_1() {
-    naked_asm!(
-        "ld   a0, 0(sp)",
-        "ld   a1, 8(sp)",
-        "j    {}",
-        sym thread_trampoline_2
-    );
-}
-
-/// Part 2: Reconstruct and call the `Box<dyn FnOnce()>`.
-unsafe extern "C" fn thread_trampoline_2(ptr: *mut (), meta: *mut ()) {
-    unsafe {
-        let code: *mut dyn FnOnce() = ptr::from_raw_parts_mut(ptr, core::mem::transmute(meta));
-        fence(Ordering::Acquire);
-        irq::enable();
-        Box::from_raw(code)();
-        (*Thread::current()).die();
+impl Thread {
+    /// Part 1: Load the raw parts of the `Box<dyn FnOnce()>`.
+    #[unsafe(naked)]
+    #[cfg(target_arch = "riscv64")]
+    pub unsafe extern "C" fn thread_trampoline_1() {
+        naked_asm!(
+            "ld   a1, 0(sp)",
+            "ld   a2, 8(sp)",
+            "j    {}",
+            sym Thread::thread_trampoline_2
+        );
     }
 }
 
 /// Switch to another thread context.
 #[unsafe(naked)]
 #[cfg(target_arch = "riscv64")]
-pub unsafe extern "C" fn context_switch(new_stack: *const *mut (), old_stack_out: *mut *mut ()) {
+pub unsafe extern "C" fn context_switch<T>(
+    passthru: *const T,
+    new_stack: *const *mut (),
+    old_stack_out: *mut *mut (),
+) -> *const T {
     naked_asm!(
         // Save old context to stack.
         "addi sp, sp, -14*8",
@@ -328,8 +322,8 @@ pub unsafe extern "C" fn context_switch(new_stack: *const *mut (), old_stack_out
         "sd   s11, 8*11(sp)",
         "sd   ra, 8*12(sp)",
         // Swap out stack pointers.
-        "sd   sp, 0(a1)",
-        "ld   sp, 0(a0)",
+        "sd   sp, 0(a2)",
+        "ld   sp, 0(a1)",
         // Restore new context from stack.
         "ld   s0, 8*0(sp)",
         "ld   s1, 8*1(sp)",

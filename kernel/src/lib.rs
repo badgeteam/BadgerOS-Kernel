@@ -30,6 +30,7 @@
 #![feature(bigint_helper_methods)]
 #![feature(int_roundings)]
 #![feature(try_trait_v2)]
+#![feature(transmutability)]
 
 #[macro_use]
 extern crate alloc;

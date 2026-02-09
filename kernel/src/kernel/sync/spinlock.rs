@@ -41,6 +41,10 @@ pub struct RawSpinlockGuard<'a> {
 }
 
 impl<'a> RawSpinlockGuard<'a> {
+    pub unsafe fn from_raw(lock: &'a RawSpinlock) -> Self {
+        Self { lock }
+    }
+
     pub fn new(lock: &'a RawSpinlock) -> Self {
         while lock
             .shares
@@ -69,6 +73,10 @@ pub struct SharedRawSpinlockGuard<'a> {
 }
 
 impl<'a> SharedRawSpinlockGuard<'a> {
+    pub unsafe fn from_raw(lock: &'a RawSpinlock) -> Self {
+        Self { lock }
+    }
+
     pub fn new(lock: &'a RawSpinlock) -> Self {
         let mut old = lock.shares.load(Ordering::Relaxed);
         loop {
@@ -103,7 +111,7 @@ impl<'a> Drop for SharedRawSpinlockGuard<'a> {
 
 /// Simple synchronization primitive which spins in a loop until successfully acquiring the lock.
 pub struct Spinlock<T> {
-    inner: RawSpinlock,
+    pub inner: RawSpinlock,
     data: UnsafeCell<T>,
 }
 unsafe impl<T> Send for Spinlock<T> {}
@@ -145,6 +153,14 @@ pub struct SpinlockGuard<'a, T> {
 }
 
 impl<'a, T> SpinlockGuard<'a, T> {
+    pub unsafe fn from_raw(inner: RawSpinlockGuard<'a>, data: &'a mut T) -> Self {
+        Self { inner, data }
+    }
+
+    pub fn into_raw(self) -> RawSpinlockGuard<'a> {
+        self.inner
+    }
+
     pub fn demote(self) -> SharedSpinlockGuard<'a, T> {
         SharedSpinlockGuard {
             inner: self.inner.demote(),
@@ -209,6 +225,14 @@ pub struct SharedSpinlockGuard<'a, T> {
 }
 
 impl<'a, T> SharedSpinlockGuard<'a, T> {
+    pub unsafe fn from_raw(inner: SharedRawSpinlockGuard<'a>, data: &'a T) -> Self {
+        Self { inner, data }
+    }
+
+    pub fn into_raw(self) -> SharedRawSpinlockGuard<'a> {
+        self.inner
+    }
+
     pub fn share(&self) -> Self {
         Self {
             inner: self.inner.share(),
