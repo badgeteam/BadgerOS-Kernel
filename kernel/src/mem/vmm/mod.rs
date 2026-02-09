@@ -638,7 +638,6 @@ pub unsafe fn init() {
             let kernel_mm = kernel_mm();
 
             // Kernel RX.
-            logkf_unlocked!(LogLevel::Debug, "Mapping kernel RX");
             let text_vaddr = &raw const __start_text as usize;
             let text_len = &raw const __stop_text as usize - &raw const __start_text as usize;
             debug_assert!(text_len % PAGE_SIZE as usize == 0);
@@ -650,7 +649,6 @@ pub unsafe fn init() {
             )?;
 
             // Kernel R.
-            logkf_unlocked!(LogLevel::Debug, "Mapping kernel R");
             let rodata_vaddr = &raw const __start_rodata as usize;
             let rodata_len = &raw const __stop_rodata as usize - &raw const __start_rodata as usize;
             debug_assert!(rodata_len % PAGE_SIZE as usize == 0);
@@ -662,7 +660,6 @@ pub unsafe fn init() {
             )?;
 
             // Kernel RW.
-            logkf_unlocked!(LogLevel::Debug, "Mapping kernel RW");
             let data_vaddr = &raw const __start_data as usize;
             let data_len = &raw const __stop_data as usize - &raw const __start_data as usize;
             debug_assert!(data_len % PAGE_SIZE as usize == 0);
@@ -674,7 +671,6 @@ pub unsafe fn init() {
             )?;
 
             // HHDM RW.
-            logkf_unlocked!(LogLevel::Debug, "Mapping HHDM RW");
             debug_assert!(HHDM_SIZE % PAGE_SIZE as usize == 0);
             kernel_mm.map_fixed(
                 (HHDM_VADDR - HHDM_OFFSET) / PAGE_SIZE as usize,
@@ -684,7 +680,6 @@ pub unsafe fn init() {
             )?;
 
             // Page of zeroes.
-            logkf_unlocked!(LogLevel::Debug, "Mapping zeroes page");
             let zeroes_order = 0;
             let zeroes_vpn = kernel_mm.map_ram(None, 1, flags::R | flags::G)?;
             ZEROES = slice_from_raw_parts(
@@ -705,7 +700,6 @@ pub unsafe fn init() {
         res.expect("Failed to create inital page table");
 
         // Finalize MMU initialization and switch to new page table.
-        logkf!(LogLevel::Info, "Switching to new page table");
         mmu::init(kernel_mm().pagetable.root_ppn());
         logkf!(LogLevel::Info, "Virtual memory management initialized");
     }

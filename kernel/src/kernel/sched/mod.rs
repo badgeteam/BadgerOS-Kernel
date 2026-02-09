@@ -13,7 +13,7 @@ use alloc::{boxed::Box, string::String, sync::Arc};
 
 use crate::{
     badgelib::irq::IrqGuard,
-    bindings::{error::EResult, log::LogLevel, raw::timestamp_us_t, time_us},
+    bindings::{error::EResult, raw::timestamp_us_t, time_us},
     config::{self, PAGE_SIZE, STACK_SIZE},
     cpu::{
         self, irq,
@@ -362,8 +362,6 @@ impl Scheduler {
                     .flags
                     .fetch_and(!tflags::BLOCKED, Ordering::Relaxed);
             }
-
-            logkf!(LogLevel::Debug, "Reaping {} threads", threads.len());
         }
     }
 
