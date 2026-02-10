@@ -43,6 +43,7 @@ pub const SYSCALL_SYS_SHUTDOWN: usize = 45;
 pub const SYSCALL_TEMP_WRITE: usize = 46;
 
 pub fn dispatch(regs: &mut GpRegfile, _sregs: &mut SpRegfile, args: [usize; 6], sysno: usize) {
+    logkf!(LogLevel::Debug, "Syscall {}", sysno);
     unsafe {
         match sysno {
             SYSCALL_THREAD_YIELD => syscall_thread_yield(),
@@ -124,7 +125,10 @@ pub fn dispatch(regs: &mut GpRegfile, _sregs: &mut SpRegfile, args: [usize; 6], 
             SYSCALL_MEM_UNMAP => syscall_mem_unmap(args[0] as _, args[1] as _),
             SYSCALL_SYS_SHUTDOWN => logkf!(LogLevel::Warning, "TODO: shutdown syscall"),
             SYSCALL_TEMP_WRITE => syscall_temp_write(args[0] as _, args[1] as _),
-            _ => regs.set_retval(-(Errno::ENOSYS as i32) as usize),
+            x => {
+                logkf!(LogLevel::Warning, "Unimplemented syscall {}", x);
+                regs.set_retval(-(Errno::ENOSYS as i32) as usize);
+            }
         }
     }
 }

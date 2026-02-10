@@ -7,8 +7,12 @@ use core::ptr::slice_from_raw_parts_mut;
 use bytemuck_derive::{AnyBitPattern, NoUninit};
 
 use crate::{
-    bindings::error::{EResult, Errno},
+    bindings::{
+        error::{EResult, Errno},
+        log::LogLevel,
+    },
     config::{self, PAGE_SIZE},
+    cpu,
     filesystem::File,
     mem::vmm::{self, Memmap},
     process::usercopy::UserSliceMut,
@@ -59,58 +63,46 @@ fn map_helper(
     phdr: elf64::ProgHeader,
     load_offset: usize,
 ) -> EResult<()> {
-    let start_page_fileoff = phdr.offset - phdr.offset % PAGE_SIZE as u64;
-    let min_vaddr_real = (phdr.vaddr as usize).wrapping_add(load_offset);
-    let zinit_vaddr_real =
-        (phdr.vaddr.wrapping_add(phdr.file_size) as usize).wrapping_add(load_offset);
-    let max_vaddr_real =
-        (phdr.vaddr.wrapping_add(phdr.mem_size) as usize).wrapping_add(load_offset);
-    let min_vpn_real = min_vaddr_real / PAGE_SIZE as usize;
-    let zinit_vpn_real = zinit_vaddr_real.div_ceil(PAGE_SIZE as usize);
-    let max_vpn_real = max_vaddr_real.div_ceil(PAGE_SIZE as usize);
-    let mut flags = vmm::flags::R;
+    logkf!(
+        LogLevel::Debug,
+        "map_helper(..., ..., {:x?}, 0x{:x})",
+        phdr,
+        load_offset
+    );
+
+    let vaddr = phdr.vaddr as usize + load_offset;
+    let vaddr_end = vaddr + phdr.mem_size as usize;
+
+    unsafe {
+        memmap.map_ram(
+            Some(vaddr / PAGE_SIZE as usize),
+            (vaddr_end - vaddr).div_ceil(PAGE_SIZE as usize),
+            vmm::flags::RW,
+        )?;
+    }
+    cpu::mmu::vmem_fence(None, None);
+
+    let mut uslice = UserSliceMut::new_mut(vaddr as *mut u8, phdr.mem_size as usize)?;
+    uslice.fill(0)?;
+    file.seek_strong(phdr.offset, Errno::ENOEXEC)?;
+    file.read(uslice.subslice_mut(0..phdr.file_size as usize))?;
+
+    let mut prot = vmm::flags::R | vmm::flags::U;
     if phdr.flags & elf64::PF_W != 0 {
-        flags |= vmm::flags::W;
+        prot |= vmm::flags::W;
     }
     if phdr.flags & elf64::PF_X != 0 {
-        flags |= vmm::flags::X;
+        prot |= vmm::flags::X;
     }
 
-    let page_count = max_vpn_real - min_vpn_real;
-    let load_page_count = zinit_vpn_real - min_vpn_real;
-    unsafe { memmap.map_ram(Some(min_vpn_real), page_count, flags)? };
-
-    // Start by zeroing all the RAM.
-    let mut page_offset = 0;
-    while page_offset < load_page_count {
-        let mapping = memmap.virt2phys((min_vpn_real + page_offset) * PAGE_SIZE as usize);
-        let hhdm_vaddr = mapping.page_paddr + unsafe { vmm::HHDM_OFFSET };
-        let hhdm_slice =
-            unsafe { &mut *slice_from_raw_parts_mut(hhdm_vaddr as *mut u8, mapping.size) };
-        hhdm_slice.fill(0);
-        page_offset += mapping.size / PAGE_SIZE as usize;
-    }
-
-    let mut page_offset = 0;
-    while page_offset < load_page_count {
-        let mapping = memmap.virt2phys((min_vpn_real + page_offset) * PAGE_SIZE as usize);
-        let mut read_size = mapping.size;
-        if (min_vpn_real + page_offset) * config::PAGE_SIZE as usize + mapping.size
-            > zinit_vaddr_real
-        {
-            read_size =
-                zinit_vaddr_real - (min_vpn_real + page_offset) * config::PAGE_SIZE as usize;
-        }
-        let hhdm_vaddr = mapping.page_paddr + unsafe { vmm::HHDM_OFFSET };
-        let hhdm_slice =
-            unsafe { &mut *slice_from_raw_parts_mut(hhdm_vaddr as *mut u8, read_size) };
-        file.seek_strong(
-            start_page_fileoff + page_offset as u64 * PAGE_SIZE as u64,
-            Errno::ENOEXEC,
+    unsafe {
+        memmap.protect(
+            vaddr / PAGE_SIZE as usize,
+            (vaddr_end - vaddr) / PAGE_SIZE as usize,
+            prot,
         )?;
-        file.read(UserSliceMut::new_kernel_mut(hhdm_slice))?;
-        page_offset += mapping.size / PAGE_SIZE as usize;
     }
+    cpu::mmu::vmem_fence(None, None);
 
     Ok(())
 }

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 use core::{
-    ffi::{c_char, c_int, c_void},
+    ffi::{c_char, c_int},
     ptr::null,
 };
 
@@ -23,11 +23,7 @@ use super::{
     Cmdline, PID, current,
     uapi::{
         self,
-        signal::{
-            __sa_handler_union, NSIG, SIG_DFL, Signal, sigaction,
-            siginfo::{__si_field_union, __sigfault___first_union, __sigfault_struct},
-            siginfo_t,
-        },
+        signal::{__sa_handler_union, NSIG, SIG_DFL, Signal, sigaction},
         sigset::sigset_t,
     },
     usercopy::{UserPtr, UserSlice},

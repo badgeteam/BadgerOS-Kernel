@@ -359,15 +359,10 @@ impl Memmap {
     }
 
     /// Change the protection attributes for a region.
-    pub unsafe fn protect(
-        &self,
-        vpn: VPN,
-        size: VPN,
-        set_prot: u32,
-        clear_prot: u32,
-    ) -> EResult<()> {
-        debug_assert!(set_prot & !flags::RWX == 0);
-        debug_assert!(clear_prot & !flags::RWX == 0);
+    pub unsafe fn protect(&self, vpn: VPN, size: VPN, prot: u32) -> EResult<()> {
+        const PROT_MASK: u32 = flags::RWX | flags::A | flags::D | flags::U;
+        debug_assert!(prot & !PROT_MASK == 0);
+        debug_assert!(prot & flags::R != 0);
 
         // Inhibit concurrent changes to the mappings.
         let _guard = self.vma_alloc.unintr_lock();
@@ -375,7 +370,7 @@ impl Memmap {
         for vpn in vpn..vpn + size {
             // TODO: This is awful. But at least it kinda works. Sorta.
             let mut pte = self.pagetable.walk(vpn);
-            pte.flags = (pte.flags & !clear_prot) | set_prot;
+            pte.flags = (pte.flags & !PROT_MASK) | prot;
             pte.level = 0;
             unsafe {
                 self.pagetable.map(vpn, OwnedPTE::from_raw_ref(pte))?;

@@ -24,6 +24,17 @@ pub unsafe extern "C" fn syscall_mem_map(
     _fd: c_int,
     _offset: i64,
 ) -> *mut c_void {
+    logkf!(
+        LogLevel::Debug,
+        "syscall_mem_map(0x{:x}, 0x{:x}, 0x{:x}, 0x{:x}, {}, {})",
+        address as usize,
+        size,
+        prot,
+        flags,
+        _fd,
+        _offset
+    );
+
     let address = address as usize;
     if flags & MAP_ANON == 0 {
         logkf!(LogLevel::Warning, "TODO: non-anonymous mmap");
@@ -80,6 +91,12 @@ pub unsafe extern "C" fn syscall_mem_map(
 /// Returns whether a range of memory was unmapped.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn syscall_mem_unmap(address: *mut c_void, size: usize) {
+    logkf!(
+        LogLevel::Debug,
+        "syscall_mem_unmap(0x{:x}, 0x{:x})",
+        address as usize,
+        size
+    );
     let address = address as usize;
     let proc = process::current().unwrap();
     let range = address / PAGE_SIZE as usize

@@ -87,7 +87,7 @@ pub const PF_MASKPROC: u32 = 0xf0000000;
 
 /// Program header; contains information about how to load the ELF file.
 #[repr(C)]
-#[derive(Clone, Copy, NoUninit, AnyBitPattern, Default)]
+#[derive(Debug, Clone, Copy, NoUninit, AnyBitPattern, Default)]
 pub struct ProgHeader {
     pub type_: u32,
     pub flags: u32,

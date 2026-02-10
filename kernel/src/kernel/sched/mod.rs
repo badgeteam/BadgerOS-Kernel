@@ -5,7 +5,7 @@
 use core::{
     cell::UnsafeCell,
     mem::offset_of,
-    ptr::{null_mut, slice_from_raw_parts_mut},
+    ptr::{NonNull, null_mut, slice_from_raw_parts_mut},
     sync::atomic::{AtomicI32, AtomicI64, AtomicU32, Ordering, fence},
 };
 
@@ -144,6 +144,8 @@ pub struct Thread {
     pub process: Option<Arc<Process>>,
     /// Thread name for debugging purposes.
     pub name: Option<String>,
+    /// Temporary memory map override.
+    pub mm_override: Option<NonNull<Memmap>>,
 }
 impl_has_list_node!(Thread, node);
 
@@ -180,6 +182,7 @@ impl Thread {
             waitlist: Waitlist::new(),
             process,
             name,
+            mm_override: None,
         })?;
 
         Ok(tcb)
@@ -451,7 +454,9 @@ impl Scheduler {
 
             // Switch to next page table.
             let new_mm: &Memmap;
-            if let Some(process) = next.process.as_ref() {
+            if let Some(mm) = next.mm_override {
+                new_mm = mm.as_ref();
+            } else if let Some(process) = next.process.as_ref() {
                 new_mm = process.memmap();
             } else {
                 new_mm = kernel_mm();

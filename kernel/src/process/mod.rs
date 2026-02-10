@@ -5,7 +5,7 @@
 use core::{
     cell::UnsafeCell,
     ffi::c_char,
-    ptr::{addr_eq, null},
+    ptr::{NonNull, addr_eq, null},
     sync::atomic::{AtomicI32, AtomicI64, AtomicU32, Ordering},
     usize,
 };
@@ -27,7 +27,7 @@ use crate::{
         log::LogLevel,
     },
     config::{PAGE_SIZE, STACK_SIZE},
-    cpu::{self, thread::GpRegfile, usercopy::copy_to_user, usermode::call_usermode},
+    cpu::{self, mmu, thread::GpRegfile, usercopy::copy_to_user, usermode::call_usermode},
     filesystem::{self, File, SeekMode, mode, oflags},
     kernel::{
         sched::Thread,
@@ -46,8 +46,8 @@ pub mod files;
 pub mod signal;
 pub mod syscall;
 pub mod sysimpl;
-pub mod usercopy;
 pub mod uapi;
+pub mod usercopy;
 
 pub mod flags {
     pub const STOPPING: u32 = 1 << 0;
@@ -464,7 +464,19 @@ impl Process {
 
 /// Implementation of [`load_executable`] for ELF files.
 fn load_executable_elf(memmap: &Memmap, file: &dyn File, _recursion: u8) -> EResult<usize> {
-    elf::load(file, memmap, false)
+    let thread = Thread::current();
+    unsafe {
+        (*thread).mm_override = Some(NonNull::from_ref(memmap));
+        cpu::mmu::set_page_table(memmap.root_ppn(), 0);
+        mmu::vmem_fence(None, None);
+    }
+    let res = elf::load(file, memmap, false);
+    unsafe {
+        (*thread).mm_override = None;
+        cpu::mmu::set_page_table(memmap.root_ppn(), 0);
+        mmu::vmem_fence(None, None);
+    }
+    res
 }
 
 /// Implementation of [`load_executable`] for `#!` interpreted executables.
