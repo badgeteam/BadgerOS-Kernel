@@ -206,9 +206,8 @@ impl Process {
         proc.prefill_stdio_fds()?;
         let entry = load_executable(
             proc.memmap(),
-            &mut proc.files.unintr_lock(),
             &mut proc.cmdline.unintr_lock(),
-            file,
+            file.as_ref(),
             0,
         )?;
 
@@ -284,15 +283,14 @@ impl Process {
 
     /// Execute a new binary, replacing this process.
     pub fn exec(self: &Arc<Self>, mut cmdline: Cmdline) -> EResult<()> {
+        let new_mm = Memmap::new_user()?;
+        let file = filesystem::open(None, cmdline.binary.as_bytes(), oflags::READ_ONLY)?;
+        let entry = load_executable(&new_mm, &mut cmdline, file.as_ref(), 0)?;
+
         if self.flags.fetch_or(flags::STOPPING, Ordering::Relaxed) != 0 {
             // Some other thread either `exit()`'ed or `exec()`'ed first.
             return Ok(());
         }
-
-        let new_mm = Memmap::new_user()?;
-        let file = filesystem::open(None, cmdline.binary.as_bytes(), oflags::READ_ONLY)?;
-        let mut files = self.files.unintr_lock();
-        let entry = load_executable(&new_mm, &mut files, &mut cmdline, file, 0)?;
 
         // Commit to replacing the process.
         // TODO: From this point on, errors are to kill the process instead of returning an error code.
@@ -475,9 +473,9 @@ impl Process {
 /// Implementation of [`load_executable`] for ELF files.
 fn load_executable_elf(
     memmap: &Memmap,
-    files: &mut FDTable,
+
     auxv: &mut Vec<AuxvEntry>,
-    file: Arc<dyn File>,
+    file: &dyn File,
     _recursion: u8,
 ) -> EResult<usize> {
     let thread = Thread::current();
@@ -486,7 +484,7 @@ fn load_executable_elf(
         cpu::mmu::set_page_table(memmap.root_ppn(), 0);
         mmu::vmem_fence(None, None);
     }
-    let res = elf::load(file, files, memmap, auxv);
+    let res = elf::load(file, memmap, auxv);
     unsafe {
         (*thread).mm_override = None;
         cpu::mmu::set_page_table(memmap.root_ppn(), 0);
@@ -498,9 +496,8 @@ fn load_executable_elf(
 /// Implementation of [`load_executable`] for `#!` interpreted executables.
 fn load_executable_shebang(
     memmap: &Memmap,
-    files: &mut FDTable,
     cmdline: &mut Cmdline,
-    file: Arc<dyn File>,
+    file: &dyn File,
     recursion: u8,
 ) -> EResult<usize> {
     // Extract the args from the shebang.
@@ -523,15 +520,15 @@ fn load_executable_shebang(
     }
 
     let interp = filesystem::open(None, cmdline.argv[0].as_bytes(), oflags::READ_ONLY)?;
-    load_executable(memmap, files, cmdline, interp, recursion + 1)
+    load_executable(memmap, cmdline, interp.as_ref(), recursion + 1)
 }
 
 /// Load the binary for a process and prepare for its execution.
 fn load_executable(
     memmap: &Memmap,
-    files: &mut FDTable,
+
     cmdline: &mut Cmdline,
-    file: Arc<dyn File>,
+    file: &dyn File,
     recursion: u8,
 ) -> EResult<usize> {
     if recursion > 8 {
@@ -551,9 +548,9 @@ fn load_executable(
     let magic_len = file.read(UserSliceMut::new_kernel_mut(&mut magic))?;
 
     if magic_len >= elf::ELF_MAGIC.len() && magic == elf::ELF_MAGIC {
-        load_executable_elf(memmap, files, &mut cmdline.auxv, file, recursion)
+        load_executable_elf(memmap, &mut cmdline.auxv, file, recursion)
     } else if magic_len >= 2 && magic[0] == b'#' && magic[1] == b'!' {
-        load_executable_shebang(memmap, files, cmdline, file, recursion)
+        load_executable_shebang(memmap, cmdline, file, recursion)
     } else {
         Err(Errno::ENOEXEC)
     }

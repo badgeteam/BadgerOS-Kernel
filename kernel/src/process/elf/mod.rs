@@ -128,18 +128,12 @@ fn map_helper(
 
 /// Load an ELF file into a memory map.
 /// Returns the entrypoint to jump to.
-pub fn load(
-    file: Arc<dyn File>,
-    fdtab: &mut FDTable,
-    memmap: &Memmap,
-    auxv: &mut Vec<AuxvEntry>,
-) -> EResult<usize> {
-    load_impl(file, fdtab, memmap, auxv, false)
+pub fn load(file: &dyn File, memmap: &Memmap, auxv: &mut Vec<AuxvEntry>) -> EResult<usize> {
+    load_impl(file, memmap, auxv, false)
 }
 
 pub fn load_impl(
-    file: Arc<dyn File>,
-    fdtab: &mut FDTable,
+    file: &dyn File,
     memmap: &Memmap,
     auxv: &mut Vec<AuxvEntry>,
     is_interp: bool,
@@ -206,7 +200,7 @@ pub fn load_impl(
 
         if phdr.type_ as u32 == elf64::PT_LOAD {
             // TODO: This will be replaced with a proper file mapping in the future.
-            map_helper(file.as_ref(), memmap, phdr, load_offset)?;
+            map_helper(file, memmap, phdr, load_offset)?;
         } else if phdr.type_ as u32 == elf64::PT_PHDR {
             auxv.push(AuxvEntry {
                 type_: AT_PHENT,
@@ -224,14 +218,6 @@ pub fn load_impl(
             if is_interp {
                 return Err(Errno::ENOEXEC);
             }
-            let fd = fdtab.insert_file(FileDesc {
-                flags: AtomicU32::new(0),
-                file: file.clone(),
-            })?;
-            auxv.push(AuxvEntry {
-                type_: AT_EXECFD,
-                value: fd as _,
-            });
 
             let mut path = Vec::try_with_capacity(phdr.mem_size as _)?;
             path.resize(phdr.file_size as _, 0);
@@ -248,7 +234,7 @@ pub fn load_impl(
             let interp_file = filesystem::open(None, &path, oflags::READ_ONLY | oflags::FILE_ONLY)?;
 
             let mut dummy = Vec::new();
-            entry = load_impl(interp_file, fdtab, memmap, &mut dummy, true)?;
+            entry = load_impl(interp_file.as_ref(), memmap, &mut dummy, true)?;
         }
     }
 
