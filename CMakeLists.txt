@@ -37,7 +37,7 @@ else()
 endif()
 
 config_enum(
-    STACK_SIZE 16384 "Kernel stack size"
+    STACK_SIZE 262144 "Kernel stack size"
     8192 16384 32768 65536 131072 262144
 )
 config_enum(
