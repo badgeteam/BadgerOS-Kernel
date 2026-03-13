@@ -76,7 +76,7 @@ def test_candidate(prefix: str, compiler_name: str) -> bool:
 
 
 known_compiler_names = ["gcc", "cc", "clang"]
-architectures = ["riscv64", "riscv32", "x86_64"]
+architectures = ["riscv64", "x86_64"]
 
 parser = ArgumentParser(usage="Helper program for selecting the toolchain to use for compiling BadgerOS")
 parser.add_argument("--arch", choices=architectures, default=None, help="")
@@ -136,7 +136,7 @@ else:
     config["kisa_spec"] = "x86-64"
 
 if config["cpu"].startswith("riscv"):
-    config["kabi_spec"] = "ilp32" if config["cpu"] == "riscv32" else "lp64"
+    config["kabi_spec"] = "lp64"
     config["abi_spec"] = config["kabi_spec"] + ["", "f", "d"][float_spec] # type: ignore
 else:
     config["abi_spec"] = "sysv"

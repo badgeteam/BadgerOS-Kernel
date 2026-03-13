@@ -124,15 +124,19 @@ project(badgeros C ASM)
 set(target badger-os.elf)
 
 set(kernel_src
+    ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/arrays.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/badge_format_str.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/badge_strings.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/fifo.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/hash.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/list.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/log.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/lstr.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/map.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/num_to_str.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/radixtree.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/rawprint.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/refcount.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/set.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/spinlock.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/nanoprintf.c
@@ -164,8 +168,6 @@ set(kernel_include
     ${CMAKE_CURRENT_LIST_DIR}/lib/nanoprintf
     ${CMAKE_CURRENT_LIST_DIR}/include
     ${CMAKE_CURRENT_LIST_DIR}/include/badgelib
-    ${CMAKE_CURRENT_LIST_DIR}/../common/include
-    ${CMAKE_CURRENT_LIST_DIR}/../common/badgelib
     ${CMAKE_CURRENT_LIST_DIR}/../.config
 )
 
@@ -228,10 +230,6 @@ add_custom_target(
 )
 add_dependencies(${target} rust.target)
 target_link_libraries(${target} PRIVATE -Wl,--whole-archive ${rust_lib} -Wl,--no-whole-archive)
-
-# Add libraries.
-add_subdirectory(../common/badgelib badgelib)
-target_link_libraries(${target} PRIVATE badgelib)
 
 
 

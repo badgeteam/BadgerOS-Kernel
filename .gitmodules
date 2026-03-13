@@ -4,9 +4,6 @@
 [submodule "kernel/lib/u-boot"]
 	path = kernel/lib/u-boot
 	url = https://github.com/u-boot/u-boot
-[submodule "kernel/lib/badgelib"]
-	path = common/badgelib
-	url = https://github.com/badgeteam/badgelib
 [submodule "kernel/lib/uacpi"]
 	path = kernel/lib/uacpi
 	url = https://github.com/ultraos/uacpi
