@@ -3,7 +3,7 @@
 
 all: build
 
-CONFIG_PATH        = ../.config/config.mk
+CONFIG_PATH        = .config/config.mk
 include $(CONFIG_PATH)
 
 MAKEFLAGS         += --silent -j$(shell nproc)
@@ -18,15 +18,19 @@ CLANG_TIDY        ?= clang-tidy-18
 DRIVE             ?= /dev/null
 PORT              ?= /dev/ttyUSB1
 
+.PHONY: build
+build: cmake-configure
+	cmake --build '$(BUILDDIR)'
+	cmake --install '$(BUILDDIR)' --prefix '$(OUTPUT)'
+
 .PHONY: cmake-configure
 cmake-configure:
 	mkdir -p '$(BUILDDIR)'
 	cmake -B '$(BUILDDIR)'
 
-.PHONY: build
-build: cmake-configure
-	cmake --build '$(BUILDDIR)'
-	cmake --install '$(BUILDDIR)' --prefix '$(OUTPUT)'
+.PHONY: selarch
+selarch:
+	./tools/selarch.py
 
 .PHONY: clean
 clean:

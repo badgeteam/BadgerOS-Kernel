@@ -1,9 +1,9 @@
 [submodule "kernel/lib/uacpi"]
-	path = kernel/lib/uacpi
+	path = lib/uacpi
 	url = https://github.com/ultraos/uacpi
 [submodule "kernel/lib/nanoprintf"]
-	path = kernel/lib/nanoprintf
+	path = lib/nanoprintf
 	url = https://github.com/charlesnicholson/nanoprintf
 [submodule "kernel/lib/limine"]
-	path = kernel/lib/limine
+	path = lib/limine
 	url = https://codeberg.org/Limine/Limine.git

@@ -17,7 +17,7 @@ endif()
 
 
 # Include the config.
-include(../.config/config.cmake)
+include(.config/config.cmake)
 include(config_helper.cmake)
 set(CMAKE_C_COMPILER ${CONFIG_COMPILER})
 
@@ -148,7 +148,7 @@ set(kernel_include
     ${CMAKE_CURRENT_LIST_DIR}/lib/nanoprintf
     ${CMAKE_CURRENT_LIST_DIR}/include
     ${CMAKE_CURRENT_LIST_DIR}/include/badgelib
-    ${CMAKE_CURRENT_LIST_DIR}/../.config
+    ${CMAKE_CURRENT_LIST_DIR}/.config
 )
 
 if(${CONFIG_ENABLE_ACPI})
