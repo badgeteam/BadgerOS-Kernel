@@ -191,7 +191,7 @@ impl Process {
             cmdline: Mutex::new(Cmdline {
                 binary: init_path.clone(),
                 argv: vec![init_path],
-                envp: vec![c"MLIBC_RTLD_DEBUG_VERBOSE=1".into()],
+                envp: Vec::new(),
                 auxv: Vec::new(),
             }),
             tid_counter: AtomicI64::new(0),

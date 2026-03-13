@@ -11,11 +11,11 @@ use crate::{
         log::{LogLevel, logk_unlocked},
         raw::{
             bootp_early_init, bootp_full_init, bootp_postheap_init, bootp_reclaim_mem,
-            kernel_heap_init, kmodule_t,
+            kernel_heap_init, kmodule_t, rawputc,
         },
     },
     cpu::{self, spinup::arch_cpu_spinup},
-    filesystem::mount_root::mount_root_fs,
+    filesystem::{self, mount_root::mount_root_fs},
     kernel::{
         cpulocal::CpuLocal,
         sched::{Scheduler, Thread},

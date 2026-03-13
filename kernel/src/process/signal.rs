@@ -11,6 +11,7 @@ use crate::{
         usermode::enter_signal,
     },
     kernel::sched::Thread,
+    process,
 };
 
 use super::uapi::{signal::*, sigset::sigset_t};
@@ -38,10 +39,15 @@ impl Default for Sigtab {
 
 /// Run the handler for a segmentation fault.
 pub fn run_sigsegv_handler(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
+    let v2p = process::current()
+        .unwrap()
+        .memmap()
+        .virt2phys(sregs.is_mem_trap().unwrap_or(0));
     logkf!(
         LogLevel::Debug,
-        "SIGSEGV: 0x{:x}",
-        sregs.is_mem_trap().unwrap_or(0)
+        "SIGSEGV: 0x{:x}, memory is {:x?}",
+        sregs.is_mem_trap().unwrap_or(0),
+        v2p
     );
     run_handler(
         siginfo_t {

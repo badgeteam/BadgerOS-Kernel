@@ -96,7 +96,7 @@ fn map_helper(
         memmap.map_ram(
             Some(vaddr / PAGE_SIZE as usize),
             (vaddr_end - vaddr).div_ceil(PAGE_SIZE as usize),
-            vmm::flags::RW,
+            vmm::flags::RWX,
         )?;
     }
     cpu::mmu::vmem_fence(None, None);
@@ -106,22 +106,22 @@ fn map_helper(
     file.seek_strong(phdr.offset, Errno::ENOEXEC)?;
     file.read(uslice.subslice_mut(0..phdr.file_size as usize))?;
 
-    let mut prot = vmm::flags::R | vmm::flags::U;
-    if phdr.flags & elf64::PF_W != 0 {
-        prot |= vmm::flags::W;
-    }
-    if phdr.flags & elf64::PF_X != 0 {
-        prot |= vmm::flags::X;
-    }
+    // let mut prot = vmm::flags::R | vmm::flags::U;
+    // if phdr.flags & elf64::PF_W != 0 {
+    //     prot |= vmm::flags::W;
+    // }
+    // if phdr.flags & elf64::PF_X != 0 {
+    //     prot |= vmm::flags::X;
+    // }
 
-    unsafe {
-        memmap.protect(
-            vaddr / PAGE_SIZE as usize,
-            (vaddr_end - vaddr) / PAGE_SIZE as usize,
-            prot,
-        )?;
-    }
-    cpu::mmu::vmem_fence(None, None);
+    // unsafe {
+    //     memmap.protect(
+    //         vaddr / PAGE_SIZE as usize,
+    //         (vaddr_end - vaddr) / PAGE_SIZE as usize,
+    //         prot,
+    //     )?;
+    // }
+    // cpu::mmu::vmem_fence(None, None);
 
     Ok(())
 }

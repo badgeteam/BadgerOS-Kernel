@@ -11,37 +11,38 @@ use crate::{
     process::sysimpl::*,
 };
 
-pub const SYSCALL_THREAD_YIELD: usize = 1;
-pub const SYSCALL_THREAD_SLEEP: usize = 53;
+pub const SYSCALL_THREAD_YIELD: usize = 0;
+pub const SYSCALL_THREAD_SLEEP: usize = 1;
 pub const SYSCALL_THREAD_CREATE: usize = 2;
 pub const SYSCALL_THREAD_DETACH: usize = 3;
 pub const SYSCALL_THREAD_JOIN: usize = 4;
 pub const SYSCALL_THREAD_EXIT: usize = 5;
-pub const SYSCALL_PROC_EXIT: usize = 8;
-pub const SYSCALL_PROC_GETARGS: usize = 9;
-pub const SYSCALL_PROC_FORK: usize = 10;
-pub const SYSCALL_PROC_EXEC: usize = 11;
-pub const SYSCALL_PROC_SIGACTION: usize = 13;
-pub const SYSCALL_PROC_SIGRET: usize = 14;
-pub const SYSCALL_PROC_WAITPID: usize = 15;
-pub const SYSCALL_FS_OPEN: usize = 16;
-pub const SYSCALL_FS_CLOSE: usize = 17;
-pub const SYSCALL_FS_READ: usize = 18;
-pub const SYSCALL_FS_WRITE: usize = 19;
-pub const SYSCALL_FS_GETDENTS: usize = 20;
-pub const SYSCALL_FS_RENAME: usize = 21;
-pub const SYSCALL_FS_STAT: usize = 22;
-pub const SYSCALL_FS_MKDIR: usize = 47;
-pub const SYSCALL_FS_RMDIR: usize = 48;
-pub const SYSCALL_FS_LINK: usize = 49;
-pub const SYSCALL_FS_UNLINK: usize = 50;
-pub const SYSCALL_FS_MKFIFO: usize = 51;
-pub const SYSCALL_FS_PIPE: usize = 52;
-pub const SYSCALL_MEM_MAP: usize = 23;
-pub const SYSCALL_MEM_UNMAP: usize = 25;
-pub const SYSCALL_MEM_PROTECT: usize = 26;
-pub const SYSCALL_SYS_SHUTDOWN: usize = 45;
-pub const SYSCALL_TEMP_WRITE: usize = 46;
+pub const SYSCALL_PROC_EXIT: usize = 6;
+pub const SYSCALL_PROC_GETARGS: usize = 7;
+pub const SYSCALL_PROC_FORK: usize = 8;
+pub const SYSCALL_PROC_EXEC: usize = 9;
+pub const SYSCALL_PROC_SIGACTION: usize = 10;
+pub const SYSCALL_PROC_SIGRET: usize = 11;
+pub const SYSCALL_PROC_WAITPID: usize = 12;
+pub const SYSCALL_FS_OPEN: usize = 13;
+pub const SYSCALL_FS_CLOSE: usize = 14;
+pub const SYSCALL_FS_READ: usize = 15;
+pub const SYSCALL_FS_WRITE: usize = 16;
+pub const SYSCALL_FS_GETDENTS: usize = 17;
+pub const SYSCALL_FS_RENAME: usize = 18;
+pub const SYSCALL_FS_STAT: usize = 19;
+pub const SYSCALL_FS_MKDIR: usize = 20;
+pub const SYSCALL_FS_RMDIR: usize = 21;
+pub const SYSCALL_FS_LINK: usize = 22;
+pub const SYSCALL_FS_UNLINK: usize = 23;
+pub const SYSCALL_FS_MKFIFO: usize = 24;
+pub const SYSCALL_FS_PIPE: usize = 25;
+pub const SYSCALL_FS_SEEK: usize = 26;
+pub const SYSCALL_MEM_MAP: usize = 27;
+pub const SYSCALL_MEM_UNMAP: usize = 28;
+pub const SYSCALL_MEM_PROTECT: usize = 29;
+pub const SYSCALL_TEMP_WRITE: usize = 30;
+pub const SYSCALL_SYS_SHUTDOWN: usize = 31;
 
 pub fn dispatch(regs: &mut GpRegfile, _sregs: &mut SpRegfile, args: [usize; 6], sysno: usize) {
     unsafe {
@@ -114,6 +115,9 @@ pub fn dispatch(regs: &mut GpRegfile, _sregs: &mut SpRegfile, args: [usize; 6], 
                 regs.set_retval(syscall_fs_mkfifo(args[0] as _, args[1] as _) as _)
             }
             SYSCALL_FS_PIPE => regs.set_retval(syscall_fs_pipe(args[0] as _, args[1] as _) as _),
+            SYSCALL_FS_SEEK => {
+                regs.set_retval(syscall_fs_seek(args[0] as _, args[1] as _, args[2] as _) as _)
+            }
             SYSCALL_MEM_MAP => regs.set_retval(syscall_mem_map(
                 args[0] as _,
                 args[1] as _,

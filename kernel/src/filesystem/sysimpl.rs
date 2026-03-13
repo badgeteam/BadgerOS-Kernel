@@ -8,7 +8,11 @@ use core::{
 };
 
 use crate::{
-    bindings::{error::Errno, log::LogLevel},
+    bindings::{
+        error::Errno,
+        log::LogLevel,
+        raw::{seek_mode_t_SEEK_CUR, seek_mode_t_SEEK_END, seek_mode_t_SEEK_SET},
+    },
     filesystem::{self, PATH_MAX},
     process::{
         self,
@@ -18,7 +22,7 @@ use crate::{
     },
 };
 
-use super::{MakeFileSpec, link, make_file, oflags, open, pipe, rename, unlink};
+use super::{MakeFileSpec, SeekMode, link, make_file, oflags, open, pipe, rename, unlink};
 
 pub const AT_FDCWD: i32 = -100;
 
@@ -34,6 +38,13 @@ pub unsafe extern "C" fn syscall_fs_open(at: c_int, path: *const c_char, oflags:
             let mut pathbuf = [0u8; PATH_MAX];
             let pathlen = usercopy::read_user_cstr(path, &mut pathbuf)?;
             let at_file = files.get_atfile(at)?;
+            logkf!(
+                LogLevel::Debug,
+                "syscall_fs_open({}, \"{}\", 0x{:x})",
+                at,
+                unsafe { str::from_utf8_unchecked(&pathbuf[..pathlen]) },
+                oflags
+            );
             let file = filesystem::open(at_file.as_deref(), &pathbuf[..pathlen], oflags & 0xffff)?;
             files.insert_file(FileDesc {
                 flags: AtomicU32::new(oflags & 0xffff0000),
@@ -62,6 +73,13 @@ pub unsafe extern "C" fn syscall_fs_read(
         return -(Errno::EINVAL as c_long);
     }
     let proc = process::current().unwrap();
+    logkf!(
+        LogLevel::Debug,
+        "syscall_fs_read({}, 0x{:x}, 0x{:x})",
+        fd,
+        read_buf as usize,
+        read_len
+    );
     Errno::extract_usize(
         try {
             proc.files
@@ -87,6 +105,13 @@ pub unsafe extern "C" fn syscall_fs_write(
         return -(Errno::EINVAL as c_long);
     }
     let proc = process::current().unwrap();
+    // logkf!(
+    //     LogLevel::Debug,
+    //     "syscall_fs_write({}, 0x{:x}, 0x{:x})",
+    //     fd,
+    //     write_buf as usize,
+    //     write_len
+    // );
     Errno::extract_usize(
         try {
             proc.files
@@ -306,4 +331,17 @@ pub unsafe extern "C" fn syscall_fs_pipe(fds: *mut [c_int; 2], flags: u32) -> c_
             fds.write([fd0, fd1])?;
         },
     )
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn syscall_fs_seek(fd: c_int, offset: i64, whence: c_int) -> i64 {
+    #[allow(non_upper_case_globals)]
+    let mode = match whence as u32 {
+        seek_mode_t_SEEK_CUR => SeekMode::Cur,
+        seek_mode_t_SEEK_SET => SeekMode::Set,
+        seek_mode_t_SEEK_END => SeekMode::End,
+        _ => return -(Errno::EINVAL as i32 as i64),
+    };
+    let proc = process::current().unwrap();
+    Errno::extract_i64(try { proc.files.lock_shared()?.get_file(fd)?.seek(mode, offset)? as i64 })
 }
