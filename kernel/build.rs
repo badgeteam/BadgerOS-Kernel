@@ -1,6 +1,4 @@
 fn main() {
-    let cpu = "riscv";
-
     // The bindgen::Builder is the main entry point
     // to bindgen, and lets you build up options for
     // the resulting bindings.
@@ -9,7 +7,7 @@ fn main() {
             "-Iinclude",
             "-Iinclude/badgelib",
             "-Iport/generic/include",
-            &format!("-Icpu/{}/include", cpu),
+            "-Icpu/riscv64/include",
             "-I../common/include",
             "-I../common/badgelib/include",
             "-Wno-unknown-attributes",

@@ -27,24 +27,13 @@ include(cpu/${CONFIG_CPU}/CMakeLists.txt)
 
 
 # Define options.
-if("${CONFIG_CPU}" STREQUAL "riscv32")
-    config_const(BOOT_PROTOCOL "esp32" "Boot protocol")
-    config_enum(
-        SOC "esp32p4" "Choose chipset"
-        "esp32p4" "esp32c6"
-    )
-    config_const(ENABLE_ACPI false "Enable ACPI support")
-    config_bool(ENABLE_DTB true "Enable DTB support")
+config_const(BOOT_PROTOCOL "limine" "Boot protocol")
+if("${CONFIG_CPU}" STREQUAL "x86_64")
+    config_const(ENABLE_ACPI true "Enable ACPI support")
+    config_const(ENABLE_DTB false "Enable DTB support")
 else()
-    config_const(BOOT_PROTOCOL "limine" "Boot protocol")
-    config_const(SOC "generic" "Boot protocol")
-    if("${CONFIG_CPU}" STREQUAL "x86_64")
-        config_const(ENABLE_ACPI true "Enable ACPI support")
-        config_const(ENABLE_DTB false "Enable DTB support")
-    else()
-        config_bool(ENABLE_ACPI true "Enable ACPI support")
-        config_bool(ENABLE_DTB true "Enable DTB support")
-    endif()
+    config_bool(ENABLE_ACPI true "Enable ACPI support")
+    config_bool(ENABLE_DTB true "Enable DTB support")
 endif()
 
 config_enum(
@@ -64,13 +53,6 @@ config_enum(
     25 50 100 200 500 1000
 )
 
-if("${CONFIG_BOOT_PROTOCOL}" STREQUAL "limine" AND "${CONFIG_CPU}" STREQUAL "riscv64")
-    config_bool(EMBED_UBOOT true "Embed U-boot")
-else()
-    config_const(EMBED_UBOOT false "Embed U-boot")
-endif()
-
-config_const(NOMMU false "Build for system without an MMU")
 config_const(PAGE_SIZE 4096 "MMU / memory map page size")
 
 config_bool(KTEST false "Run kernel self tests")
@@ -114,14 +96,13 @@ add_compile_options(${common_compiler_flags} ${cpu_flags})
 add_link_options(
     ${common_compiler_flags} ${cpu_flags} ${cpu_link}
     -Wl,--gc-sections -Wl,--build-id=none -nodefaultlibs -nostartfiles
-    -T${CMAKE_CURRENT_LIST_DIR}/misc/ld/${CONFIG_SOC}_${CONFIG_CPU}.ld
+    -T${CMAKE_CURRENT_LIST_DIR}/misc/ld/${CONFIG_CPU}.ld
 )
 
 
 
 # Define executable.
 project(badgeros C ASM)
-set(target badger-os.elf)
 
 set(kernel_src
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/arrays.c
@@ -131,7 +112,6 @@ set(kernel_src
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/hash.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/list.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/log.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/lstr.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/map.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/num_to_str.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/radixtree.c
@@ -189,7 +169,7 @@ if(${CONFIG_ENABLE_DTB})
     set(kernel_include ${kernel_include} ${UACPI_INCLUDES})
 endif()
 
-add_executable(${target}
+add_executable(badger-os.elf
     ${kernel_src}
     ${cpu_src}
 )
@@ -228,32 +208,8 @@ add_custom_target(
     rust.target ALL
     cargo build ${rust_features} --target=${rust_target}
 )
-add_dependencies(${target} rust.target)
-target_link_libraries(${target} PRIVATE -Wl,--whole-archive ${rust_lib} -Wl,--no-whole-archive)
-
-
+add_dependencies(badger-os.elf rust.target)
+target_link_libraries(badger-os.elf PRIVATE -Wl,--whole-archive ${rust_lib} -Wl,--no-whole-archive)
 
 # Copy the BadgerOS binary to the output directory.
 install(TARGETS badger-os.elf DESTINATION .)
-add_custom_command(
-    OUTPUT badger-os.stripped.elf
-    ALL
-    COMMAND cp badger-os.elf badger-os.stripped.elf
-    COMMAND ${CONFIG_PREFIX}strip -g -s badger-os.stripped.elf
-    DEPENDS badger-os.elf
-)
-install(FILES ${CMAKE_BINARY_DIR}/badger-os.stripped.elf DESTINATION .)
-
-# Create a disassembled version for easier debugging.
-add_custom_target(
-    badger-os.elf.disasm
-    ALL
-    COMMAND ${CONFIG_PREFIX}objdump -Sd badger-os.elf > badger-os.elf.disasm
-    DEPENDS badger-os.elf
-)
-
-if("${CONFIG_BOOT_PROTOCOL}" STREQUAL "esp32")
-    include(image_esp32.cmake)
-elseif("${CONFIG_BOOT_PROTOCOL}" STREQUAL "limine")
-    include(image_limine.cmake)
-endif()

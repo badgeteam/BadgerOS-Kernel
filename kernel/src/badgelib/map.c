@@ -6,19 +6,10 @@
 #include "map.h"
 
 #include "badge_strings.h"
-#include "lstr.h"
 
 #include <malloc.h>
 
 
-
-// Vtable for `lstr_t` maps.
-map_vtable_t const lstr_map_vtable = {
-    .key_cmp  = (int (*)(void const *, void const *))lstr_cmp,
-    .key_del  = free,
-    .key_dup  = (void *(*)(void const *))lstr_clone,
-    .key_hash = (uint32_t (*)(void const *))lstr_hash,
-};
 
 // Vtable for string maps.
 map_vtable_t const str_map_vtable = {

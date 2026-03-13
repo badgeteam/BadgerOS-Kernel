@@ -1,9 +1,3 @@
-[submodule "kernel/lib/opensbi"]
-	path = kernel/lib/opensbi
-	url = https://github.com/riscv-software-src/opensbi
-[submodule "kernel/lib/u-boot"]
-	path = kernel/lib/u-boot
-	url = https://github.com/u-boot/u-boot
 [submodule "kernel/lib/uacpi"]
 	path = kernel/lib/uacpi
 	url = https://github.com/ultraos/uacpi

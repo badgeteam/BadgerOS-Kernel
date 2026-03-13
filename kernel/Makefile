@@ -5,7 +5,6 @@ all: build
 
 CONFIG_PATH        = ../.config/config.mk
 include $(CONFIG_PATH)
-include cpu/$(CONFIG_CPU)/cpu.mk
 
 MAKEFLAGS         += --silent -j$(shell nproc)
 SHELL             := /usr/bin/env bash
@@ -23,10 +22,6 @@ PORT              ?= /dev/ttyUSB1
 cmake-configure:
 	mkdir -p '$(BUILDDIR)'
 	cmake -B '$(BUILDDIR)'
-
-.PHONY: _on_config
-_on_config: _port_on_config
-	git submodule update --init lib/kbelf
 
 .PHONY: build
 build: cmake-configure

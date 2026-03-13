@@ -53,8 +53,8 @@ pub mod mem;
 pub mod process;
 pub mod util;
 
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
-#[path = "../cpu/riscv/src/mod.rs"]
+#[cfg(target_arch = "riscv64")]
+#[path = "../cpu/riscv64/src/mod.rs"]
 pub mod cpu;
 #[cfg(target_arch = "x86_64")]
 #[path = "../cpu/x86_64/src/mod.rs"]

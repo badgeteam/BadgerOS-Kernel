@@ -10,8 +10,6 @@
 
 
 
-// Create an empty hash map with `lstr_t` keys.
-#define LSTR_MAP_EMPTY ((map_t){NULL, 0, 0, &lstr_map_vtable})
 // Create an empty hash map with C-string keys.
 #define STR_MAP_EMPTY  ((map_t){NULL, 0, 0, &str_map_vtable})
 // Create an empty hash map with pointer keys.
@@ -69,8 +67,6 @@ struct map_vtable {
     void (*key_del)(void *);
 };
 
-// Vtable for `lstr_t` maps.
-extern map_vtable_t const lstr_map_vtable;
 // Vtable for string maps.
 extern map_vtable_t const str_map_vtable;
 // Vtable for pointer maps.

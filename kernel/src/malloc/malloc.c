@@ -15,9 +15,6 @@
 
 #ifdef BADGEROS_KERNEL
 // NOLINTBEGIN
-extern char __start_free_sram[];
-extern char __stop_free_sram[];
-
 #define __wrap_malloc         malloc
 #define __wrap_free           free
 #define __wrap_calloc         calloc
@@ -61,9 +58,6 @@ void kernel_heap_init();
 
 void kernel_heap_init() {
 #ifdef BADGEROS_KERNEL
-#ifndef CONFIGENUM_SOC_generic
-    init_pool(__start_free_sram, __stop_free_sram, 0);
-#endif
     init_kernel_slabs();
 #else
     SPIN_LOCK_LOCK(lock);
