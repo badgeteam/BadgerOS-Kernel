@@ -410,7 +410,7 @@ impl<'a, T: UserCopyable, const MUTABLE: bool> UserPtr<'a, T, MUTABLE> {
                 size_of::<T>(),
             );
             cpu::mmu::disable_sum();
-            res.map(|_| unsafe { tmp.assume_init() })
+            res.map(|_| tmp.assume_init())
         }
     }
 

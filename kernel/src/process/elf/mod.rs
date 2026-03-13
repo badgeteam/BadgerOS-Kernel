@@ -2,24 +2,17 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::sync::atomic::AtomicU32;
-
-use alloc::{sync::Arc, vec::Vec};
+use alloc::vec::Vec;
 use bytemuck_derive::{AnyBitPattern, NoUninit};
 
 use crate::{
-    bindings::{
-        error::{EResult, Errno},
-        log::LogLevel,
-    },
+    bindings::error::{EResult, Errno},
     config::PAGE_SIZE,
     cpu,
     filesystem::{self, File, oflags},
     mem::vmm::{self, Memmap},
     process::usercopy::UserSliceMut,
 };
-
-use super::files::{FDTable, FileDesc};
 
 mod elf64;
 
@@ -82,13 +75,6 @@ fn map_helper(
     phdr: elf64::ProgHeader,
     load_offset: usize,
 ) -> EResult<()> {
-    logkf!(
-        LogLevel::Debug,
-        "map_helper(..., ..., {:x?}, 0x{:x})",
-        phdr,
-        load_offset
-    );
-
     let vaddr = phdr.vaddr as usize + load_offset;
     let vaddr_end = vaddr + phdr.mem_size as usize;
 
