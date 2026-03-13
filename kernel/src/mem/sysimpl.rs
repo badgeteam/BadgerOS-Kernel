@@ -24,17 +24,6 @@ pub unsafe extern "C" fn syscall_mem_map(
     _fd: c_int,
     _offset: i64,
 ) -> *mut c_void {
-    logkf!(
-        LogLevel::Debug,
-        "syscall_mem_map(0x{:x}, 0x{:x}, 0x{:x}, 0x{:x}, {}, {})",
-        address as usize,
-        size,
-        prot,
-        flags,
-        _fd,
-        _offset
-    );
-
     let address = address as usize;
     if flags & MAP_ANON == 0 {
         logkf!(LogLevel::Warning, "TODO: non-anonymous mmap");
@@ -64,6 +53,10 @@ pub unsafe extern "C" fn syscall_mem_map(
     if flags & MAP_POPULATE == 0 {
         vmm_flags |= vmm::flags::LAZY;
     }
+
+    // Temp workaround: protect is not implemented.
+    // It will be implemented when VMM is re-written.
+    vmm_flags |= vmm::flags::RWX;
 
     let proc = process::current().unwrap();
     let vpn = unsafe {

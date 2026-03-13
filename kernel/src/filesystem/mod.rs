@@ -638,20 +638,18 @@ fn walk_unlocked(
                     links_passed += 1;
                     depth += 1;
                     stack[depth] = LinkEntry {
-                        name: LinkValue::Dent(at.clone()),
+                        name: LinkValue::Dent(next.clone()),
                         offset: 0,
                     };
-                    if at.readlink()?.len() == 0 {
+                    if next.readlink()?.len() == 0 {
                         return Err(Errno::ENOENT);
-                    } else if at.readlink()?[0] == b'/' {
+                    } else if next.readlink()?[0] == b'/' {
                         at = root_vnode_unlocked(guard)?
                             .mtx
                             .lock_shared()?
                             .dentcache
                             .clone()
                             .unwrap();
-                    } else {
-                        at = next;
                     }
                 }
             }

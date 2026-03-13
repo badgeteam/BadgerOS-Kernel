@@ -29,7 +29,7 @@ impl Clone for FileDesc {
 /// Process file descriptor table.
 #[derive(Clone, Default)]
 pub struct FDTable {
-    inner: BTreeMap<i32, FileDesc>,
+    pub inner: BTreeMap<i32, FileDesc>,
 }
 
 pub mod fdflags {

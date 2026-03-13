@@ -2,8 +2,9 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::ptr::slice_from_raw_parts_mut;
+use core::sync::atomic::AtomicU32;
 
+use alloc::{sync::Arc, vec::Vec};
 use bytemuck_derive::{AnyBitPattern, NoUninit};
 
 use crate::{
@@ -11,12 +12,14 @@ use crate::{
         error::{EResult, Errno},
         log::LogLevel,
     },
-    config::{self, PAGE_SIZE},
+    config::PAGE_SIZE,
     cpu,
-    filesystem::File,
+    filesystem::{self, File, oflags},
     mem::vmm::{self, Memmap},
     process::usercopy::UserSliceMut,
 };
+
+use super::files::{FDTable, FileDesc};
 
 mod elf64;
 
@@ -29,8 +32,24 @@ pub const ELF_MACHINE: u16 = 243;
 #[cfg(target_arch = "x86_64")]
 pub const ELF_MACHINE: u16 = 62;
 
+pub const AT_NULL: usize = 0;
+pub const AT_IGNORE: usize = 1;
+pub const AT_EXECFD: usize = 2;
+pub const AT_PHDR: usize = 3;
+pub const AT_PHENT: usize = 4;
+pub const AT_PHNUM: usize = 5;
+pub const AT_PAGESZ: usize = 6;
+pub const AT_BASE: usize = 7;
+pub const AT_FLAGS: usize = 8;
+pub const AT_ENTRY: usize = 9;
+pub const AT_UID: usize = 11;
+pub const AT_EUID: usize = 12;
+pub const AT_GID: usize = 13;
+pub const AT_EGID: usize = 14;
+
 /// Auxiliary vector entry.
 #[repr(C)]
+#[derive(Clone, Copy, NoUninit, AnyBitPattern)]
 pub struct AuxvEntry {
     pub type_: usize,
     pub value: usize,
@@ -109,7 +128,22 @@ fn map_helper(
 
 /// Load an ELF file into a memory map.
 /// Returns the entrypoint to jump to.
-pub fn load(file: &dyn File, memmap: &Memmap, is_interp: bool) -> EResult<usize> {
+pub fn load(
+    file: Arc<dyn File>,
+    fdtab: &mut FDTable,
+    memmap: &Memmap,
+    auxv: &mut Vec<AuxvEntry>,
+) -> EResult<usize> {
+    load_impl(file, fdtab, memmap, auxv, false)
+}
+
+pub fn load_impl(
+    file: Arc<dyn File>,
+    fdtab: &mut FDTable,
+    memmap: &Memmap,
+    auxv: &mut Vec<AuxvEntry>,
+    is_interp: bool,
+) -> EResult<usize> {
     file.seek_strong(0, Errno::ENOEXEC)?;
     let header: elf64::ElfHeader = file.read_pod(Errno::ENOEXEC)?;
 
@@ -157,6 +191,12 @@ pub fn load(file: &dyn File, memmap: &Memmap, is_interp: bool) -> EResult<usize>
         0
     };
 
+    let mut entry = (header.entry as usize).wrapping_add(load_offset);
+    auxv.push(AuxvEntry {
+        type_: AT_ENTRY,
+        value: entry,
+    });
+
     for i in 0..header.phnum {
         file.seek_strong(
             header.phoff + i as u64 * header.phentsize as u64,
@@ -166,9 +206,51 @@ pub fn load(file: &dyn File, memmap: &Memmap, is_interp: bool) -> EResult<usize>
 
         if phdr.type_ as u32 == elf64::PT_LOAD {
             // TODO: This will be replaced with a proper file mapping in the future.
-            map_helper(file, memmap, phdr, load_offset)?;
+            map_helper(file.as_ref(), memmap, phdr, load_offset)?;
+        } else if phdr.type_ as u32 == elf64::PT_PHDR {
+            auxv.push(AuxvEntry {
+                type_: AT_PHENT,
+                value: header.phentsize as _,
+            });
+            auxv.push(AuxvEntry {
+                type_: AT_PHNUM,
+                value: header.phnum as _,
+            });
+            auxv.push(AuxvEntry {
+                type_: AT_PHDR,
+                value: phdr.vaddr as usize + load_offset,
+            });
+        } else if phdr.type_ as u32 == elf64::PT_INTERP {
+            if is_interp {
+                return Err(Errno::ENOEXEC);
+            }
+            let fd = fdtab.insert_file(FileDesc {
+                flags: AtomicU32::new(0),
+                file: file.clone(),
+            })?;
+            auxv.push(AuxvEntry {
+                type_: AT_EXECFD,
+                value: fd as _,
+            });
+
+            let mut path = Vec::try_with_capacity(phdr.mem_size as _)?;
+            path.resize(phdr.file_size as _, 0);
+            file.seek_strong(phdr.offset, Errno::ENOEXEC)?;
+            file.readk(&mut path)?;
+            path.resize(phdr.mem_size as _, 0);
+            let len = path
+                .iter()
+                .enumerate()
+                .find(|x| *x.1 == 0)
+                .map(|x| x.0)
+                .unwrap_or(path.len());
+            path.resize(len, 0);
+            let interp_file = filesystem::open(None, &path, oflags::READ_ONLY | oflags::FILE_ONLY)?;
+
+            let mut dummy = Vec::new();
+            entry = load_impl(interp_file, fdtab, memmap, &mut dummy, true)?;
         }
     }
 
-    Ok((header.entry as usize).wrapping_add(load_offset))
+    Ok(entry)
 }

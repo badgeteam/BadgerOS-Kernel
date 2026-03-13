@@ -224,7 +224,7 @@ set(rust_target ${CMAKE_CURRENT_LIST_DIR}/misc/rust_target/${CONFIG_CPU}-kernel.
 set(rust_lib ${CMAKE_CURRENT_LIST_DIR}/target/${CONFIG_CPU}-kernel/${rust_build_type}/libkernel.a)
 add_custom_target(
     rust.target ALL
-    cargo +nightly build -Z build-std=core,alloc --target=${rust_target} ${rust_features}
+    cargo build ${rust_features} --target=${rust_target}
 )
 add_dependencies(${target} rust.target)
 target_link_libraries(${target} PRIVATE -Wl,--whole-archive ${rust_lib} -Wl,--no-whole-archive)

@@ -4,8 +4,7 @@
 
 use core::{
     cell::UnsafeCell,
-    ffi::c_char,
-    ptr::{NonNull, addr_eq, null},
+    ptr::{NonNull, addr_eq},
     sync::atomic::{AtomicI32, AtomicI64, AtomicU32, Ordering},
     usize,
 };
@@ -18,17 +17,20 @@ use alloc::{
     vec::Vec,
 };
 use elf::AuxvEntry;
+use files::FileDesc;
 use signal::Sigtab;
-use usercopy::{AccessResult, UserSliceMut};
+use usercopy::{AccessResult, UserSlice, UserSliceMut};
 
 use crate::{
     bindings::{
+        device::class::char::CharDevice,
         error::{EResult, Errno},
         log::LogLevel,
     },
     config::{PAGE_SIZE, STACK_SIZE},
-    cpu::{self, mmu, thread::GpRegfile, usercopy::copy_to_user, usermode::call_usermode},
-    filesystem::{self, File, SeekMode, mode, oflags},
+    cpu::{self, mmu, thread::GpRegfile, usermode::call_usermode},
+    device::builtin_driver::null_instance,
+    filesystem::{self, File, SeekMode, device::CharDevFile, mode, oflags},
     kernel::{
         sched::Thread,
         sync::mutex::{Mutex, SharedMutexGuard},
@@ -77,6 +79,7 @@ pub struct Cmdline {
     pub binary: CString,
     pub argv: Vec<CString>,
     pub envp: Vec<CString>,
+    pub auxv: Vec<AuxvEntry>,
 }
 
 /// Process threads list.
@@ -129,81 +132,45 @@ impl Process {
     }
 
     /// Prepare the entrypoint stack.
-    fn create_entry_stack(
-        &self,
-        mut stack_top: *mut (),
-        auxv: &[AuxvEntry],
-    ) -> AccessResult<*mut ()> {
+    fn create_entry_stack(&self, stack_top: *mut (), auxv: &[AuxvEntry]) -> AccessResult<*mut ()> {
         let cmdline = self.cmdline();
-        let mut argv = Vec::<*const c_char>::new();
-        let mut envp = Vec::<*const c_char>::new();
+        let mut argv = Vec::<usize>::new();
+        let mut envp = Vec::<usize>::new();
 
-        unsafe {
-            // Make the strings block.
-            for arg in &cmdline.argv {
-                let arg = arg.as_bytes_with_nul();
-                stack_top = stack_top.byte_sub(arg.len());
-                cpu::mmu::enable_sum();
-                copy_to_user(stack_top, arg.as_ptr() as *const (), arg.len())?;
-                cpu::mmu::disable_sum();
-            }
-            argv.push(null());
+        let mut stack_top = stack_top as *mut u8;
 
-            for env in &cmdline.envp {
-                let env = env.as_bytes_with_nul();
-                stack_top = stack_top.byte_sub(env.len());
-                cpu::mmu::enable_sum();
-                copy_to_user(stack_top, env.as_ptr() as *const (), env.len())?;
-                cpu::mmu::disable_sum();
-            }
-            envp.push(null());
-
-            // Align stack pointer to 16 bytes again.
-            stack_top = (stack_top as usize & !15) as *mut ();
-            let bytes_left = (argv.len() + envp.len() + auxv.len() * 2 + 2) * size_of::<usize>();
-            if bytes_left % 16 != 0 {
-                // Account for the offsets caused by the remaining data.
-                stack_top = stack_top.byte_sub(16 - bytes_left % 16);
-            }
-
-            // Null auxvec entry.
-            let zero = 0usize;
-            let zero_ptr = &raw const zero as *const ();
-            stack_top = stack_top.byte_sub(size_of::<usize>());
-            cpu::mmu::enable_sum();
-            copy_to_user(stack_top, zero_ptr, size_of::<usize>())?;
-            cpu::mmu::disable_sum();
-
-            // Envp.
-            stack_top = stack_top.byte_sub(envp.len() * size_of::<usize>());
-            cpu::mmu::enable_sum();
-            copy_to_user(
-                stack_top,
-                envp.as_ptr() as *const (),
-                envp.len() * size_of::<usize>(),
-            )?;
-            cpu::mmu::disable_sum();
-
-            // Argv.
-            stack_top = stack_top.byte_sub(argv.len() * size_of::<usize>());
-            cpu::mmu::enable_sum();
-            copy_to_user(
-                stack_top,
-                argv.as_ptr() as *const (),
-                argv.len() * size_of::<usize>(),
-            )?;
-            cpu::mmu::disable_sum();
-
-            // Argc.
-            let argc = argv.len();
-            let argc_ptr = &raw const argc as *const ();
-            stack_top = stack_top.byte_sub(size_of::<usize>());
-            cpu::mmu::enable_sum();
-            copy_to_user(stack_top, argc_ptr, size_of::<usize>())?;
-            cpu::mmu::disable_sum();
+        for arg in &cmdline.argv {
+            let arg = arg.as_bytes_with_nul();
+            stack_top = stack_top.wrapping_sub(arg.len());
+            UserSlice::new_mut(stack_top, arg.len())?.write_multiple(0, arg)?;
+            argv.push(stack_top as usize);
         }
+        argv.push(0);
 
-        Ok(stack_top)
+        for arg in &cmdline.envp {
+            let arg = arg.as_bytes_with_nul();
+            stack_top = stack_top.wrapping_sub(arg.len());
+            UserSlice::new_mut(stack_top, arg.len())?.write_multiple(0, arg)?;
+            envp.push(stack_top as usize);
+        }
+        envp.push(0);
+
+        let mut pointers = Vec::<usize>::new();
+        pointers.push(argv.len() - 1);
+        pointers.extend_from_slice(&argv);
+        pointers.extend_from_slice(&envp);
+        for ent in auxv {
+            pointers.push(ent.type_);
+            pointers.push(ent.value);
+        }
+        pointers.push(0);
+
+        let stack_top = stack_top as usize - size_of::<usize>() * pointers.len();
+        let stack_top = stack_top - stack_top % 16;
+        UserSlice::new_mut(stack_top as *mut usize, pointers.len())?
+            .write_multiple(0, &pointers)?;
+
+        Ok(stack_top as *mut ())
     }
 
     /// Create the init process.
@@ -224,7 +191,8 @@ impl Process {
             cmdline: Mutex::new(Cmdline {
                 binary: init_path.clone(),
                 argv: vec![init_path],
-                envp: Vec::new(),
+                envp: vec![c"MLIBC_RTLD_DEBUG_VERBOSE=1".into()],
+                auxv: Vec::new(),
             }),
             tid_counter: AtomicI64::new(0),
             threads: Mutex::new(ProcThreads {
@@ -235,10 +203,12 @@ impl Process {
             wait_status: AtomicI32::new(0),
             sigtab: Mutex::new(Sigtab::default()),
         };
+        proc.prefill_stdio_fds()?;
         let entry = load_executable(
             proc.memmap(),
-            &mut *proc.cmdline.unintr_lock(),
-            file.as_ref(),
+            &mut proc.files.unintr_lock(),
+            &mut proc.cmdline.unintr_lock(),
+            file,
             0,
         )?;
 
@@ -248,7 +218,8 @@ impl Process {
         let proc2 = proc.clone();
         proc.create_thread(
             move |stack_top| {
-                let stack_top = proc2.create_entry_stack(stack_top, &[]).unwrap();
+                let cmdline = proc2.cmdline();
+                let stack_top = proc2.create_entry_stack(stack_top, &cmdline.auxv).unwrap();
                 (entry as *const (), stack_top)
             },
             Some("U: main".into()),
@@ -313,23 +284,25 @@ impl Process {
 
     /// Execute a new binary, replacing this process.
     pub fn exec(self: &Arc<Self>, mut cmdline: Cmdline) -> EResult<()> {
-        let new_mm = Memmap::new_user()?;
-        let file = filesystem::open(None, cmdline.binary.as_bytes(), oflags::READ_ONLY)?;
-
-        let entry = load_executable(&new_mm, &mut cmdline, file.as_ref(), 0)?;
-
         if self.flags.fetch_or(flags::STOPPING, Ordering::Relaxed) != 0 {
             // Some other thread either `exit()`'ed or `exec()`'ed first.
             return Ok(());
         }
 
+        let new_mm = Memmap::new_user()?;
+        let file = filesystem::open(None, cmdline.binary.as_bytes(), oflags::READ_ONLY)?;
+        let mut files = self.files.unintr_lock();
+        let entry = load_executable(&new_mm, &mut files, &mut cmdline, file, 0)?;
+
         // Commit to replacing the process.
+        // TODO: From this point on, errors are to kill the process instead of returning an error code.
         self.join_all_threads();
         self.files.unintr_lock().close_cloexec();
         self.flags.store(0, Ordering::Relaxed);
         self.tid_counter.store(0, Ordering::Relaxed);
         *self.sigtab.unintr_lock() = Sigtab::default();
         *self.cmdline.unintr_lock() = cmdline;
+        self.prefill_stdio_fds().unwrap();
 
         unsafe {
             cpu::mmu::set_page_table(new_mm.root_ppn(), 0);
@@ -346,6 +319,43 @@ impl Process {
         .unwrap();
 
         logkf!(LogLevel::Debug, "Process {} exec'ed", self.pid);
+
+        Ok(())
+    }
+
+    /// Set up FDs 0, 1 and 2 if they are not present.
+    fn prefill_stdio_fds(&self) -> EResult<()> {
+        let mut fds = self.files.unintr_lock();
+
+        if fds.inner.contains_key(&0) && fds.inner.contains_key(&1) && fds.inner.contains_key(&2) {
+            return Ok(());
+        }
+
+        let mut serial_devs = CharDevice::filter(Default::default())?;
+        let stdio_dev = serial_devs.try_remove(0).unwrap_or_else(|| null_instance());
+        let file = Arc::try_new(CharDevFile::new_raw(stdio_dev))?;
+
+        let _ = fds.inner.try_insert(
+            0,
+            FileDesc {
+                flags: AtomicU32::new(0),
+                file: file.clone(),
+            },
+        );
+        let _ = fds.inner.try_insert(
+            1,
+            FileDesc {
+                flags: AtomicU32::new(0),
+                file: file.clone(),
+            },
+        );
+        let _ = fds.inner.try_insert(
+            2,
+            FileDesc {
+                flags: AtomicU32::new(0),
+                file: file.clone(),
+            },
+        );
 
         Ok(())
     }
@@ -463,14 +473,20 @@ impl Process {
 }
 
 /// Implementation of [`load_executable`] for ELF files.
-fn load_executable_elf(memmap: &Memmap, file: &dyn File, _recursion: u8) -> EResult<usize> {
+fn load_executable_elf(
+    memmap: &Memmap,
+    files: &mut FDTable,
+    auxv: &mut Vec<AuxvEntry>,
+    file: Arc<dyn File>,
+    _recursion: u8,
+) -> EResult<usize> {
     let thread = Thread::current();
     unsafe {
         (*thread).mm_override = Some(NonNull::from_ref(memmap));
         cpu::mmu::set_page_table(memmap.root_ppn(), 0);
         mmu::vmem_fence(None, None);
     }
-    let res = elf::load(file, memmap, false);
+    let res = elf::load(file, files, memmap, auxv);
     unsafe {
         (*thread).mm_override = None;
         cpu::mmu::set_page_table(memmap.root_ppn(), 0);
@@ -482,8 +498,9 @@ fn load_executable_elf(memmap: &Memmap, file: &dyn File, _recursion: u8) -> ERes
 /// Implementation of [`load_executable`] for `#!` interpreted executables.
 fn load_executable_shebang(
     memmap: &Memmap,
+    files: &mut FDTable,
     cmdline: &mut Cmdline,
-    file: &dyn File,
+    file: Arc<dyn File>,
     recursion: u8,
 ) -> EResult<usize> {
     // Extract the args from the shebang.
@@ -506,14 +523,15 @@ fn load_executable_shebang(
     }
 
     let interp = filesystem::open(None, cmdline.argv[0].as_bytes(), oflags::READ_ONLY)?;
-    load_executable(memmap, cmdline, interp.as_ref(), recursion + 1)
+    load_executable(memmap, files, cmdline, interp, recursion + 1)
 }
 
 /// Load the binary for a process and prepare for its execution.
 fn load_executable(
     memmap: &Memmap,
+    files: &mut FDTable,
     cmdline: &mut Cmdline,
-    file: &dyn File,
+    file: Arc<dyn File>,
     recursion: u8,
 ) -> EResult<usize> {
     if recursion > 8 {
@@ -533,9 +551,9 @@ fn load_executable(
     let magic_len = file.read(UserSliceMut::new_kernel_mut(&mut magic))?;
 
     if magic_len >= elf::ELF_MAGIC.len() && magic == elf::ELF_MAGIC {
-        load_executable_elf(memmap, file, recursion)
+        load_executable_elf(memmap, files, &mut cmdline.auxv, file, recursion)
     } else if magic_len >= 2 && magic[0] == b'#' && magic[1] == b'!' {
-        load_executable_shebang(memmap, cmdline, file, recursion)
+        load_executable_shebang(memmap, files, cmdline, file, recursion)
     } else {
         Err(Errno::ENOEXEC)
     }

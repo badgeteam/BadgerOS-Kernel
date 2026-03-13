@@ -160,7 +160,8 @@ riscv_exception_asm:
     la gp, __global_pointer$
     addi a0, sp, 64 # Pointer to struct GpRegfile
     addi a1, sp, 16 # Pointer to struct SpecialRegfile
-    jal  riscv_exception_handler
+    la   ra, riscv_exception_handler
+    jalr ra
     csrr t0, sscratch
     
     # Delete fake unwind frame.

@@ -8,16 +8,16 @@ use crate::bindings::{
 use super::*;
 
 /// A character device bound to a VNode.
-pub(super) struct CharDevFile {
+pub struct CharDevFile {
     /// The character device associated with this file.
     char_dev: CharDevice,
     /// The VNode at which this device is bound.
-    vnode: Arc<VNode>,
+    vnode: Option<Arc<VNode>>,
 }
 
 impl CharDevFile {
-    /// Create a new character device file.
-    pub fn new(vnode: Arc<VNode>) -> Self {
+    /// Create a new character device file from a VNode.
+    pub(super) fn new(vnode: Arc<VNode>) -> Self {
         Self {
             char_dev: vnode
                 .clone()
@@ -29,14 +29,28 @@ impl CharDevFile {
                 .as_char()
                 .unwrap()
                 .clone(),
-            vnode,
+            vnode: Some(vnode),
+        }
+    }
+
+    /// Create a new character device file from a device handler.
+    pub fn new_raw(char_dev: CharDevice) -> Self {
+        Self {
+            char_dev,
+            vnode: None,
         }
     }
 }
 
 impl File for CharDevFile {
     fn stat(&self) -> EResult<Stat> {
-        self.vnode.mtx.lock_shared()?.ops.stat(&self.vnode)
+        self.vnode
+            .as_ref()
+            .ok_or(Errno::EBADF)?
+            .mtx
+            .lock_shared()?
+            .ops
+            .stat(&self.vnode.as_ref().unwrap())
     }
 
     fn tell(&self) -> EResult<u64> {
@@ -64,7 +78,7 @@ impl File for CharDevFile {
     }
 
     fn get_vnode(&self) -> Option<Arc<VNode>> {
-        Some(self.vnode.clone())
+        self.vnode.clone()
     }
 
     fn get_device(&self) -> Option<BaseDevice> {

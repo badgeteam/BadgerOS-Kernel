@@ -8,7 +8,7 @@ use core::{
 };
 
 use crate::{
-    bindings::error::Errno,
+    bindings::{error::Errno, log::LogLevel},
     filesystem::{self, PATH_MAX},
     process::{
         self,

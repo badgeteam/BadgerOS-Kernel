@@ -107,6 +107,7 @@ pub unsafe extern "C" fn syscall_proc_exec(
                 binary: path,
                 argv: argbuf,
                 envp: envbuf,
+                auxv: Vec::new(),
             })?;
         },
     );

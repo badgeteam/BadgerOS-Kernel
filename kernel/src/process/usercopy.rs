@@ -166,16 +166,16 @@ impl<'a, T: UserCopyable, const MUTABLE: bool> UserSlice<'a, T, MUTABLE> {
             out.len(),
             self.len()
         );
-        unsafe { cpu::mmu::enable_sum() };
-        let res = unsafe {
-            copy_from_user(
+        unsafe {
+            cpu::mmu::enable_sum();
+            let res = copy_from_user(
                 out.as_ptr() as *mut (),
                 self.ptr.add(index).as_ptr() as *const (),
                 size_of::<T>() * out.len(),
-            )
-        };
-        unsafe { cpu::mmu::disable_sum() };
-        res
+            );
+            cpu::mmu::disable_sum();
+            res
+        }
     }
 
     /// Try to read an element from the slice.
@@ -187,16 +187,16 @@ impl<'a, T: UserCopyable, const MUTABLE: bool> UserSlice<'a, T, MUTABLE> {
             self.len()
         );
         let mut tmp = MaybeUninit::uninit();
-        unsafe { cpu::mmu::enable_sum() };
-        let res = unsafe {
-            copy_from_user(
+        unsafe {
+            cpu::mmu::enable_sum();
+            let res = copy_from_user(
                 &raw mut tmp as *mut (),
                 self.ptr.add(index).as_ptr() as *const (),
                 size_of::<T>(),
-            )
-        };
-        unsafe { cpu::mmu::disable_sum() };
-        res.map(|_| unsafe { tmp.assume_init() })
+            );
+            cpu::mmu::disable_sum();
+            res.map(|_| tmp.assume_init())
+        }
     }
 
     /// Pointer inside this slice.
@@ -235,14 +235,16 @@ impl<'a, T: UserCopyable> UserSlice<'a, T, true> {
             data.len(),
             self.len()
         );
-        let res = unsafe {
-            copy_to_user(
+        unsafe {
+            cpu::mmu::enable_sum();
+            let res = copy_to_user(
                 self.ptr.add(index).as_ptr() as *mut (),
                 data.as_ptr() as *const (),
                 size_of::<T>() * data.len(),
-            )
-        };
-        res
+            );
+            cpu::mmu::disable_sum();
+            res
+        }
     }
 
     /// Try to write an element to the slice.
@@ -253,22 +255,22 @@ impl<'a, T: UserCopyable> UserSlice<'a, T, true> {
             index,
             self.len()
         );
-        unsafe { cpu::mmu::enable_sum() };
-        let res = unsafe {
-            copy_to_user(
+        unsafe {
+            cpu::mmu::enable_sum();
+            let res = copy_to_user(
                 self.ptr.add(index).as_ptr() as *mut (),
                 &raw const data as *const (),
                 size_of::<T>(),
-            )
-        };
-        unsafe { cpu::mmu::disable_sum() };
-        res
+            );
+            cpu::mmu::disable_sum();
+            res
+        }
     }
 
     /// Fill this slice with a certain value.
     pub fn fill(&mut self, data: T) -> AccessResult<()> {
-        unsafe { cpu::mmu::enable_sum() };
         unsafe {
+            cpu::mmu::enable_sum();
             for i in 0..self.length {
                 if copy_to_user(
                     self.ptr.add(i).as_ptr() as *mut (),
@@ -281,8 +283,8 @@ impl<'a, T: UserCopyable> UserSlice<'a, T, true> {
                     return Err(AccessFault);
                 }
             }
-        };
-        unsafe { cpu::mmu::disable_sum() };
+            cpu::mmu::disable_sum();
+        }
         Ok(())
     }
 
@@ -400,16 +402,16 @@ impl<'a, T: UserCopyable, const MUTABLE: bool> UserPtr<'a, T, MUTABLE> {
     /// Try to read an element from the slice.
     pub fn read(&self) -> AccessResult<T> {
         let mut tmp = MaybeUninit::uninit();
-        unsafe { cpu::mmu::enable_sum() };
-        let res = unsafe {
-            copy_from_user(
+        unsafe {
+            cpu::mmu::enable_sum();
+            let res = copy_from_user(
                 &raw mut tmp as *mut (),
                 self.ptr.as_ptr() as *const (),
                 size_of::<T>(),
-            )
-        };
-        unsafe { cpu::mmu::disable_sum() };
-        res.map(|_| unsafe { tmp.assume_init() })
+            );
+            cpu::mmu::disable_sum();
+            res.map(|_| unsafe { tmp.assume_init() })
+        }
     }
 
     /// Get the pointer.
@@ -421,16 +423,16 @@ impl<'a, T: UserCopyable, const MUTABLE: bool> UserPtr<'a, T, MUTABLE> {
 impl<'a, T: UserCopyable> UserPtr<'a, T, true> {
     /// Try to write an element to the slice.
     pub fn write(&mut self, data: T) -> AccessResult<()> {
-        unsafe { cpu::mmu::enable_sum() };
-        let res = unsafe {
-            copy_to_user(
+        unsafe {
+            cpu::mmu::enable_sum();
+            let res = copy_to_user(
                 self.ptr.as_ptr() as *mut (),
                 &raw const data as *const (),
                 size_of::<T>(),
-            )
-        };
-        unsafe { cpu::mmu::disable_sum() };
-        res
+            );
+            cpu::mmu::disable_sum();
+            res
+        }
     }
 
     /// Get the pointer.
@@ -454,7 +456,8 @@ pub fn read_user_cstr(mut user_cstr: *const c_char, buffer: &mut [u8]) -> Access
         }
         let c = c?;
         if c == 0 {
-            break;
+            unsafe { cpu::mmu::disable_sum() };
+            return Ok(i);
         }
         buffer[i] = c;
         user_cstr = user_cstr.wrapping_add(1);

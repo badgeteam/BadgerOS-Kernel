@@ -4,7 +4,7 @@ use dev_zero::DEV_ZERO_DRIVER;
 
 use crate::bindings::{
     self,
-    device::{Device, DeviceInfo},
+    device::{Device, DeviceInfo, HasBaseDevice, class::char::CharDevice},
 };
 
 pub mod ahci;
@@ -20,6 +20,17 @@ unsafe extern "C" fn add_rust_builtin_drivers() {
     serial::add_drivers();
 }
 
+static mut NULL_INSTANCE: Option<CharDevice> = None;
+static mut ZERO_INSTANCE: Option<CharDevice> = None;
+
+pub fn null_instance() -> CharDevice {
+    unsafe { (&*&raw const NULL_INSTANCE).clone().unwrap() }
+}
+
+pub fn zero_instance() -> CharDevice {
+    unsafe { (&*&raw const ZERO_INSTANCE).clone().unwrap() }
+}
+
 #[unsafe(no_mangle)]
 unsafe extern "C" fn device_create_null_zero() {
     let dev_null = Device::add(DeviceInfo {
@@ -30,8 +41,9 @@ unsafe extern "C" fn device_create_null_zero() {
     })
     .unwrap();
     unsafe {
-        bindings::raw::device_set_driver(dev_null.as_raw_ptr(), &raw const DEV_NULL_DRIVER.base)
-    };
+        bindings::raw::device_set_driver(dev_null.as_raw_ptr(), &raw const DEV_NULL_DRIVER.base);
+        NULL_INSTANCE = dev_null.as_char();
+    }
 
     let dev_zero = Device::add(DeviceInfo {
         parent: None,
@@ -41,6 +53,7 @@ unsafe extern "C" fn device_create_null_zero() {
     })
     .unwrap();
     unsafe {
-        bindings::raw::device_set_driver(dev_zero.as_raw_ptr(), &raw const DEV_ZERO_DRIVER.base)
-    };
+        bindings::raw::device_set_driver(dev_zero.as_raw_ptr(), &raw const DEV_ZERO_DRIVER.base);
+        ZERO_INSTANCE = dev_zero.as_char();
+    }
 }

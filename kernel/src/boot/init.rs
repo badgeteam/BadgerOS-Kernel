@@ -82,6 +82,7 @@ pub static INIT_BLOCK_THREADS: Mutex<Vec<Arc<Thread>>> = Mutex::new(Vec::new());
 /// Main initialization function of the kernel.
 /// Sets up most things after early boot.
 unsafe fn general_init() {
+    let smp_ok;
     unsafe {
         let mut cur = &raw const __start_kmodules;
         while cur != &raw const __stop_kmodules {
@@ -102,16 +103,13 @@ unsafe fn general_init() {
         cpu::timer::start_tick_timer();
 
         // Bring up APs.
-        match smp::poweron_all_aps() {
-            Ok(_) => {
-                // We have now definitely stopped using all memory in bootloader reclaimable regions.
-                // Exit the bootloader's services and reclaim all reclaimable memory.
-                bootp_reclaim_mem()
-            }
+        smp_ok = match smp::poweron_all_aps() {
+            Ok(_) => true,
             Err(x) => {
-                logkf!(LogLevel::Error, "Failed to power on APs: {}", x)
+                logkf!(LogLevel::Error, "Failed to power on APs: {}", x);
+                false
             }
-        }
+        };
     }
 
     let init_block_threads = &mut *INIT_BLOCK_THREADS.unintr_lock();
@@ -121,6 +119,11 @@ unsafe fn general_init() {
     logkf!(LogLevel::Info, "Kernel initialized");
 
     mount_root_fs();
+    if smp_ok {
+        // We have now definitely stopped using all memory in bootloader reclaimable regions.
+        // Exit the bootloader's services and reclaim all reclaimable memory.
+        unsafe { bootp_reclaim_mem() };
+    }
 
     logkf!(LogLevel::Info, "Starting init process");
     Process::new_init().expect("Failed to start init process");

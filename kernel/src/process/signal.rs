@@ -38,6 +38,11 @@ impl Default for Sigtab {
 
 /// Run the handler for a segmentation fault.
 pub fn run_sigsegv_handler(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
+    logkf!(
+        LogLevel::Debug,
+        "SIGSEGV: 0x{:x}",
+        sregs.is_mem_trap().unwrap_or(0)
+    );
     run_handler(
         siginfo_t {
             si_signo: Signal::SIGSEGV as i32,
@@ -58,6 +63,7 @@ pub fn run_sigsegv_handler(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
 
 /// Run the handler for an illegal instruction fault.
 pub fn run_sigill_handler(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
+    logkf!(LogLevel::Debug, "SIGILL: 0x{:x}", sregs.fault_pc());
     run_handler(
         siginfo_t {
             si_signo: Signal::SIGILL as i32,
@@ -78,6 +84,7 @@ pub fn run_sigill_handler(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
 
 /// Run the handler for a breakpoint trap.
 pub fn run_sigtrap_handler(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
+    logkf!(LogLevel::Debug, "SIGTRAP: 0x{:x}", sregs.fault_pc());
     run_handler(
         siginfo_t {
             si_signo: Signal::SIGTRAP as i32,
@@ -98,7 +105,6 @@ pub fn run_sigtrap_handler(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
 
 /// Run the handler for some signal.
 pub fn run_handler(siginfo: siginfo_t, regs: &mut GpRegfile, sregs: &mut SpRegfile) {
-    logkf!(LogLevel::Debug, "{:#?}", siginfo);
     logkf!(LogLevel::Debug, "regs:\n{}", regs);
     logkf!(LogLevel::Debug, "sregs:\n{}", sregs);
     if siginfo.si_signo == Signal::SIGKILL as i32 {

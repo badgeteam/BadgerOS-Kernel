@@ -31,6 +31,7 @@
 #![feature(int_roundings)]
 #![feature(try_trait_v2)]
 #![feature(transmutability)]
+#![feature(vec_try_remove)]
 
 #[macro_use]
 extern crate alloc;

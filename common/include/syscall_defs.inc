@@ -150,6 +150,10 @@ SYSCALL_DEF(23, SYSCALL_MEM_MAP, syscall_mem_map, void *, void *address, size_t 
 // Returns whether a range of memory was unmapped.
 SYSCALL_DEF_V(25, SYSCALL_MEM_UNMAP, syscall_mem_unmap, void *address, size_t size)
 
+// Change the protection flags on a range of memory.
+// May fail if the process does not have write access to mapped objects.
+SYSCALL_DEF(26, SYSCALL_MEM_PROTECT, syscall_mem_protect, int, void *address, size_t size, int prot)
+
 
 
 /* ==== SYSTEM MANAGEMENT SYSCALLS ==== */

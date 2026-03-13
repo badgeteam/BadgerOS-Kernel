@@ -38,39 +38,39 @@ LIMINE_BASE_REVISION(3);
 
 REQ struct limine_memmap_request bootp_mm_req = {
     .id       = LIMINE_MEMMAP_REQUEST,
-    .revision = 3,
+    .revision = 0,
 };
 
 #ifdef __riscv
 REQ struct limine_dtb_request bootp_dtb_req = {
     .id       = LIMINE_DTB_REQUEST,
-    .revision = 3,
+    .revision = 0,
 };
 #elif defined(__x86_64__)
 REQ struct limine_rsdp_request bootp_rsdp_req = {
     .id       = LIMINE_RSDP_REQUEST,
-    .revision = 3,
+    .revision = 0,
 };
 #endif
 
 REQ struct limine_kernel_address_request bootp_addr_req = {
     .id       = LIMINE_KERNEL_ADDRESS_REQUEST,
-    .revision = 3,
+    .revision = 0,
 };
 
 REQ struct limine_hhdm_request bootp_hhdm_req = {
     .id       = LIMINE_HHDM_REQUEST,
-    .revision = 3,
+    .revision = 0,
 };
 
 REQ struct limine_kernel_file_request bootp_kernel_file_req = {
     .id       = LIMINE_KERNEL_FILE_REQUEST,
-    .revision = 3,
+    .revision = 0,
 };
 
 REQ struct limine_executable_cmdline_request bootp_cmdline_req = {
     .id       = LIMINE_EXECUTABLE_CMDLINE_REQUEST,
-    .revision = 3,
+    .revision = 0,
 };
 
 __attribute__((section(".requests_end"))) LIMINE_REQUESTS_END_MARKER;

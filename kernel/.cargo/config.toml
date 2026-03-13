@@ -1,2 +1,5 @@
 [build]
-rustflags = ["-C", "force-frame-pointers"]
+rustflags = ["-C", "force-frame-pointers", "-C", "codegen-units=1"]
+
+[unstable]
+build-std = ["core", "alloc"]
