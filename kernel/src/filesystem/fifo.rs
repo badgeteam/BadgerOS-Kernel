@@ -136,7 +136,7 @@ impl FifoShared {
     /// Handle a file read for a FIFO.
     /// WARNING: May sporadically return 0 in a blocking multi-read scenario.
     fn read(&self, nonblock: bool, rdata: UserSliceMut<'_, u8>) -> EResult<usize> {
-        let _noirq = unsafe { IrqGuard::new() };
+        let _noirq = IrqGuard::new();
 
         let buffer = if nonblock {
             self.buffer.lock_shared()
@@ -176,7 +176,7 @@ impl FifoShared {
         wdata: UserSlice<'_, u8>,
         enforce_open: bool,
     ) -> EResult<usize> {
-        let _noirq = unsafe { IrqGuard::new() };
+        let _noirq = IrqGuard::new();
         if enforce_open && self.read_count.load(Ordering::Relaxed) == 0 {
             return Err(Errno::EPIPE);
         }

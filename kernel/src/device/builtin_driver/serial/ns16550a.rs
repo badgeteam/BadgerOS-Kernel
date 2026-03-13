@@ -186,7 +186,7 @@ impl BaseDriver for Ns16550aDriver {
     fn post_add(&self) {
         // Start this interrupt-driven driver properly.
         // Cannot be done earlier because interrupts may not be touched during driver init.
-        let _guard = unsafe { IrqGuard::new() };
+        let _guard = IrqGuard::new();
         self.interrupt(0);
         unsafe { self.device.cascase_enable_irq_out(0).unwrap() };
     }
@@ -228,7 +228,7 @@ impl CharDriver for Ns16550aDriver {
     fn write(&self, wdata: UserSlice<'_, u8>) -> EResult<usize> {
         let wcount = self.txfifo.write(wdata);
 
-        let _guard = unsafe { IrqGuard::new() };
+        let _guard = IrqGuard::new();
         self.interrupt(0);
 
         Ok(wcount?)

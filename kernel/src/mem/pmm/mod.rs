@@ -233,7 +233,7 @@ unsafe fn free_list_contains(block: PPN, list_head: PPN) -> bool {
 pub unsafe fn page_alloc(order: u8, usage: PageUsage) -> EResult<PPN> {
     debug_assert!(order < MAX_ORDER);
     debug_assert!(usage != PageUsage::Unusable && usage != PageUsage::Free);
-    let _noirq = unsafe { IrqGuard::new() };
+    let _noirq = IrqGuard::new();
     let mut free_list = FREE_LIST.lock();
 
     // Determine order to split at.
@@ -361,7 +361,7 @@ unsafe fn mark_one_free(mut block: PPN, mut order: u8) {
     debug_assert!(unsafe { PAGE_RANGE.start <= block && block < PAGE_RANGE.end });
     debug_assert!(block % (1usize << order) == 0);
     let pages_freed: PPN = 1 << order;
-    let _noirq = unsafe { IrqGuard::new() };
+    let _noirq = IrqGuard::new();
     let mut free_list = FREE_LIST.lock();
 
     // Remove the pages from where they were previously accounted.
