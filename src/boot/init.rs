@@ -103,13 +103,14 @@ unsafe fn general_init() {
         cpu::timer::start_tick_timer();
 
         // Bring up APs.
-        smp_ok = match smp::poweron_all_aps() {
-            Ok(_) => true,
-            Err(x) => {
-                logkf!(LogLevel::Error, "Failed to power on APs: {}", x);
-                false
-            }
-        };
+        // smp_ok = match smp::poweron_all_aps() {
+        //     Ok(_) => true,
+        //     Err(x) => {
+        //         logkf!(LogLevel::Error, "Failed to power on APs: {}", x);
+        //         false
+        //     }
+        // };
+        smp_ok = false;
     }
 
     let init_block_threads = &mut *INIT_BLOCK_THREADS.unintr_lock();

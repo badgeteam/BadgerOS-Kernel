@@ -28,6 +28,10 @@ cmake-configure:
 	mkdir -p '$(BUILDDIR)'
 	cmake -B '$(BUILDDIR)'
 
+.PHONY: config
+config: cmake-configure
+	ccmake . -B build
+
 .PHONY: selarch
 selarch:
 	./tools/selarch.py

@@ -217,8 +217,9 @@ impl Process {
         let proc2 = proc.clone();
         proc.create_thread(
             move |stack_top| {
-                let cmdline = proc2.cmdline();
-                let stack_top = proc2.create_entry_stack(stack_top, &cmdline.auxv).unwrap();
+                let stack_top = proc2
+                    .create_entry_stack(stack_top, &proc2.cmdline().auxv)
+                    .unwrap();
                 (entry as *const (), stack_top)
             },
             Some("U: main".into()),
@@ -309,7 +310,9 @@ impl Process {
         let proc2 = self.clone();
         self.create_thread(
             move |stack_top| {
-                let stack_top = proc2.create_entry_stack(stack_top, &[]).unwrap();
+                let stack_top = proc2
+                    .create_entry_stack(stack_top, &proc2.cmdline().auxv)
+                    .unwrap();
                 (entry as *const (), stack_top)
             },
             Some("U: main".into()),
