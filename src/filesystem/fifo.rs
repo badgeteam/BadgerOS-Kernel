@@ -18,7 +18,7 @@ use crate::{
     process::usercopy::{UserSlice, UserSliceMut},
 };
 
-use super::{File, SeekMode, Stat, VNode};
+use super::{File, SeekMode, Stat, VNode, sysimpl::DentBuffer};
 
 pub type FifoBuffer = badgelib::fifo::Fifo;
 
@@ -235,6 +235,10 @@ impl Drop for Fifo {
 }
 
 impl File for Fifo {
+    fn get_dirents(&self, _buffer: &mut DentBuffer<'_>) -> EResult<()> {
+        Err(Errno::ENOTDIR)
+    }
+
     fn stat(&self) -> EResult<Stat> {
         if let Some(vnode) = &self.vnode {
             vnode.mtx.lock_shared()?.ops.stat(&vnode)

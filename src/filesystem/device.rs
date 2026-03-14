@@ -43,6 +43,10 @@ impl CharDevFile {
 }
 
 impl File for CharDevFile {
+    fn get_dirents(&self, _buffer: &mut DentBuffer<'_>) -> EResult<()> {
+        Err(Errno::ENOTDIR)
+    }
+
     fn stat(&self) -> EResult<Stat> {
         self.vnode
             .as_ref()
@@ -123,6 +127,10 @@ impl BlockDevFile {
 }
 
 impl File for BlockDevFile {
+    fn get_dirents(&self, _buffer: &mut DentBuffer<'_>) -> EResult<()> {
+        Err(Errno::ENOTDIR)
+    }
+
     fn stat(&self) -> EResult<Stat> {
         self.vnode.mtx.lock_shared()?.ops.stat(&self.vnode)
     }

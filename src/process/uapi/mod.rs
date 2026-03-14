@@ -2,6 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
+pub mod dirent;
 pub mod fd_set;
 pub mod inttypes;
 pub mod signal;

@@ -22,12 +22,12 @@ use crate::{
     process::usercopy::{UserSlice, UserSliceMut},
 };
 
-use super::NAME_MAX;
 use super::{
     FSDRIVERS, MakeFileSpec, NodeType, Stat,
     media::Media,
     vfs::{VNode, VNodeOps, Vfs, VfsDriver, VfsOps, mflags::MFlags},
 };
+use super::{NAME_MAX, sysimpl::DentBuffer};
 use core::{fmt::Debug, num::NonZeroU8, sync::atomic::Ordering};
 
 mod cluster;
@@ -152,6 +152,7 @@ impl FatVNode {
         &self,
         arc_self: &Arc<VNode>,
         read_lfn: bool,
+        mut offset: u32,
         dirent_func: &mut dyn FnMut(u32, &Dirent, &str, Option<&str>) -> EResult<bool>,
     ) -> EResult<()> {
         let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
@@ -159,7 +160,6 @@ impl FatVNode {
 
         // Iterate over raw directory entries, only calling `dirent_func` once for each valid dirent.
         // If the LFN name ends up being too long, then the 8.3 format name is used instead.
-        let mut offset = 0u32;
         while offset < self.len {
             let mut raw_dirent = [0u8; 32];
             self.readk(arc_self, offset as u64, &mut raw_dirent)?;
@@ -329,7 +329,7 @@ impl FatVNode {
     /// Determine whether a SFN already exists in this dir.
     fn sfn_is_duplicate(&self, arc_self: &Arc<VNode>, name: &[u8; 11]) -> EResult<bool> {
         let mut dup = false;
-        self.iter_dirents(arc_self, false, &mut |_off, ent, _sfn, _lfn| {
+        self.iter_dirents(arc_self, false, 0, &mut |_off, ent, _sfn, _lfn| {
             if ent.name == *name {
                 dup = true;
             }
@@ -673,7 +673,7 @@ impl VNodeOps for FatVNode {
         let name = FatFs::trim_name_bytes(name);
         let mut res = Err(Errno::ENOENT);
         let res_ptr = &mut res;
-        self.iter_dirents(arc_self, true, &mut |off, dent, sfn, lfn| {
+        self.iter_dirents(arc_self, true, 0, &mut |off, dent, sfn, lfn| {
             let disk_off = self.disk_offset_of(arc_self, off);
             if let Some(lfn) = lfn
                 && FatFs::name_equals(lfn.as_bytes(), name)
@@ -690,20 +690,25 @@ impl VNodeOps for FatVNode {
         res
     }
 
-    fn get_dirents(&self, arc_self: &Arc<VNode>) -> EResult<Vec<super::Dirent>> {
-        let mut out = Vec::new();
-        self.iter_dirents(arc_self, true, &mut |off, dent, sfn, lfn| {
-            let disk_off = self.disk_offset_of(arc_self, off);
-            out.try_reserve(1)?;
-            out.push(Self::convert_dirent(
-                disk_off,
-                off,
-                dent,
-                lfn.unwrap_or(sfn).as_bytes(),
-            )?);
-            Ok(true)
+    fn get_dirents(
+        &self,
+        arc_self: &Arc<VNode>,
+        offset: u64,
+        buffer: &mut DentBuffer<'_>,
+    ) -> EResult<u64> {
+        let mut offset = offset as u32;
+        offset -= offset % 32;
+        self.iter_dirents(arc_self, true, offset, &mut |off, dent, sfn, lfn| {
+            if off < offset {
+                Ok(true)
+            } else {
+                let disk_off = self.disk_offset_of(arc_self, off);
+                offset = off;
+                Self::convert_dirent(disk_off, off, dent, lfn.unwrap_or(sfn).as_bytes())
+                    .and_then(|x| buffer.push(x))
+            }
         })?;
-        Ok(out)
+        Ok(offset as u64)
     }
 
     fn unlink(
@@ -839,7 +844,7 @@ impl VNodeOps for FatVNode {
 
         // Find the old dirent.
         let mut old_dent = None;
-        self.iter_dirents(arc_self, true, &mut |off, dent, sfn, lfn| {
+        self.iter_dirents(arc_self, true, 0, &mut |off, dent, sfn, lfn| {
             if FatFs::name_equals(old_name, lfn.unwrap_or(sfn).as_bytes()) {
                 old_dent = Some((off, *dent));
                 Ok(false)
@@ -1592,7 +1597,7 @@ impl VfsOps for FatFs {
 
         // Find the old dirent.
         let mut old_dent = None;
-        old_ops.iter_dirents(old_dir, true, &mut |off, dent, sfn, lfn| {
+        old_ops.iter_dirents(old_dir, true, 0, &mut |off, dent, sfn, lfn| {
             if FatFs::name_equals(old_name, lfn.unwrap_or(sfn).as_bytes()) {
                 old_dent = Some((off, *dent));
                 Ok(false)

@@ -17,6 +17,7 @@ use device::{BlockDevFile, CharDevFile};
 use linkflags::LinkFlags;
 use media::Media;
 use oflags::OFlags;
+use sysimpl::DentBuffer;
 use vfs::{DentCache, DentCacheDir, DentCacheType, VNode, Vfs, VfsDriver, VfsFile, mflags::MFlags};
 
 use crate::{
@@ -286,15 +287,8 @@ impl Debug for Dirent {
 
 /// Handle to an open file. Dropping it closes the file.
 pub trait File: Sync {
-    /// Get all entries in this directory.
-    fn get_dirents(&self) -> EResult<Vec<Dirent>> {
-        let vnode = self.get_vnode().ok_or(Errno::ESPIPE)?;
-        let guard = vnode.mtx.lock_shared()?;
-        if guard.flags & vnflags::REMOVED != 0 {
-            return Ok(Vec::new());
-        }
-        guard.ops.get_dirents(&vnode)
-    }
+    /// Read directory entries into the buffer.
+    fn get_dirents(&self, buffer: &mut DentBuffer<'_>) -> EResult<()>;
     /// Get the device that this file represents, if any.
     fn get_device(&self) -> Option<BaseDevice> {
         None
@@ -857,7 +851,7 @@ pub fn open(at: Option<&dyn File>, path: &[u8], mut oflags: OFlags) -> EResult<A
             }
             Ok(Box::<dyn File>::from(Box::try_new(VfsFile {
                 vnode,
-                offset: AtomicU64::new(0),
+                offset: Mutex::new(0),
                 is_append: oflags & oflags::APPEND != 0,
                 allow_read: oflags & oflags::READ_ONLY != 0,
                 allow_write: oflags & oflags::WRITE_ONLY != 0,

@@ -18,7 +18,9 @@ use alloc::{
 };
 use mflags::MFlags;
 
-use super::{Dirent, File, MakeFileSpec, NodeType, SeekMode, Stat, media::Media};
+use super::{
+    Dirent, File, MakeFileSpec, NodeType, SeekMode, Stat, media::Media, sysimpl::DentBuffer,
+};
 use crate::{
     LogLevel,
     bindings::{
@@ -35,7 +37,7 @@ pub struct VfsFile {
     /// Underlying vnode.
     pub(super) vnode: Arc<VNode>,
     /// Current file position.
-    pub(super) offset: AtomicU64,
+    pub(super) offset: Mutex<u64>,
     /// This handle is in append mode.
     pub(super) is_append: bool,
     /// This handle allows reading.
@@ -48,57 +50,57 @@ impl VfsFile {
     /// Implementation of append-mode writes.
     fn append_write(&self, wdata: UserSlice<'_, u8>) -> EResult<usize> {
         let mut guard = self.vnode.mtx.lock()?;
+        let mut offset = self.offset.lock()?;
         let ops = &mut guard.ops;
         let old_size = ops.get_size(&self.vnode);
         let new_size = old_size
             .checked_add(wdata.len() as u64)
             .ok_or(Errno::ENOSPC)?;
         ops.resize(&self.vnode, new_size)?;
-        self.offset.store(new_size, Ordering::Relaxed);
+        *offset = new_size;
         ops.write(&self.vnode, old_size, wdata).map(|_| wdata.len())
     }
 
     /// Implementation of non-append writes.
     fn regular_write(&self, wdata: UserSlice<'_, u8>) -> EResult<usize> {
         let mut guard = self.vnode.mtx.lock_shared()?;
-        let mut offset = self.offset.load(Ordering::Relaxed);
-        let mut size = guard.ops.get_size(&self.vnode);
+        let mut offset = self.offset.lock()?;
+        let size = guard.ops.get_size(&self.vnode);
 
-        loop {
-            let new_off = offset
-                .checked_add(wdata.len() as u64)
-                .ok_or(Errno::ENOSPC)?;
+        let new_off = (*offset)
+            .checked_add(wdata.len() as u64)
+            .ok_or(Errno::ENOSPC)?;
 
-            if new_off > size {
-                // The file must be resized.
-                drop(guard);
-                let mut mut_guard = self.vnode.mtx.lock()?;
-                if mut_guard.ops.get_size(&self.vnode) == size {
-                    mut_guard.ops.resize(&self.vnode, new_off)?;
-                    size = new_off;
-                } else {
-                    size = mut_guard.ops.get_size(&self.vnode);
-                }
-                drop(mut_guard);
-                guard = self.vnode.mtx.lock_shared()?;
-            } else if let Err(x) =
-                self.offset
-                    .compare_exchange(offset, new_off, Ordering::Relaxed, Ordering::Relaxed)
-            {
-                // Failed to update offset; try again.
-                offset = x;
-            } else {
-                // Offset updated successfully; perform write.
-                return guard
-                    .ops
-                    .write(&self.vnode, offset, wdata)
-                    .map(|_| wdata.len());
-            }
+        if new_off > size {
+            // The file must be resized.
+            drop(guard);
+            let mut mut_guard = self.vnode.mtx.lock()?;
+            mut_guard.ops.resize(&self.vnode, new_off)?;
+            drop(mut_guard);
+            guard = self.vnode.mtx.lock_shared()?;
         }
+        // Offset updated successfully; perform write.
+        *offset = new_off;
+        return guard
+            .ops
+            .write(&self.vnode, *offset, wdata)
+            .map(|_| wdata.len());
     }
 }
 
 impl File for VfsFile {
+    fn get_dirents(&self, buffer: &mut DentBuffer<'_>) -> EResult<()> {
+        if !self.allow_read {
+            return Err(Errno::EBADF);
+        } else if self.vnode.type_ != NodeType::Directory {
+            return Err(Errno::ENOTDIR);
+        }
+        let guard = self.vnode.mtx.lock_shared()?;
+        let mut file_offset = self.offset.lock()?;
+        *file_offset = guard.ops.get_dirents(&self.vnode, *file_offset, buffer)?;
+        Ok(())
+    }
+
     fn get_device(&self) -> Option<BaseDevice> {
         self.vnode
             .mtx
@@ -123,31 +125,22 @@ impl File for VfsFile {
     }
 
     fn tell(&self) -> EResult<u64> {
-        Ok(self.offset.load(Ordering::Relaxed))
+        Ok(*self.offset.unintr_lock_shared())
     }
 
     fn seek(&self, mode: SeekMode, offset: i64) -> EResult<u64> {
         let guard = self.vnode.mtx.lock_shared()?;
+        let mut file_offset = self.offset.lock()?;
         let size = guard.ops.get_size(&self.vnode);
-        let mut old_off = self.offset.load(Ordering::Relaxed);
 
-        let mut new_off = match mode {
+        let new_off = match mode {
             SeekMode::Set => offset.clamp(0, size as i64),
-            SeekMode::Cur => offset.saturating_add(old_off as i64).clamp(0, size as i64),
+            SeekMode::Cur => offset
+                .saturating_add(*file_offset as i64)
+                .clamp(0, size as i64),
             SeekMode::End => offset.saturating_add(size as i64).clamp(0, size as i64),
         } as u64;
-
-        while let Err(x) =
-            self.offset
-                .compare_exchange(old_off, new_off, Ordering::Relaxed, Ordering::Relaxed)
-        {
-            old_off = x;
-            new_off = match mode {
-                SeekMode::Set => offset.clamp(0, size as i64),
-                SeekMode::Cur => offset.saturating_add(old_off as i64).clamp(0, size as i64),
-                SeekMode::End => offset.saturating_add(size as i64).clamp(0, size as i64),
-            } as u64;
-        }
+        *file_offset = new_off;
 
         Ok(new_off)
     }
@@ -155,6 +148,8 @@ impl File for VfsFile {
     fn write(&self, wdata: UserSlice<'_, u8>) -> EResult<usize> {
         if !self.allow_write {
             Err(Errno::EBADF)
+        } else if self.vnode.type_ == NodeType::Directory {
+            return Err(Errno::EISDIR);
         } else if self.vnode.vfs.is_read_only() {
             Err(Errno::EROFS)
         } else if self.is_append {
@@ -167,24 +162,19 @@ impl File for VfsFile {
     fn read(&self, mut rdata: UserSliceMut<'_, u8>) -> EResult<usize> {
         if !self.allow_read {
             return Err(Errno::EBADF);
+        } else if self.vnode.type_ == NodeType::Directory {
+            return Err(Errno::EISDIR);
         }
+        let mut file_offset = self.offset.lock()?;
 
         // Get file ops and size.
         let guard = self.vnode.mtx.lock_shared()?;
         let size = guard.ops.get_size(&self.vnode);
 
         // Increment offset and determine read count.
-        let mut offset = self.offset.load(Ordering::Acquire);
-        let mut readlen = (rdata.len() as u64).min(size.saturating_sub(offset)) as usize;
-        while let Err(x) = self.offset.compare_exchange(
-            offset,
-            offset + readlen as u64,
-            Ordering::Acquire,
-            Ordering::Relaxed,
-        ) {
-            offset = x;
-            readlen = (rdata.len() as u64).min(size.saturating_sub(offset)) as usize;
-        }
+        let offset = *file_offset;
+        let readlen = (rdata.len() as u64).min(size.saturating_sub(offset)) as usize;
+        *file_offset = offset + readlen as u64;
 
         // Perform read on vnode ops.
         guard
@@ -200,11 +190,11 @@ impl File for VfsFile {
             return Err(Errno::EROFS);
         }
         let mut guard = self.vnode.mtx.lock()?;
+        let mut file_offset = self.offset.lock()?;
         self.vnode
             .vfs
             .check_eio(guard.ops.resize(&self.vnode, size))?;
-        self.offset
-            .update(Ordering::Relaxed, Ordering::Relaxed, |f| f.min(size));
+        *file_offset = (*file_offset).min(size);
         Ok(())
     }
 
@@ -320,6 +310,13 @@ pub trait VNodeOps: Any {
         None
     }
 
+    /// Read directory entries into the buffer.
+    fn get_dirents(
+        &self,
+        arc_self: &Arc<VNode>,
+        offset: u64,
+        buffer: &mut DentBuffer<'_>,
+    ) -> EResult<u64>;
     /// Write data to the file.
     fn write(&self, arc_self: &Arc<VNode>, offset: u64, wdata: UserSlice<'_, u8>) -> EResult<()>;
     /// Read data from the file.
@@ -330,7 +327,7 @@ pub trait VNodeOps: Any {
     /// Find a directory entry.
     fn find_dirent(&self, arc_self: &Arc<VNode>, name: &[u8]) -> EResult<Dirent>;
     /// Get all directory entries.
-    fn get_dirents(&self, arc_self: &Arc<VNode>) -> EResult<Vec<Dirent>>;
+    // fn get_dirents(&self, arc_self: &Arc<VNode>) -> EResult<Vec<Dirent>>;
     /// Unlink a node from this directory.
     /// Uses POSIX `rmdir` semantics iff `is_rmdir`, otherwise POSIX unlink semantics.
     fn unlink(

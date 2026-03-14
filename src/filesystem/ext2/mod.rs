@@ -33,6 +33,7 @@ use spec::*;
 use super::{
     Dirent, FSDRIVERS, NodeType, Stat,
     media::Media,
+    sysimpl::DentBuffer,
     vfs::{
         VNode, VNodeMtxInner, VNodeOps, Vfs, VfsDriver, VfsOps,
         mflags::{self, MFlags},
@@ -836,21 +837,31 @@ impl VNodeOps for E2VNode {
         res
     }
 
-    fn get_dirents(&self, arc_self: &Arc<VNode>) -> EResult<Vec<Dirent>> {
+    fn get_dirents(
+        &self,
+        arc_self: &Arc<VNode>,
+        mut offset: u64,
+        buffer: &mut DentBuffer<'_>,
+    ) -> EResult<u64> {
         let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
-        let mut out = Vec::new();
-        self.iter_dirents(&arc_self.vfs, &mut |dent, offset, name| try {
-            let type_ = e2fs.get_inode_type(dent)?;
-            out.push(Dirent {
-                ino: dent.ino as u64,
-                type_,
-                name: name.into(),
-                dirent_disk_off: 0,
-                dirent_off: offset,
-            });
-            true
+        self.iter_dirents(&arc_self.vfs, &mut |dent, off, name| {
+            if off < offset {
+                Ok(true)
+            } else {
+                offset = off;
+                let type_ = e2fs.get_inode_type(dent)?;
+                buffer
+                    .push(Dirent {
+                        ino: dent.ino as _,
+                        type_,
+                        name: name.into(),
+                        dirent_disk_off: 0,
+                        dirent_off: 0,
+                    })
+                    .into()
+            }
         })?;
-        Ok(out)
+        Ok(offset)
     }
 
     fn unlink(

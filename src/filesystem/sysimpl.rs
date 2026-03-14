@@ -3,27 +3,75 @@
 // SPDX-License-Identifier: MIT
 
 use core::{
-    ffi::{c_char, c_int, c_long, c_void},
+    ffi::{c_char, c_int, c_long, c_ushort, c_void},
     sync::atomic::AtomicU32,
 };
+
+use bytemuck::bytes_of;
 
 use crate::{
     bindings::{
         error::Errno,
         raw::{seek_mode_t_SEEK_CUR, seek_mode_t_SEEK_END, seek_mode_t_SEEK_SET},
     },
-    filesystem::{self, PATH_MAX},
+    filesystem::{self, NodeType, PATH_MAX},
     process::{
         self,
         files::FileDesc,
-        uapi::stat::stat,
-        usercopy::{self, UserPtrMut, UserSlice, UserSliceMut},
+        uapi::{dirent, stat::stat},
+        usercopy::{self, AccessResult, UserPtrMut, UserSlice, UserSliceMut},
     },
 };
 
-use super::{MakeFileSpec, SeekMode, link, make_file, oflags, open, pipe, rename, unlink};
+use super::{Dirent, MakeFileSpec, SeekMode, link, make_file, oflags, open, pipe, rename, unlink};
 
 pub const AT_FDCWD: i32 = -100;
+
+/// Helper type for [`syscall_fs_getdents`].
+pub struct DentBuffer<'a> {
+    index: usize,
+    slice: UserSliceMut<'a, u8>,
+}
+
+impl<'a> DentBuffer<'a> {
+    pub fn new(slice: UserSliceMut<'a, u8>) -> Self {
+        Self { slice, index: 0 }
+    }
+
+    pub fn push(&mut self, dent: Dirent) -> AccessResult<bool> {
+        let mut d_reclen = (size_of::<dirent::dirent_headeronly>() + dent.name.len()) as c_ushort;
+        let header = dirent::dirent_headeronly {
+            d_off: dent.dirent_off as i64,
+            d_reclen,
+            d_type: match dent.type_ {
+                NodeType::Unknown => dirent::DT_UNKNOWN,
+                NodeType::Fifo => dirent::DT_FIFO,
+                NodeType::CharDev => dirent::DT_CHR,
+                NodeType::Directory => dirent::DT_DIR,
+                NodeType::BlockDev => dirent::DT_CHR,
+                NodeType::Regular => dirent::DT_REG,
+                NodeType::Symlink => dirent::DT_LNK,
+                NodeType::UnixSocket => dirent::DT_SOCK,
+            },
+        };
+        if d_reclen % 8 != 0 {
+            d_reclen += 8 - d_reclen % 8;
+        }
+
+        if self.index + d_reclen as usize > self.slice.len() {
+            return Ok(false);
+        }
+
+        self.slice.write_multiple(self.index, bytes_of(&header))?;
+        self.slice.write_multiple(
+            self.index + size_of::<dirent::dirent_headeronly>(),
+            bytes_of(&header),
+        )?;
+        self.index += d_reclen as usize;
+
+        Ok(true)
+    }
+}
 
 /// Open a file, optionally relative to a directory.
 /// If `at` is -1, `path` is relative to the working directory.
@@ -107,9 +155,19 @@ pub unsafe extern "C" fn syscall_fs_write(
 pub unsafe extern "C" fn syscall_fs_getdents(
     fd: c_int,
     read_buf: *mut c_void,
-    read_len: c_long,
-) -> c_long {
-    todo!()
+    read_len: usize,
+) -> i64 {
+    let proc = process::current().unwrap();
+    Errno::extract_u64(
+        try {
+            let mut buffer = DentBuffer::new(UserSlice::new_mut(read_buf as *mut u8, read_len)?);
+            proc.files
+                .lock_shared()?
+                .get_file(fd)?
+                .get_dirents(&mut buffer)?;
+            buffer.index as _
+        },
+    )
 }
 
 /// Rename and/or move a file to another path, optionally relative to one or two directories.

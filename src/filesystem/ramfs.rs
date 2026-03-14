@@ -31,6 +31,7 @@ use crate::{
 use super::{
     Dirent, FSDRIVERS, MakeFileSpec, NodeMode, NodeType, Stat,
     media::Media,
+    sysimpl::DentBuffer,
     vfs::{VNode, VNodeOps, Vfs, VfsDriver, VfsOps, mflags::MFlags},
 };
 
@@ -294,11 +295,25 @@ impl VNodeOps for RamVNode {
         directory.get(name).ok_or(Errno::ENOENT).cloned()
     }
 
-    fn get_dirents(&self, _arc_self: &Arc<VNode>) -> EResult<Vec<Dirent>> {
+    fn get_dirents(
+        &self,
+        _arc_self: &Arc<VNode>,
+        offset: u64,
+        buffer: &mut DentBuffer<'_>,
+    ) -> EResult<u64> {
         let inode = unsafe { self.inode.as_ref_unchecked() };
         let directory = inode.data.as_directory().ok_or(Errno::EINVAL)?;
-        // TODO: OOM handling
-        Ok(directory.values().map(Dirent::clone).collect())
+
+        let mut i = 0;
+        let mut iter = directory.values();
+        while let Some(ent) = iter.next() {
+            if i >= offset && !buffer.push(ent.clone())? {
+                break;
+            }
+            i += 1;
+        }
+
+        Ok(i)
     }
 
     fn unlink(
