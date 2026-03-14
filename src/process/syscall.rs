@@ -43,6 +43,7 @@ pub const SYSCALL_MEM_UNMAP: usize = 28;
 pub const SYSCALL_MEM_PROTECT: usize = 29;
 pub const SYSCALL_TEMP_WRITE: usize = 30;
 pub const SYSCALL_SYS_SHUTDOWN: usize = 31;
+pub const SYSCALL_TIME_GETTIME: usize = 32;
 
 pub fn dispatch(regs: &mut GpRegfile, _sregs: &mut SpRegfile, args: [usize; 6], sysno: usize) {
     unsafe {
@@ -97,7 +98,7 @@ pub fn dispatch(regs: &mut GpRegfile, _sregs: &mut SpRegfile, args: [usize; 6], 
                 args[0] as _,
                 args[1] as _,
                 args[2] != 0,
-                args[0] as _,
+                args[3] as _,
             ) as _),
             SYSCALL_FS_MKDIR => regs.set_retval(syscall_fs_mkdir(args[0] as _, args[1] as _) as _),
             SYSCALL_FS_RMDIR => regs.set_retval(syscall_fs_rmdir(args[0] as _, args[1] as _) as _),
@@ -132,6 +133,9 @@ pub fn dispatch(regs: &mut GpRegfile, _sregs: &mut SpRegfile, args: [usize; 6], 
                 regs.set_retval(0);
             }
             SYSCALL_TEMP_WRITE => syscall_temp_write(args[0] as _, args[1] as _),
+            SYSCALL_TIME_GETTIME => {
+                regs.set_retval(syscall_time_gettime(args[0] as _, args[1] as _) as _)
+            }
             x => {
                 logkf!(LogLevel::Warning, "Unimplemented syscall {}", x);
                 regs.set_retval(-(Errno::ENOSYS as i32) as usize);

@@ -703,9 +703,12 @@ impl VNodeOps for FatVNode {
                 Ok(true)
             } else {
                 let disk_off = self.disk_offset_of(arc_self, off);
-                offset = off;
-                Self::convert_dirent(disk_off, off, dent, lfn.unwrap_or(sfn).as_bytes())
-                    .and_then(|x| buffer.push(x))
+                let fits = Self::convert_dirent(disk_off, off, dent, lfn.unwrap_or(sfn).as_bytes())
+                    .and_then(|x| buffer.push(x))?;
+                if fits {
+                    offset = off + 32;
+                }
+                Ok(fits)
             }
         })?;
         Ok(offset as u64)

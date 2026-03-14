@@ -12,6 +12,7 @@ use bytemuck::bytes_of;
 use crate::{
     bindings::{
         error::Errno,
+        log::LogLevel,
         raw::{seek_mode_t_SEEK_CUR, seek_mode_t_SEEK_END, seek_mode_t_SEEK_SET},
     },
     filesystem::{self, NodeType, PATH_MAX},
@@ -39,8 +40,13 @@ impl<'a> DentBuffer<'a> {
     }
 
     pub fn push(&mut self, dent: Dirent) -> AccessResult<bool> {
-        let mut d_reclen = (size_of::<dirent::dirent_headeronly>() + dent.name.len()) as c_ushort;
+        let mut d_reclen =
+            (size_of::<dirent::dirent_headeronly>() + dent.name.len() + 1) as c_ushort;
+        if d_reclen % 8 != 0 {
+            d_reclen += 8 - d_reclen % 8;
+        }
         let header = dirent::dirent_headeronly {
+            d_ino: dent.ino,
             d_off: dent.dirent_off as i64,
             d_reclen,
             d_type: match dent.type_ {
@@ -54,9 +60,6 @@ impl<'a> DentBuffer<'a> {
                 NodeType::UnixSocket => dirent::DT_SOCK,
             },
         };
-        if d_reclen % 8 != 0 {
-            d_reclen += 8 - d_reclen % 8;
-        }
 
         if self.index + d_reclen as usize > self.slice.len() {
             return Ok(false);
@@ -65,7 +68,11 @@ impl<'a> DentBuffer<'a> {
         self.slice.write_multiple(self.index, bytes_of(&header))?;
         self.slice.write_multiple(
             self.index + size_of::<dirent::dirent_headeronly>(),
-            bytes_of(&header),
+            &dent.name,
+        )?;
+        self.slice.write(
+            self.index + size_of::<dirent::dirent_headeronly>() + dent.name.len(),
+            0,
         )?;
         self.index += d_reclen as usize;
 

@@ -33,6 +33,7 @@ unsafe impl UserCopyable for dirent {}
 #[repr(C, packed)]
 #[derive(Clone, Copy, NoUninit, AnyBitPattern)]
 pub struct dirent_headeronly {
+    pub d_ino: u64,
     pub d_off: i64,
     pub d_reclen: c_ushort,
     pub d_type: u8,

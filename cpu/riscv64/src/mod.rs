@@ -7,6 +7,7 @@ pub mod cpulocal;
 #[cfg(feature = "dtb")]
 pub mod dtb;
 pub mod exception;
+pub mod insn;
 pub mod irq;
 pub mod mmu;
 pub mod panic;

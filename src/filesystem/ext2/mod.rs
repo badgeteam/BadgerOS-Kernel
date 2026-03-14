@@ -580,7 +580,7 @@ impl E2VNode {
         ino: NonZeroU32,
         name: &[u8],
         type_: FileType,
-    ) -> EResult<()> {
+    ) -> EResult<u64> {
         let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
         if name.len() > 255 {
             return Err(Errno::ENAMETOOLONG);
@@ -601,7 +601,7 @@ impl E2VNode {
         self.writek_impl(&e2fs, offset, &Into::<[u8; 8]>::into(dent))?;
         self.writek_impl(&e2fs, offset + 8, name)?;
 
-        Ok(())
+        Ok(offset)
     }
 
     /// Delete a directory entry.
@@ -817,7 +817,7 @@ impl VNodeOps for E2VNode {
     fn find_dirent(&self, arc_self: &Arc<VNode>, name: &[u8]) -> EResult<Dirent> {
         let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
         let mut res = Err(Errno::ENOENT);
-        self.iter_dirents(&arc_self.vfs, &mut |dent, _offset, dent_name| {
+        self.iter_dirents(&arc_self.vfs, &mut |dent, off, dent_name| {
             if *name == *dent_name {
                 try {
                     let type_ = e2fs.get_inode_type(dent)?;
@@ -826,7 +826,7 @@ impl VNodeOps for E2VNode {
                         type_,
                         name: dent_name.into(),
                         dirent_disk_off: 0,
-                        dirent_off: 0,
+                        dirent_off: off,
                     });
                     false
                 }
@@ -848,17 +848,18 @@ impl VNodeOps for E2VNode {
             if off < offset {
                 Ok(true)
             } else {
-                offset = off;
                 let type_ = e2fs.get_inode_type(dent)?;
-                buffer
-                    .push(Dirent {
-                        ino: dent.ino as _,
-                        type_,
-                        name: name.into(),
-                        dirent_disk_off: 0,
-                        dirent_off: 0,
-                    })
-                    .into()
+                let fits = buffer.push(Dirent {
+                    ino: dent.ino as _,
+                    type_,
+                    name: name.into(),
+                    dirent_disk_off: 0,
+                    dirent_off: off,
+                })?;
+                if fits {
+                    offset = off + dent.record_len as u64;
+                }
+                Ok(fits)
             }
         })?;
         Ok(offset)
@@ -949,7 +950,8 @@ impl VNodeOps for E2VNode {
             NonZeroU32::new(vnode.ino as u32).unwrap(),
             name,
             vnode.type_.into(),
-        )
+        )?;
+        Ok(())
     }
 
     fn make_file(
@@ -981,6 +983,7 @@ impl VNodeOps for E2VNode {
             type_: spec.node_type(),
         })?;
 
+        let mut dirent_off = 0;
         let res: EResult<()> = try {
             // Try to fill in the inode data.
             match &spec {
@@ -1060,7 +1063,7 @@ impl VNodeOps for E2VNode {
             }
 
             // Create the dirent for this new file.
-            self.create_dirent(arc_self, ino, name, spec.node_type().into())?;
+            dirent_off = self.create_dirent(arc_self, ino, name, spec.node_type().into())?;
         };
         if let Err(x) = res {
             let _ = e2fs.free_inode(ino);
@@ -1084,7 +1087,7 @@ impl VNodeOps for E2VNode {
             type_: spec.node_type(),
             name: name.into(),
             dirent_disk_off: 0,
-            dirent_off: 0,
+            dirent_off,
         };
 
         Ok((dirent, ops))

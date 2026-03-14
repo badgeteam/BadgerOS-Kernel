@@ -5,7 +5,7 @@
 use crate::{
     bindings::{self, spinlock::Spinlock},
     cpu,
-    process::uapi::timespec::timespec,
+    process::uapi::time::timespec,
 };
 
 // TODO: Replace this code with the chrono crate where possible.

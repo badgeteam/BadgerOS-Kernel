@@ -142,7 +142,6 @@ set(kernel_src
     
     ${CMAKE_CURRENT_LIST_DIR}/src/errno.c
     ${CMAKE_CURRENT_LIST_DIR}/src/page_alloc.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/time.c
 )
 set(kernel_include
     ${CMAKE_CURRENT_LIST_DIR}/lib/nanoprintf

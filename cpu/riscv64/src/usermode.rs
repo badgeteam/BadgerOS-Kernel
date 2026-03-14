@@ -13,6 +13,8 @@ use crate::{
     process::uapi::signal::siginfo_t,
 };
 
+use super::thread::{SSTATUS_FS_BIT, SSTATUS_VS_BIT, SSTATUS_XS_BIT, xs};
+
 /// Thread's userspace context.
 /// Tells [`exit_usermode`] how to return to the kernel from some exception handler.
 #[derive(Default)]
@@ -84,6 +86,9 @@ pub fn exit_usermode(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
     let uctx = unsafe { &mut (&mut *Thread::current()).runtime().uctx };
     sregs.sepc = uctx.pc;
     sregs.sstatus |= (1 << 8) | (1 << 5); // +SPP +SPIE
+    sregs.sstatus &= !(xs::MASK << SSTATUS_VS_BIT); // Float and vector state disabled.
+    sregs.sstatus &= !(xs::MASK << SSTATUS_FS_BIT);
+    sregs.sstatus &= !(xs::MASK << SSTATUS_XS_BIT);
     *regs = GpRegfile::default();
     regs.sp = uctx.sp;
     regs.s0 = uctx.s0;

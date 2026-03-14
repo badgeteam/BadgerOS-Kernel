@@ -156,6 +156,11 @@ riscv_exception_asm:
     addi s0, sp, 16
     sd   s0, 16+32(sp)
     
+    # Disable extensions before re-entry into the kernel.
+    #           VS         FS          XS
+    li   t1, (3 << 9) | (3 << 13) | (3 << 15)
+    csrc sstatus, t1
+    
     # Call C-ABI exception handler.
     la gp, __global_pointer$
     addi a0, sp, 64 # Pointer to struct GpRegfile

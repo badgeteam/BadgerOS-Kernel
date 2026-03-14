@@ -10,6 +10,7 @@ use core::{
 use alloc::{ffi::CString, vec::Vec};
 
 use crate::{
+    badgelib::time::Timespec,
     bindings::{
         error::{EResult, Errno},
         raw::rawputc,
@@ -25,8 +26,9 @@ use super::{
         self,
         signal::{__sa_handler_union, NSIG, SIG_DFL, Signal, sigaction},
         sigset::sigset_t,
+        time::timespec,
     },
-    usercopy::{UserPtr, UserSlice},
+    usercopy::{UserPtr, UserPtrMut, UserSlice},
 };
 
 #[unsafe(no_mangle)]
@@ -184,4 +186,15 @@ pub unsafe extern "C" fn syscall_proc_waitpid(
     options: c_int,
 ) -> c_int {
     todo!()
+}
+
+/// Get the value of some clock.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn syscall_time_gettime(_clkid: c_int, timespec: *mut timespec) -> c_int {
+    Errno::extract(
+        try {
+            let mut timespec = UserPtrMut::new_mut(timespec)?;
+            timespec.write(Timespec::now().into())?;
+        },
+    )
 }

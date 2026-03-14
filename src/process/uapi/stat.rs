@@ -4,11 +4,11 @@
 
 #![allow(non_camel_case_types)]
 
-use super::{inttypes::*, timespec::timespec};
+use super::{inttypes::*, time::timespec};
 use crate::process::usercopy::UserCopyable;
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct stat {
     pub st_dev: dev_t,
     pub st_ino: ino_t,

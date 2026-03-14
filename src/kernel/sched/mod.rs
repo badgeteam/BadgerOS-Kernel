@@ -17,7 +17,7 @@ use crate::{
     config::{self, PAGE_SIZE, STACK_SIZE},
     cpu::{
         self, irq,
-        thread::{context_switch, pause_hint},
+        thread::{FloatState, context_switch, pause_hint},
         usermode::ThreadUContext,
     },
     impl_has_list_node,
@@ -72,6 +72,8 @@ pub struct ThreadRuntime {
     pub uctx: ThreadUContext,
     /// Timestamp until which to keep the thread blocked.
     pub timeout: timestamp_us_t,
+    /// Float and/or vector state.
+    pub fstate: FloatState,
 }
 
 impl ThreadRuntime {
@@ -100,6 +102,7 @@ impl ThreadRuntime {
                 stack_ptr,
                 uctx: ThreadUContext::default(),
                 timeout: 0,
+                fstate: FloatState::new(),
             })
         }
     }

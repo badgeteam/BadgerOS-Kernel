@@ -224,42 +224,105 @@ impl Display for GpRegfile {
     }
 }
 
+pub mod xs {
+    pub const OFF: usize = 0;
+    pub const INIT: usize = 1;
+    pub const CLEAN: usize = 2;
+    pub const DIRTY: usize = 3;
+    pub const MASK: usize = 3;
+}
+
+pub const SSTATUS_XS_BIT: u32 = 15;
+pub const SSTATUS_FS_BIT: u32 = 13;
+pub const SSTATUS_VS_BIT: u32 = 9;
+
 /// The floating-point register state.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct FloatRegfile {
-    pub ft0: u64,
-    pub ft1: u64,
-    pub ft2: u64,
-    pub ft3: u64,
-    pub ft4: u64,
-    pub ft5: u64,
-    pub ft6: u64,
-    pub ft7: u64,
-    pub fs0: u64,
-    pub fs1: u64,
-    pub fa0: u64,
-    pub fa1: u64,
-    pub fa2: u64,
-    pub fa3: u64,
-    pub fa4: u64,
-    pub fa5: u64,
-    pub fa6: u64,
-    pub fa7: u64,
-    pub fs2: u64,
-    pub fs3: u64,
-    pub fs4: u64,
-    pub fs5: u64,
-    pub fs6: u64,
-    pub fs7: u64,
-    pub fs8: u64,
-    pub fs9: u64,
-    pub fs10: u64,
-    pub fs11: u64,
-    pub ft8: u64,
-    pub ft9: u64,
-    pub ft10: u64,
-    pub ft11: u64,
+pub struct FloatState {
+    fregs: [u64; 32],
+    // Note: `fflags` and `frm` are part of `fcsr`.
+    fcsr: usize,
+    /// Whether this runtime's floating-point state is currently enabled.
+    float_enable: bool,
+}
+
+impl FloatState {
+    pub fn new() -> Self {
+        Self {
+            fregs: [0u64; 32],
+            fcsr: 0,
+            float_enable: false,
+        }
+    }
+
+    /// Load the state of the floating-point register file.
+    pub unsafe fn load_state(&self, sregs: &mut SpRegfile) {
+        if !self.float_enable {
+            return;
+        }
+        unsafe {
+            asm!("csrs sstatus, {}", in(reg) xs::DIRTY << SSTATUS_FS_BIT);
+            asm!(
+                ".option push",
+                ".option arch, +d",
+                ".rept 32",
+                "fld f\\+, \\+*8({})",
+                ".endr",
+                ".option pop",
+                in(reg) self
+            );
+            asm!("csrc sstatus, {}", in(reg) xs::DIRTY << SSTATUS_FS_BIT);
+            sregs.sstatus &= !(xs::MASK << SSTATUS_FS_BIT);
+            sregs.sstatus |= xs::CLEAN << SSTATUS_FS_BIT;
+        }
+    }
+
+    /// Save the state of the floating-point register file.
+    pub unsafe fn save_state(&mut self, sregs: &SpRegfile) {
+        if !self.float_enable {
+            return;
+        }
+        match (sregs.sstatus >> SSTATUS_FS_BIT) & 3 {
+            xs::INIT | xs::CLEAN => return,
+            _ => (),
+        }
+        unsafe {
+            asm!("csrs sstatus, {}", in(reg) xs::DIRTY << SSTATUS_FS_BIT);
+            asm!(
+                ".option push",
+                ".option arch, +d",
+                "csrr {}, fcsr",
+                ".rept 32",
+                "fsd f\\+, \\+*8({})",
+                ".endr",
+                ".option pop",
+                in(reg) self,
+                out(reg) self.fcsr
+            );
+            asm!("csrc sstatus, {}", in(reg) xs::DIRTY << SSTATUS_FS_BIT);
+        }
+    }
+
+    /// Initially enable floating-point state.
+    pub(super) unsafe fn enable(&mut self, sregs: &mut SpRegfile) {
+        debug_assert!(!self.float_enable);
+        sregs.sstatus |= xs::INIT << SSTATUS_FS_BIT;
+        unsafe {
+            asm!("csrs sstatus, {}", in(reg) xs::DIRTY << SSTATUS_FS_BIT);
+            asm!(
+                ".option push",
+                ".option arch, +d",
+                ".rept 32",
+                "fmv.d.x f\\+, x0",
+                ".endr",
+                "csrw fcsr, {}",
+                ".option pop",
+                in(reg) self.fcsr
+            );
+            asm!("csrc sstatus, {}", in(reg) xs::DIRTY << SSTATUS_FS_BIT);
+        }
+    }
 }
 
 /// Set up the entrypoint for a thread given its kernel stack.

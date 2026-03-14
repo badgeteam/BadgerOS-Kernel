@@ -2,7 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::{hint::unreachable_unchecked, ptr::null_mut};
+use core::{arch::asm, hint::unreachable_unchecked, ptr::null_mut};
 
 use crate::{
     bindings::{device::HasBaseDevice, raw::irqno_t},
@@ -20,6 +20,8 @@ use crate::{
     misc::panic::unhandled_trap,
     process::{self, syscall},
 };
+
+use super::insn;
 
 /// An entry in the `.noexc_table`.
 #[repr(C)]
@@ -65,6 +67,27 @@ pub const CAUSE_SWCHK: isize = 18;
 /// Hardware error.
 pub const CAUSE_HWERR: isize = 19;
 
+unsafe fn read_insn_word(sregs: &mut SpRegfile) -> u32 {
+    let insn;
+    if sregs.stval != 0 {
+        insn = sregs.stval as u32;
+    } else {
+        unsafe {
+            cpu::mmu::enable_sum();
+            let iptr = sregs.sepc as *const u16;
+            let lo = *iptr as u32;
+            if lo & 3 == 3 {
+                let hi = *iptr.add(1) as u32;
+                insn = lo | (hi << 16);
+            } else {
+                insn = lo;
+            }
+            cpu::mmu::disable_sum();
+        }
+    }
+    insn
+}
+
 /// RISC-V exception handler wrapper.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn riscv_exception_handler(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
@@ -75,9 +98,13 @@ pub unsafe extern "C" fn riscv_exception_handler(regs: &mut GpRegfile, sregs: &m
         (*cpulocal).arch.irq_stack = null_mut();
         if let Some(thread) = (*cpulocal).thread.as_deref() {
             thread.runtime().irq_stack = null_mut();
+            thread.runtime().fstate.save_state(sregs);
         }
+
         riscv_exception_handler_impl(regs, sregs);
+
         if let Some(thread) = (*cpulocal).thread.as_deref() {
+            thread.runtime().fstate.load_state(sregs);
             thread.runtime().irq_stack = old_irq_stack;
         }
         (*cpulocal).arch.irq_stack = old_irq_stack;
@@ -114,7 +141,30 @@ unsafe fn riscv_exception_handler_impl(regs: &mut GpRegfile, sregs: &mut SpRegfi
         return;
     }
 
-    if sregs.scause == 8 {
+    if !thread.is_null() && sregs.scause == CAUSE_IILLEGAL {
+        // Check whether instruction is float.
+        let fstate = unsafe { &mut (&*thread).runtime().fstate };
+        let insn = unsafe { read_insn_word(sregs) };
+        let is_float;
+        if insn & 3 == 3 {
+            is_float = insn::is_float_op(insn);
+        } else {
+            is_float = insn::is_float_opc(insn as u16);
+        }
+        if is_float {
+            debug_assert!(
+                !sregs.is_kernel_mode(),
+                "Attempt to run float operation from kernel mode"
+            );
+            unsafe {
+                fstate.enable(sregs);
+            }
+            // Float has been enabled, now we retry the instruction.
+            return;
+        }
+    }
+
+    if sregs.scause == CAUSE_ECALL_U {
         // ECALL from U-mode.
         let sched = unsafe { &mut *Scheduler::get() };
         sched.account_time(true);
