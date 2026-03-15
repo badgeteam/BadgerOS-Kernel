@@ -4,7 +4,7 @@
 
 #![allow(non_camel_case_types)]
 
-use core::ffi::{c_long, c_uint};
+use core::ffi::{c_int, c_long, c_uint};
 
 pub type blkcnt_t = i64;
 pub type blksize_t = u64;
@@ -14,7 +14,7 @@ pub type fsblkcnt_t = blkcnt_t;
 pub type fsblksize_t = blksize_t;
 pub type fsfilcnt_t = u64;
 pub type nlink_t = u64;
-pub type pid_t = i64;
+pub type pid_t = c_int;
 pub type uid_t = c_uint;
 pub type suseconds_t = i64;
 pub type useconds_t = u64;

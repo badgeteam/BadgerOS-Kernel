@@ -9,6 +9,7 @@ use core::{
 };
 
 use alloc::boxed::Box;
+use bytemuck_derive::{AnyBitPattern, NoUninit};
 
 use crate::kernel::sched::Thread;
 
@@ -81,7 +82,7 @@ impl Display for SpRegfile {
 
 /// The general-purpose register, PC, thread pointer and stack.
 #[repr(C)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, NoUninit, AnyBitPattern)]
 pub struct GpRegfile {
     pub pc: usize,
     pub ra: usize,
@@ -240,11 +241,11 @@ pub const SSTATUS_VS_BIT: u32 = 9;
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct FloatState {
-    fregs: [u64; 32],
+    pub(super) fregs: [u64; 32],
     // Note: `fflags` and `frm` are part of `fcsr`.
-    fcsr: usize,
+    pub(super) fcsr: usize,
     /// Whether this runtime's floating-point state is currently enabled.
-    float_enable: bool,
+    pub(super) float_enable: bool,
 }
 
 impl FloatState {

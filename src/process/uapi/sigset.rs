@@ -9,7 +9,7 @@ use core::ffi::c_ulong;
 use crate::process::usercopy::UserCopyable;
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct sigset_t {
     pub __sig: [c_ulong; 1024 / (8 * size_of::<c_ulong>())],
 }

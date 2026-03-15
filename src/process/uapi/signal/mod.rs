@@ -8,6 +8,12 @@ use crate::process::usercopy::UserCopyable;
 use core::ffi::{c_int, c_ulong, c_void};
 
 use super::sigset::sigset_t;
+
+#[cfg(target_arch = "riscv64")]
+mod uctx_riscv;
+#[cfg(target_arch = "riscv64")]
+pub use uctx_riscv::*;
+
 pub type __sighandler = *const fn(c_int);
 
 pub const SIG_ERR: *mut c_void = usize::MAX as *mut c_void;
@@ -205,16 +211,6 @@ pub enum Signal {
 
 pub const NSIG: i32 = 65;
 
-#[derive(Clone, Copy, Debug)]
-#[repr(C)]
-pub struct __stack {
-    pub ss_sp: *mut c_void,
-    pub ss_flags: c_int,
-    pub ss_size: usize,
-}
-unsafe impl UserCopyable for __stack {}
-pub type stack_t = __stack;
-
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub union __sa_handler_union {
@@ -240,3 +236,16 @@ pub struct sigaction {
     pub sa_mask: sigset_t,
 }
 unsafe impl UserCopyable for sigaction {}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct stack_t {
+    pub ss_sp: *mut c_void,
+    pub ss_flags: c_int,
+    pub ss_size: usize,
+}
+unsafe impl UserCopyable for stack_t {}
+
+pub const MINSIGSTKSZ: usize = 2048;
+pub const SS_ONSTACK: c_int = 1;
+pub const SS_DISABLE: c_int = 2;

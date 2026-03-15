@@ -45,7 +45,7 @@ pub const SYSCALL_TEMP_WRITE: usize = 30;
 pub const SYSCALL_SYS_SHUTDOWN: usize = 31;
 pub const SYSCALL_TIME_GETTIME: usize = 32;
 
-pub fn dispatch(regs: &mut GpRegfile, _sregs: &mut SpRegfile, args: [usize; 6], sysno: usize) {
+pub fn dispatch(regs: &mut GpRegfile, sregs: &mut SpRegfile, args: [usize; 6], sysno: usize) {
     unsafe {
         match sysno {
             SYSCALL_THREAD_YIELD => syscall_thread_yield(),
@@ -70,7 +70,7 @@ pub fn dispatch(regs: &mut GpRegfile, _sregs: &mut SpRegfile, args: [usize; 6], 
                     syscall_proc_sigaction(args[0] as _, args[1] as _, args[2] as _) as _,
                 )
             }
-            SYSCALL_PROC_SIGRET => syscall_proc_sigret(),
+            SYSCALL_PROC_SIGRET => syscall_proc_sigret(regs, sregs),
             SYSCALL_PROC_WAITPID => {
                 regs.set_retval(syscall_proc_waitpid(args[0] as _, args[1] as _, args[2] as _) as _)
             }

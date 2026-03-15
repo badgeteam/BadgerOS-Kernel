@@ -156,8 +156,8 @@ pub fn run_handler(siginfo: siginfo_t, regs: &mut GpRegfile, sregs: &mut SpRegfi
     }
 
     // TODO: Get rid of sched_signal_enter?
-    let success = unsafe { enter_signal(siginfo, handler as usize, returner, regs, sregs) };
-    if !success {
+    let res = unsafe { enter_signal(siginfo, handler as usize, returner, regs, sregs) };
+    if res.is_err() {
         signal_die(Signal::SIGSEGV as i32);
     }
 }

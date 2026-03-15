@@ -4,6 +4,7 @@
 
 use core::{
     cell::UnsafeCell,
+    ffi::c_int,
     ptr::{NonNull, addr_eq},
     sync::atomic::{AtomicI32, AtomicI64, AtomicU32, Ordering},
     usize,
@@ -56,10 +57,11 @@ pub mod flags {
 }
 
 /// Unique process identifier.
-pub type PID = i64;
+pub type PID = c_int;
 
 /// Count of next PID that will be used.
-pub static PID_COUNTER: AtomicI64 = AtomicI64::new(1);
+/// TODO: We can actually make this 64-bit but I'll do that later.
+pub static PID_COUNTER: AtomicI32 = AtomicI32::new(1);
 
 /// Map of all processes by PID.
 static PROCESSES: Mutex<BTreeMap<PID, Arc<Process>>> = Mutex::new(BTreeMap::new());

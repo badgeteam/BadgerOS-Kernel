@@ -2,7 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::arch::asm;
+use core::{arch::asm, ptr::null_mut};
 
 use crate::{
     cpu::{
@@ -10,7 +10,13 @@ use crate::{
         thread::{GpRegfile, SpRegfile},
     },
     kernel::{cpulocal::CpuLocal, sched::Thread},
-    process::uapi::signal::siginfo_t,
+    process::{
+        uapi::{
+            signal::{siginfo_t, ucontext_t},
+            sigset::sigset_t,
+        },
+        usercopy::AccessResult,
+    },
 };
 
 use super::thread::{SSTATUS_FS_BIT, SSTATUS_VS_BIT, SSTATUS_XS_BIT, xs};
@@ -43,13 +49,31 @@ pub unsafe fn enter_signal(
     returner: usize,
     regs: &mut GpRegfile,
     sregs: &mut SpRegfile,
-) -> bool {
-    false
+) -> AccessResult<()> {
+    let fstate = unsafe { (&*Thread::current()).runtime().fstate };
+
+    let mut uctx = ucontext_t {
+        uc_flags: 0,
+        uc_link: null_mut(),
+        uc_stack: Default::default(),
+        __uc_sigmask_union: crate::process::uapi::signal::__uc_sigmask_union {
+            uc_sigmask: Default::default(),
+        },
+        uc_mcontext: Default::default(),
+    };
+    uctx.uc_mcontext
+        .gregs
+        .copy_from_slice(bytemuck::cast_ref::<_, [usize; 32]>(regs));
+    let fregs = unsafe { &mut uctx.uc_mcontext.fpregs.d };
+    fregs.f.copy_from_slice(&fstate.fregs);
+    fregs.fcsr = fstate.fcsr as _;
+
+    Ok(())
 }
 
 /// Exit a userspace signal handler.
-pub unsafe fn exit_signal(regs: &mut GpRegfile, sregs: &mut SpRegfile) -> bool {
-    false
+pub unsafe fn exit_signal(regs: &mut GpRegfile, sregs: &mut SpRegfile) -> AccessResult<()> {
+    Ok(())
 }
 
 /// Call into userspace from this thread.

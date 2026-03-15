@@ -500,7 +500,7 @@ impl VNodeOps for RamVNode {
         inode.data.as_symlink().ok_or(Errno::EINVAL).cloned()
     }
 
-    fn stat(&self, _arc_self: &Arc<VNode>) -> EResult<Stat> {
+    fn stat(&self, arc_self: &Arc<VNode>) -> EResult<Stat> {
         let inode = unsafe { self.inode.as_ref_unchecked() };
         let size = inode.size.load(Ordering::Relaxed);
         assert!(unsafe { cpu::irq::disable() });
@@ -522,7 +522,10 @@ impl VNodeOps for RamVNode {
             nlink,
             uid: 0,
             gid: 0,
-            rdev: 0,
+            rdev: self
+                .get_device(arc_self)
+                .map(|dev| ((u32::from(dev.id()) as u64) << 32) | dev.class() as u64)
+                .unwrap_or(0),
             size: size as u64,
             blksize: 1,
             blocks: (size / 512) as u64,

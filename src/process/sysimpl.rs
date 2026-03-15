@@ -15,7 +15,10 @@ use crate::{
         error::{EResult, Errno},
         raw::rawputc,
     },
-    cpu::thread::GpRegfile,
+    cpu::{
+        self,
+        thread::{GpRegfile, SpRegfile},
+    },
     kernel::sched::Thread,
     process::{signal::signal_die, usercopy},
 };
@@ -24,6 +27,7 @@ use super::{
     Cmdline, PID, current,
     uapi::{
         self,
+        inttypes::pid_t,
         signal::{__sa_handler_union, NSIG, SIG_DFL, Signal, sigaction},
         sigset::sigset_t,
         time::timespec,
@@ -54,9 +58,9 @@ pub unsafe extern "C" fn syscall_proc_exit(code: c_int) {
 
 /// Create a copy of the running process and return its PID (to the parent) or -1 (to the child).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn syscall_proc_fork(regs: &GpRegfile) -> i64 {
+pub unsafe extern "C" fn syscall_proc_fork(regs: &GpRegfile) -> pid_t {
     let proc = current().unwrap();
-    Errno::extract_i64(try { proc.fork(regs)?.pid })
+    Errno::extract_i32(try { proc.fork(regs)?.pid })
 }
 
 /// Execute the program at `path`, replacing the calling program's code and data in the process.
@@ -163,19 +167,10 @@ pub unsafe extern "C" fn syscall_proc_sigaction(
 
 /// Return from a signal handler.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn syscall_proc_sigret() {
-    // if !unsafe { sched_signal_exit() } {
-    // TODO.
-    signal_die(uapi::signal::Signal::SIGSEGV as i32);
-    // run_handler(siginfo_t {
-    //     si_signo: SIGSEGV as c_int,
-    //     si_code: 0,
-    //     si_pid: current().unwrap().pid,
-    //     si_uid: 0,
-    //     si_addr: get_user_pc() as *mut c_void,
-    //     si_status: 0,
-    // });
-    // }
+pub unsafe extern "C" fn syscall_proc_sigret(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
+    if unsafe { cpu::usermode::exit_signal(regs, sregs) }.is_err() {
+        signal_die(uapi::signal::Signal::SIGSEGV as i32);
+    }
 }
 
 /// Get child process status update.
