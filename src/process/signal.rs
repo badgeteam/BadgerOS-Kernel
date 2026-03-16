@@ -31,7 +31,7 @@ impl Default for Sigtab {
                 },
                 sa_flags: 0,
                 sa_restorer: null(),
-                sa_mask: sigset_t { __sig: [0; _] },
+                sa_mask: sigset_t::default(),
             }; _],
         }
     }
@@ -127,7 +127,6 @@ pub fn run_handler(siginfo: siginfo_t, regs: &mut GpRegfile, sregs: &mut SpRegfi
 
     if handler == SIG_DFL {
         use super::uapi::signal::Signal::*;
-        #[allow(non_snake_case)]
         match unsafe { core::mem::transmute(siginfo.si_signo) } {
             SIGABRT | SIGBUS | SIGFPE | SIGILL | SIGQUIT | SIGSEGV | SIGSYS | SIGTRAP | SIGXCPU
             | SIGXFSZ => signal_die(siginfo.si_signo), //TODO: With core dump.
@@ -141,8 +140,9 @@ pub fn run_handler(siginfo: siginfo_t, regs: &mut GpRegfile, sregs: &mut SpRegfi
         }
         return;
     } else if handler == SIG_IGN {
+        use super::uapi::signal::Signal::*;
         match unsafe { core::mem::transmute(siginfo.si_signo) } {
-            Signal::SIGSEGV | Signal::SIGTRAP | Signal::SIGILL | Signal::SIGFPE => {
+            SIGSEGV | SIGTRAP | SIGILL | SIGFPE => {
                 if unsafe { siginfo.__si_fields.__si_common.__first.__piduid.si_pid } != proc.pid {
                     // Sent by another process, allowed to ignore.
                     return;
@@ -155,11 +155,17 @@ pub fn run_handler(siginfo: siginfo_t, regs: &mut GpRegfile, sregs: &mut SpRegfi
         return;
     }
 
-    // TODO: Get rid of sched_signal_enter?
     let res = unsafe { enter_signal(siginfo, handler as usize, returner, regs, sregs) };
     if res.is_err() {
         signal_die(Signal::SIGSEGV as i32);
+        return;
     }
+
+    let runtime = unsafe { (&*Thread::current()).runtime() };
+    if (action.sa_flags & SA_NODEFER) == 0 {
+        runtime.sigprocmask.set(siginfo.si_code as usize);
+    }
+    runtime.sigprocmask.add(&action.sa_mask);
 }
 
 /// Kill the current process due to a signal.
@@ -167,6 +173,6 @@ pub fn signal_die(signal: i32) {
     let proc = super::current().unwrap();
     // W_SIGNALLED
     let status = (signal << 8) | 0x40;
-    proc.kill(status);
+    proc.die(status);
     unsafe { (&*Thread::current()).die() };
 }

@@ -4,6 +4,7 @@
 
 pub mod dirent;
 pub mod fd_set;
+pub mod getid;
 pub mod inttypes;
 pub mod signal;
 pub mod sigset;

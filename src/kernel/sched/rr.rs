@@ -6,20 +6,20 @@ use alloc::sync::Arc;
 
 use crate::{
     kernel::sched::{SchedAlgorithm, Thread},
-    util::list::ArcList,
+    util::list::ArcInvasiveList,
 };
 
 use super::*;
 
 /// A simple round-robin scheduler.
 pub struct RoundRobinAlgorithm {
-    queue: ArcList<Thread>,
+    queue: ArcInvasiveList<Thread>,
 }
 
 impl RoundRobinAlgorithm {
     pub const fn new() -> Self {
         Self {
-            queue: ArcList::new(),
+            queue: ArcInvasiveList::new(),
         }
     }
 }
@@ -42,6 +42,8 @@ impl SchedAlgorithm for RoundRobinAlgorithm {
     }
 
     fn choose_thread(&mut self) -> Option<Arc<Thread>> {
+        let now = time_us();
+
         for _ in 0..self.queue.len() {
             let node = self.queue.pop_front().unwrap();
             let flags = node.flags.load(Ordering::Relaxed);
@@ -56,6 +58,9 @@ impl SchedAlgorithm for RoundRobinAlgorithm {
                     .fetch_and(!tflags::BLOCKED, Ordering::Relaxed);
                 continue;
             } else if flags & tflags::BLOCKED == 0 {
+                return Some(node);
+            } else if unsafe { node.runtime() }.timeout < now {
+                node.flags.fetch_and(!tflags::BLOCKED, Ordering::Relaxed);
                 return Some(node);
             }
 

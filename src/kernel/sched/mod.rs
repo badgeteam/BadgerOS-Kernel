@@ -4,12 +4,11 @@
 
 use core::{
     cell::UnsafeCell,
-    mem::offset_of,
     ptr::{NonNull, null_mut, slice_from_raw_parts_mut},
     sync::atomic::{AtomicI32, AtomicI64, AtomicU32, Ordering, fence},
 };
 
-use alloc::{boxed::Box, string::String, sync::Arc};
+use alloc::{boxed::Box, collections::linked_list::LinkedList, string::String, sync::Arc};
 
 use crate::{
     badgelib::irq::IrqGuard,
@@ -32,10 +31,16 @@ use crate::{
     },
     mem::vmm::{self, Memmap, kernel_mm},
     misc::panic,
-    process::Process,
+    process::{
+        Process,
+        uapi::{
+            signal::{Signal, siginfo_t, stack_t},
+            sigset::sigset_t,
+        },
+    },
     util::{
         bitset::BitSet,
-        list::{ArcList, HasListNode, InvasiveListNode},
+        list::{ArcInvasiveList, InvasiveListNode},
     },
 };
 
@@ -74,6 +79,10 @@ pub struct ThreadRuntime {
     pub timeout: timestamp_us_t,
     /// Float and/or vector state.
     pub fstate: FloatState,
+    /// Alternate signal stack.
+    pub sigaltstack: stack_t,
+    /// Masked signals; anything in this set delivered asynchronously will be ignored.
+    pub sigprocmask: sigset_t,
 }
 
 impl ThreadRuntime {
@@ -103,6 +112,8 @@ impl ThreadRuntime {
                 uctx: ThreadUContext::default(),
                 timeout: 0,
                 fstate: FloatState::new(),
+                sigaltstack: stack_t::default(),
+                sigprocmask: sigset_t::default(),
             })
         }
     }
@@ -132,9 +143,9 @@ pub mod tflags {
 
 /// Thread control block.
 pub struct Thread {
-    node: InvasiveListNode<Thread>,
+    node: InvasiveListNode,
     /// Flags about the blocking status, lifetime, etc.
-    flags: AtomicU32,
+    pub(super) flags: AtomicU32,
     /// Dynamic state only alive while the thread is runnable.
     runtime: UnsafeCell<Option<ThreadRuntime>>,
     /// How many microseconds of CPU time this thread has spent in kernel mode.
@@ -149,6 +160,9 @@ pub struct Thread {
     pub name: Option<String>,
     /// Temporary memory map override.
     pub mm_override: Option<NonNull<Memmap>>,
+    /// Queued asynchronous signals.
+    /// **WARNING:** Despite being a spinlock, this may NOT be acquired from interrupts.
+    pub sigqueue: Spinlock<LinkedList<siginfo_t>>,
 }
 impl_has_list_node!(Thread, node);
 
@@ -186,6 +200,7 @@ impl Thread {
             process,
             name,
             mm_override: None,
+            sigqueue: Spinlock::new(LinkedList::new()),
         })?;
 
         Ok(tcb)
@@ -251,6 +266,7 @@ impl Thread {
     /// Terminate the current thread.
     pub unsafe fn die(&self) -> ! {
         self.flags.fetch_or(tflags::STOPPED, Ordering::Relaxed);
+        self.waitlist.notify_all();
         thread_yield();
         unreachable!()
     }
@@ -268,12 +284,64 @@ impl Thread {
     pub unsafe fn runtime(&self) -> &mut ThreadRuntime {
         unsafe { self.runtime.as_mut_unchecked().as_mut().unwrap() }
     }
+
+    /// Get the first unblocked signal in the async signal queue.
+    pub unsafe fn get_async_sig(&self, is_poll: bool) -> Option<siginfo_t> {
+        let mask = unsafe { &self.runtime().sigprocmask };
+        let mut queue = self.sigqueue.lock();
+
+        // First get signals for this thread specifically.
+        let mut iter = queue.cursor_front_mut();
+        while let Some(info) = iter.current() {
+            if info.si_signo == Signal::SIGSTOP as i32
+                || info.si_signo == Signal::SIGKILL as i32
+                || !mask.test(info.si_signo as usize)
+            {
+                let tmp = *info;
+                if !is_poll {
+                    iter.remove_current();
+                }
+                return Some(tmp);
+            }
+            iter.move_next();
+        }
+
+        drop(queue);
+        if let Some(proc) = self.process.clone() {
+            let mut queue = proc.sigqueue.unintr_lock();
+
+            // The get signals for the process in general.
+            let mut iter = queue.cursor_front_mut();
+            while let Some(info) = iter.current() {
+                if info.si_signo == Signal::SIGSTOP as i32
+                    || info.si_signo == Signal::SIGKILL as i32
+                    || !mask.test(info.si_signo as usize)
+                {
+                    let tmp = *info;
+                    if !is_poll {
+                        iter.remove_current();
+                    }
+                    return Some(tmp);
+                }
+                iter.move_next();
+            }
+        }
+
+        None
+    }
+
+    /// Send a signal to this thread.
+    pub fn send_async_sig(&self, info: siginfo_t) {
+        self.sigqueue.lock().push_back(info);
+        // Causes interruptable locks to return Err(EINTR).
+        self.flags.fetch_and(!tflags::BLOCKED, Ordering::Relaxed);
+    }
 }
 
 /// Number of currently running schedulers.
 pub(super) static RUNNING_SCHED_COUNT: AtomicU32 = AtomicU32::new(0);
 /// Global list of threads to be reaped.
-static ZOMBIES: Spinlock<ArcList<Thread>> = Spinlock::new(ArcList::new());
+static ZOMBIES: Spinlock<ArcInvasiveList<Thread>> = Spinlock::new(ArcInvasiveList::new());
 /// The thread reaper thread.
 static REAPER: Spinlock<Option<Arc<Thread>>> = Spinlock::new(None);
 
@@ -351,10 +419,11 @@ impl Scheduler {
             thread_yield();
 
             // Threads are transferred to this list and dropped at the end of the loop.
-            let mut threads = ArcList::new();
+            let mut threads = ArcInvasiveList::new();
 
             let _noirq = IrqGuard::new();
 
+            unsafe { thread_self.runtime().timeout = timestamp_us_t::MAX };
             thread_self
                 .flags
                 .fetch_or(tflags::BLOCKED, Ordering::Relaxed);

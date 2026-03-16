@@ -19,7 +19,6 @@ use crate::{
 
 /// Raw mutually-exclusive resource access guard.
 #[repr(C)]
-#[derive(Debug)]
 pub struct RawMutex {
     waitlist: Waitlist,
     shares: AtomicU32,
@@ -186,9 +185,8 @@ impl<'a> Drop for SharedRawMutexGuard<'a> {
 
 /// Mutex-protected resource.
 #[repr(C)]
-#[derive(Debug)]
 pub struct Mutex<T> {
-    pub inner: RawMutex,
+    inner: RawMutex,
     data: UnsafeCell<T>,
 }
 unsafe impl<T> Send for Mutex<T> {}

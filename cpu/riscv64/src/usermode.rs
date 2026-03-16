@@ -2,7 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::{arch::asm, ptr::null_mut};
+use core::{arch::asm, fmt::Sign, mem::offset_of, ptr::null_mut};
 
 use crate::{
     cpu::{
@@ -15,7 +15,7 @@ use crate::{
             signal::{siginfo_t, ucontext_t},
             sigset::sigset_t,
         },
-        usercopy::AccessResult,
+        usercopy::{AccessResult, UserCopyable, UserPtr},
     },
 };
 
@@ -42,6 +42,15 @@ pub struct ThreadUContext {
     s11: usize,
 }
 
+/// Thread signal context.
+#[repr(C, align(16))]
+#[derive(Clone, Copy)]
+struct SignalFrame {
+    info: siginfo_t,
+    uctx: ucontext_t,
+}
+unsafe impl UserCopyable for SignalFrame {}
+
 /// Enter a userspace signal handler.
 pub unsafe fn enter_signal(
     info: siginfo_t,
@@ -50,29 +59,51 @@ pub unsafe fn enter_signal(
     regs: &mut GpRegfile,
     sregs: &mut SpRegfile,
 ) -> AccessResult<()> {
-    let fstate = unsafe { (&*Thread::current()).runtime().fstate };
+    let runtime = unsafe { (&*Thread::current()).runtime() };
 
-    let mut uctx = ucontext_t {
-        uc_flags: 0,
-        uc_link: null_mut(),
-        uc_stack: Default::default(),
-        __uc_sigmask_union: crate::process::uapi::signal::__uc_sigmask_union {
-            uc_sigmask: Default::default(),
-        },
-        uc_mcontext: Default::default(),
+    let mut frame = SignalFrame {
+        info,
+        uctx: ucontext_t::default(),
     };
-    uctx.uc_mcontext
+    frame
+        .uctx
+        .uc_mcontext
         .gregs
         .copy_from_slice(bytemuck::cast_ref::<_, [usize; 32]>(regs));
-    let fregs = unsafe { &mut uctx.uc_mcontext.fpregs.d };
-    fregs.f.copy_from_slice(&fstate.fregs);
-    fregs.fcsr = fstate.fcsr as _;
+    let fregs = unsafe { &mut frame.uctx.uc_mcontext.fpregs.d };
+    fregs.f.copy_from_slice(&runtime.fstate.fregs);
+    fregs.fcsr = runtime.fstate.fcsr as _;
+
+    let mut sp = regs.sp;
+    sp -= sp % 16;
+    sp -= size_of::<SignalFrame>();
+    let mut ptr = UserPtr::new_mut(sp as *mut SignalFrame)?;
+    ptr.write(frame)?;
+
+    regs.pc = handler;
+    regs.ra = returner;
+    regs.a0 = info.si_signo as _;
+    regs.a1 = sp + offset_of!(SignalFrame, info);
+    regs.a2 = sp + offset_of!(SignalFrame, uctx);
+    sregs.sepc = regs.pc;
 
     Ok(())
 }
 
 /// Exit a userspace signal handler.
 pub unsafe fn exit_signal(regs: &mut GpRegfile, sregs: &mut SpRegfile) -> AccessResult<()> {
+    let runtime = unsafe { (&*Thread::current()).runtime() };
+
+    let ptr = UserPtr::new(regs.sp as *const SignalFrame)?;
+    let frame = ptr.read()?;
+
+    bytemuck::cast_mut::<_, [usize; 32]>(regs).copy_from_slice(&frame.uctx.uc_mcontext.gregs);
+    let fregs = unsafe { &frame.uctx.uc_mcontext.fpregs.d };
+    runtime.fstate.fregs.copy_from_slice(&fregs.f);
+    runtime.fstate.fcsr = fregs.fcsr as _;
+
+    sregs.sepc = regs.pc;
+
     Ok(())
 }
 

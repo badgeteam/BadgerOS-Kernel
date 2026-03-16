@@ -24,11 +24,11 @@ use crate::{
 };
 
 use super::{
-    Cmdline, PID, current,
+    Cmdline, PID, PROCESSES, Process, current,
     uapi::{
         self,
         inttypes::pid_t,
-        signal::{__sa_handler_union, NSIG, SIG_DFL, Signal, sigaction},
+        signal::{__sa_handler_union, NSIG, SI_USER, SIG_DFL, Signal, sigaction, siginfo_t},
         sigset::sigset_t,
         time::timespec,
     },
@@ -51,7 +51,7 @@ pub unsafe extern "C" fn syscall_temp_write(message: *const c_char, length: usiz
 pub unsafe extern "C" fn syscall_proc_exit(code: c_int) {
     // W_EXITED.
     let status = (code & 255) << 8;
-    current().unwrap().kill(status);
+    current().unwrap().die(status);
     // Nothing needs to be dropped in the scope from which this would be called.
     unsafe { (*Thread::current()).die() };
 }
@@ -158,7 +158,7 @@ pub unsafe extern "C" fn syscall_proc_sigaction(
                     },
                     sa_flags: 0,
                     sa_restorer: null(),
-                    sa_mask: sigset_t { __sig: [0; _] },
+                    sa_mask: sigset_t::default(),
                 }
             };
         },
@@ -192,4 +192,50 @@ pub unsafe extern "C" fn syscall_time_gettime(_clkid: c_int, timespec: *mut time
             timespec.write(Timespec::now().into())?;
         },
     )
+}
+
+/// Send a signal to an arbitrary thread in a specified process. See man kill(2).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn syscall_proc_kill(pid: pid_t, signum: c_int) -> c_int {
+    Errno::extract(
+        try {
+            if pid < 1 {
+                Err(Errno::ESRCH)?;
+            }
+            let proc = PROCESSES
+                .lock_shared()?
+                .get(&pid)
+                .ok_or(Errno::ESRCH)?
+                .clone();
+            proc.send_async_sig(siginfo_t {
+                si_signo: signum,
+                si_code: SI_USER,
+                si_errno: 0,
+                __si_fields: Default::default(),
+            });
+        },
+    )
+}
+
+/// Get an ID as specified by _GETID_* macros.
+pub unsafe extern "C" fn syscall_proc_getid(getid_type: c_int) -> u64 {
+    todo!()
+    // use uapi::getid::*;
+    // match getid_type {
+    //     GETID_PID => current().unwrap().pid,
+    //     GETID_PPID => current()
+    //         .unwrap()
+    //         .pcr
+    //         .unintr_lock_shared()
+    //         .parent
+    //         .upgrade()
+    //         .map(|x| x.pid)
+    //         .unwrap_or(0),
+    //     GETID_TID => 0,
+    //     GETID_UID => 0,
+    //     GETID_EUID => 0,
+    //     GETID_GID => 0,
+    //     GETID_EGID => 0,
+    //     _ => 0,
+    // }
 }

@@ -1,35 +1,36 @@
-// SPDX-FileCopyrightText: 2025 Julian Scheffers <julian@scheffers.net>
-// SPDX-FileType: SOURCE
+// Copyright © 2026, __robot@PLT
 // SPDX-License-Identifier: MIT
 
 use core::{marker::PhantomData, ptr::null_mut};
 
 use alloc::sync::Arc;
 
+#[cfg(feature = "dlist_debug")]
+macro_rules! dlist_debug_assert {
+    ($($x: tt)*) => {
+        assert!($($x)*);
+    };
+}
+
+#[cfg(not(feature = "dlist_debug"))]
+macro_rules! dlist_debug_assert {
+    ($($_: tt)*) => {};
+}
+
 #[macro_export]
 macro_rules! impl_has_list_node {
     ($Type: ty, $field: tt) => {
-        impl HasListNode<$Type> for $Type {
-            fn list_node(&self) -> &InvasiveListNode<$Type> {
+        impl crate::util::list::HasListNode<$Type> for $Type {
+            unsafe fn from_node(node: *mut crate::util::list::InvasiveListNode) -> *mut $Type {
+                unsafe { node.byte_sub(core::mem::offset_of!($Type, $field)) as *mut $Type }
+            }
+
+            fn list_node(&self) -> &crate::util::list::InvasiveListNode {
                 &self.$field
             }
 
-            fn list_node_mut(&mut self) -> &mut InvasiveListNode<$Type> {
+            fn list_node_mut(&mut self) -> &mut crate::util::list::InvasiveListNode {
                 &mut self.$field
-            }
-
-            unsafe fn from_node(node: &InvasiveListNode<$Type>) -> &$Type {
-                unsafe {
-                    &*((node as *const InvasiveListNode<$Type>).byte_sub(offset_of!($Type, node))
-                        as *const $Type)
-                }
-            }
-
-            unsafe fn from_node_mut(node: &mut InvasiveListNode<$Type>) -> &mut $Type {
-                unsafe {
-                    &mut *((node as *mut InvasiveListNode<$Type>).byte_sub(offset_of!($Type, node))
-                        as *mut $Type)
-                }
             }
         }
     };
@@ -37,63 +38,59 @@ macro_rules! impl_has_list_node {
 
 /// Trait for types that can be stored in an [`InvasiveList`].
 pub trait HasListNode<T: HasListNode<T>> {
-    unsafe fn from_node(node: &InvasiveListNode<T>) -> &T;
-    unsafe fn from_node_mut(node: &mut InvasiveListNode<T>) -> &mut T;
-    fn list_node(&self) -> &InvasiveListNode<T>;
-    fn list_node_mut(&mut self) -> &mut InvasiveListNode<T>;
+    unsafe fn from_node(node: *mut InvasiveListNode) -> *mut T;
+    fn list_node(&self) -> &InvasiveListNode;
+    fn list_node_mut(&mut self) -> &mut InvasiveListNode;
+}
+
+impl HasListNode<InvasiveListNode> for InvasiveListNode {
+    unsafe fn from_node(node: *mut InvasiveListNode) -> *mut InvasiveListNode {
+        node
+    }
+
+    fn list_node(&self) -> &InvasiveListNode {
+        self
+    }
+
+    fn list_node_mut(&mut self) -> &mut InvasiveListNode {
+        self
+    }
 }
 
 /// Linked-list node for the [`InvasiveList`].
-pub struct InvasiveListNode<T: HasListNode<T>> {
-    prev: *mut InvasiveListNode<T>,
-    next: *mut InvasiveListNode<T>,
+pub struct InvasiveListNode {
+    prev: *mut InvasiveListNode,
+    next: *mut InvasiveListNode,
 }
 
-impl<T: HasListNode<T>> InvasiveListNode<T> {
+impl InvasiveListNode {
     pub const fn new() -> Self {
         Self {
             prev: null_mut(),
             next: null_mut(),
         }
     }
-}
 
-/// Invasive linked list iterator.
-pub struct InvasiveListIter<'a, T: HasListNode<T>> {
-    cur: *mut InvasiveListNode<T>,
-    marker: PhantomData<&'a InvasiveList<T>>,
-}
-
-impl<'a, T: HasListNode<T>> Iterator for InvasiveListIter<'a, T> {
-    type Item = &'a T;
-
-    fn next(&mut self) -> Option<&'a T> {
-        if self.cur < 1 as _ {
-            return None;
-        }
-        unsafe {
-            let tmp = T::from_node(&*self.cur);
-            self.cur = (*self.cur).next;
-            Some(tmp)
-        }
+    pub fn is_in_list(&self) -> bool {
+        self.prev != null_mut()
     }
 }
 
 /// Invasive linked list iterator.
-pub struct InvasiveListIterMut<'a, T: HasListNode<T>> {
-    cur: *mut InvasiveListNode<T>,
-    marker: PhantomData<&'a mut InvasiveList<T>>,
+pub struct InvasiveListIter<'a, T: HasListNode<T>> {
+    cur: *mut InvasiveListNode,
+    marker: PhantomData<&'a InvasiveList<T>>,
 }
 
-impl<'a, T: HasListNode<T>> Iterator for InvasiveListIterMut<'a, T> {
-    type Item = &'a mut T;
+impl<'a, T: HasListNode<T>> Iterator for InvasiveListIter<'a, T> {
+    type Item = *mut T;
 
-    fn next(&mut self) -> Option<&'a mut T> {
-        if self.cur < 1 as _ {
+    fn next(&mut self) -> Option<*mut T> {
+        if self.cur <= 1 as _ {
             return None;
         }
         unsafe {
-            let tmp = T::from_node_mut(&mut *self.cur);
+            let tmp = T::from_node(self.cur);
             self.cur = (*self.cur).next;
             Some(tmp)
         }
@@ -102,9 +99,10 @@ impl<'a, T: HasListNode<T>> Iterator for InvasiveListIterMut<'a, T> {
 
 /// Invasive linked list.
 pub struct InvasiveList<T: HasListNode<T>> {
-    first: *mut InvasiveListNode<T>,
-    last: *mut InvasiveListNode<T>,
+    first: *mut InvasiveListNode,
+    last: *mut InvasiveListNode,
     len: usize,
+    marker: PhantomData<*mut T>,
 }
 
 impl<T: HasListNode<T>> InvasiveList<T> {
@@ -113,6 +111,7 @@ impl<T: HasListNode<T>> InvasiveList<T> {
             first: null_mut(),
             last: null_mut(),
             len: 0,
+            marker: PhantomData,
         }
     }
 
@@ -121,28 +120,28 @@ impl<T: HasListNode<T>> InvasiveList<T> {
     }
 
     fn consistency_check(&self) {
-        #[cfg(debug_assertions)]
+        #[cfg(feature = "dlist_debug")]
         unsafe {
             let mut len = 0usize;
             let mut prev = 1 as _;
             let mut cur = self.first;
             while cur > 1 as _ {
-                debug_assert!((*cur).prev == prev, "InvasiveList has broken prev link");
+                dlist_debug_assert!((*cur).prev == prev, "InvasiveList has broken prev link");
                 prev = cur;
                 cur = (*cur).next;
                 len += 1;
-                debug_assert!(len <= self.len, "InvasiveList has too many elements");
+                dlist_debug_assert!(len <= self.len, "InvasiveList has too many elements");
             }
-            debug_assert!(len == self.len, "InvasiveList has too few elements");
+            dlist_debug_assert!(len == self.len, "InvasiveList has too few elements");
         }
     }
 
-    pub fn push_front<'a>(&'a mut self, item: &'a mut T) -> Result<(), ()> {
-        let node = item.list_node_mut();
+    pub unsafe fn push_front(&mut self, item: *mut T) -> Result<(), ()> {
+        let node = unsafe { &mut *item }.list_node_mut();
         if !node.next.is_null() {
             return Err(());
         }
-        debug_assert!(node.prev.is_null());
+        dlist_debug_assert!(node.prev.is_null());
 
         unsafe {
             node.next = self.first.max(1 as _);
@@ -156,12 +155,12 @@ impl<T: HasListNode<T>> InvasiveList<T> {
         }
 
         self.len += 1;
-        debug_assert!(self.contains(item));
+        dlist_debug_assert!(self.contains(item));
         self.consistency_check();
         Ok(())
     }
 
-    pub fn pop_front<'a>(&'a mut self) -> Option<&'a mut T> {
+    pub unsafe fn pop_front(&mut self) -> Option<*mut T> {
         if self.first.is_null() {
             return None;
         }
@@ -179,31 +178,24 @@ impl<T: HasListNode<T>> InvasiveList<T> {
         }
 
         self.len -= 1;
-        debug_assert!(!self.contains(unsafe { T::from_node(&*node) }));
+        dlist_debug_assert!(!self.contains(unsafe { T::from_node(node) }));
         self.consistency_check();
-        Some(unsafe { T::from_node_mut(&mut *node) })
+        Some(unsafe { T::from_node(node) })
     }
 
-    pub fn front<'a>(&'a self) -> Option<&'a T> {
+    pub fn front(&self) -> Option<*mut T> {
         if self.first.is_null() {
             return None;
         }
-        Some(unsafe { T::from_node(&*self.first) })
+        Some(unsafe { T::from_node(self.first) })
     }
 
-    pub fn front_mut<'a>(&'a mut self) -> Option<&'a T> {
-        if self.first.is_null() {
-            return None;
-        }
-        Some(unsafe { T::from_node_mut(&mut *self.first) })
-    }
-
-    pub fn push_back<'a>(&'a mut self, item: &'a mut T) -> Result<(), ()> {
-        let node = item.list_node_mut();
+    pub unsafe fn push_back(&mut self, item: *mut T) -> Result<(), ()> {
+        let node = unsafe { &mut *item }.list_node_mut();
         if !node.next.is_null() {
             return Err(());
         }
-        debug_assert!(node.prev.is_null());
+        dlist_debug_assert!(node.prev.is_null());
 
         unsafe {
             node.prev = self.last.max(1 as _);
@@ -217,12 +209,12 @@ impl<T: HasListNode<T>> InvasiveList<T> {
         }
 
         self.len += 1;
-        debug_assert!(self.contains(item));
+        dlist_debug_assert!(self.contains(item));
         self.consistency_check();
         Ok(())
     }
 
-    pub fn pop_back<'a>(&'a mut self) -> Option<&'a mut T> {
+    pub unsafe fn pop_back(&mut self) -> Option<*mut T> {
         if self.last.is_null() {
             return None;
         }
@@ -240,23 +232,16 @@ impl<T: HasListNode<T>> InvasiveList<T> {
         }
 
         self.len -= 1;
-        debug_assert!(!self.contains(unsafe { T::from_node(&*node) }));
+        dlist_debug_assert!(!self.contains(unsafe { T::from_node(node) }));
         self.consistency_check();
-        Some(unsafe { T::from_node_mut(&mut *node) })
+        Some(unsafe { T::from_node(node) })
     }
 
-    pub fn back<'a>(&'a self) -> Option<&'a T> {
+    pub fn back(&self) -> Option<*mut T> {
         if self.last.is_null() {
             return None;
         }
-        Some(unsafe { T::from_node(&*self.last) })
-    }
-
-    pub fn back_mut<'a>(&'a mut self) -> Option<&'a T> {
-        if self.last.is_null() {
-            return None;
-        }
-        Some(unsafe { T::from_node_mut(&mut *self.last) })
+        Some(unsafe { T::from_node(self.last) })
     }
 
     pub fn clear(&mut self) {
@@ -274,8 +259,8 @@ impl<T: HasListNode<T>> InvasiveList<T> {
         }
     }
 
-    pub fn contains(&self, thing: &T) -> bool {
-        let node = thing.list_node();
+    pub fn contains(&self, thing: *const T) -> bool {
+        let node = unsafe { &*thing }.list_node();
         if node.next.is_null() {
             return false;
         }
@@ -287,15 +272,45 @@ impl<T: HasListNode<T>> InvasiveList<T> {
         false
     }
 
-    pub fn iter<'a>(&'a self) -> InvasiveListIter<'a, T> {
-        InvasiveListIter {
-            cur: self.first,
-            marker: PhantomData,
+    pub unsafe fn try_remove(&mut self, item: *mut T) {
+        unsafe {
+            if (&*item).list_node().is_in_list() {
+                self.remove(item);
+            }
         }
     }
 
-    pub fn iter_mut<'a>(&'a mut self) -> InvasiveListIterMut<'a, T> {
-        InvasiveListIterMut {
+    pub unsafe fn remove(&mut self, item: *mut T) {
+        let node = unsafe { &mut *item }.list_node_mut();
+        dlist_debug_assert!(self.contains(item));
+
+        unsafe {
+            if node.next > 1 as _ {
+                (*node.next).prev = node.prev;
+            } else if node.prev == 1 as _ {
+                self.last = null_mut();
+            } else {
+                self.last = node.prev;
+            }
+
+            if node.prev > 1 as _ {
+                (*node.prev).next = node.next;
+            } else if node.next == 1 as _ {
+                self.first = null_mut();
+            } else {
+                self.first = node.next;
+            }
+        }
+
+        *node = InvasiveListNode::new();
+        self.len -= 1;
+
+        dlist_debug_assert!(!self.contains(item));
+        self.consistency_check();
+    }
+
+    pub fn iter<'a>(&'a self) -> InvasiveListIter<'a, T> {
+        InvasiveListIter {
             cur: self.first,
             marker: PhantomData,
         }
@@ -309,11 +324,11 @@ impl<T: HasListNode<T>> Drop for InvasiveList<T> {
 }
 
 /// Invasive linked list for things stored in an [`Arc`].
-pub struct ArcList<T: HasListNode<T>> {
+pub struct ArcInvasiveList<T: HasListNode<T>> {
     inner: InvasiveList<T>,
 }
 
-impl<T: HasListNode<T>> ArcList<T> {
+impl<T: HasListNode<T>> ArcInvasiveList<T> {
     pub const fn new() -> Self {
         Self {
             inner: InvasiveList::new(),
@@ -336,13 +351,11 @@ impl<T: HasListNode<T>> ArcList<T> {
     }
 
     pub fn pop_front(&mut self) -> Option<Arc<T>> {
-        self.inner
-            .pop_front()
-            .map(|raw| unsafe { Arc::from_raw(raw as *const T) })
+        unsafe { self.inner.pop_front() }.map(|raw| unsafe { Arc::from_raw(raw as *const T) })
     }
 
     pub fn front(&self) -> Option<&T> {
-        self.inner.front()
+        self.inner.front().map(|x| unsafe { &*x })
     }
 
     pub fn push_back(&mut self, item: Arc<T>) -> Result<(), ()> {
@@ -357,13 +370,11 @@ impl<T: HasListNode<T>> ArcList<T> {
     }
 
     pub fn pop_back(&mut self) -> Option<Arc<T>> {
-        self.inner
-            .pop_back()
-            .map(|raw| unsafe { Arc::from_raw(raw as *const T) })
+        unsafe { self.inner.pop_back() }.map(|raw| unsafe { Arc::from_raw(raw as *const T) })
     }
 
     pub fn back(&self) -> Option<&T> {
-        self.inner.back()
+        self.inner.back().map(|x| unsafe { &*x })
     }
 
     pub fn clear(&mut self) {
@@ -377,7 +388,7 @@ impl<T: HasListNode<T>> ArcList<T> {
                 let next = (*cur).next;
                 (*cur).next = null_mut();
                 (*cur).prev = null_mut();
-                drop(Arc::from_raw(T::from_node(&*cur)));
+                drop(Arc::from_raw(T::from_node(cur)));
                 cur = next;
             }
         }
@@ -390,13 +401,9 @@ impl<T: HasListNode<T>> ArcList<T> {
     pub fn iter<'a>(&'a self) -> InvasiveListIter<'a, T> {
         self.inner.iter()
     }
-
-    pub fn iter_mut<'a>(&'a mut self) -> InvasiveListIterMut<'a, T> {
-        self.inner.iter_mut()
-    }
 }
 
-impl<T: HasListNode<T>> Drop for ArcList<T> {
+impl<T: HasListNode<T>> Drop for ArcInvasiveList<T> {
     fn drop(&mut self) {
         self.clear()
     }

@@ -2,7 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::ffi::{c_int, c_long, c_void};
+use core::ffi::{c_int, c_long, c_ulong, c_void};
 
 use crate::{
     bindings::{error::Errno, raw::timestamp_us_t},
@@ -49,5 +49,11 @@ pub unsafe extern "C" fn syscall_thread_join(u_tid: c_long) -> c_int {
 /// Exit the current thread; exit code can be read unless destroyed or detached.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn syscall_thread_exit(code: c_int) {
+    todo!()
+}
+
+/// Send a signal to a thread in this process.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn syscall_thread_kill(u_tid: c_ulong, signum: c_int) -> c_int {
     todo!()
 }

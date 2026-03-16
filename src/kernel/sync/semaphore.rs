@@ -11,7 +11,6 @@ use crate::{
 
 /// A counting semaphore.
 #[repr(C)]
-#[derive(Debug)]
 pub struct Semaphore {
     waitlist: Waitlist,
     counter: AtomicU32,

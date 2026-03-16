@@ -66,8 +66,14 @@ pub union __uc_sigmask_union {
 }
 unsafe impl UserCopyable for __uc_sigmask_union {}
 
+impl Default for __uc_sigmask_union {
+    fn default() -> Self {
+        Self { unused: [0; _] }
+    }
+}
+
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct ucontext_t {
     pub uc_flags: usize,
     pub uc_link: *mut ucontext_t,

@@ -53,7 +53,6 @@ enum FatFileStorage {
 /// A FAT file node.
 /// Despite FAT not being designed for it, unlinked files can still be accessed by their VNode.
 /// Note: Directories allow writing, which is used internally, and the outer VFS prevents the user from writing to directories.
-#[derive(Debug)]
 struct FatVNode {
     /// Where this file is stored in the media.
     storage: FatFileStorage,

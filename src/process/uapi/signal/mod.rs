@@ -20,6 +20,25 @@ pub const SIG_ERR: *mut c_void = usize::MAX as *mut c_void;
 pub const SIG_DFL: *mut c_void = 0 as *mut c_void;
 pub const SIG_IGN: *mut c_void = 1 as *mut c_void;
 
+pub const SA_NOCLDSTOP: c_ulong = 1;
+pub const SA_NOCLDWAIT: c_ulong = 2;
+pub const SA_SIGINFO: c_ulong = 4;
+pub const SA_ONSTACK: c_ulong = 0x08000000;
+pub const SA_RESTART: c_ulong = 0x10000000;
+pub const SA_NODEFER: c_ulong = 0x40000000;
+pub const SA_RESETHAND: c_ulong = 0x80000000_u32 as _;
+pub const SA_RESTORER: c_ulong = 0x04000000;
+
+pub const SI_ASYNCNL: c_int = -60;
+pub const SI_TKILL: c_int = -6;
+pub const SI_SIGIO: c_int = -5;
+pub const SI_ASYNCIO: c_int = -4;
+pub const SI_MESGQ: c_int = -3;
+pub const SI_TIMER: c_int = -2;
+pub const SI_QUEUE: c_int = -1;
+pub const SI_USER: c_int = 0;
+pub const SI_KERNEL: c_int = 128;
+
 pub mod siginfo {
     use super::super::inttypes::{clock_t, pid_t, uid_t};
     use crate::process::{uapi::sigval::sigval, usercopy::UserCopyable};
@@ -154,6 +173,11 @@ pub mod siginfo {
                 .field("__sigpoll", unsafe { &self.__sigpoll })
                 .field("__sigsys", unsafe { &self.__sigsys })
                 .finish()
+        }
+    }
+    impl Default for __si_field_union {
+        fn default() -> Self {
+            unsafe { core::mem::zeroed() }
         }
     }
     unsafe impl UserCopyable for __si_field_union {}

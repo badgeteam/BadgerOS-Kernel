@@ -4,13 +4,6 @@
 
 #![allow(non_camel_case_types)]
 
-use core::ffi::c_ulong;
+use crate::util::bitset::BitSet;
 
-use crate::process::usercopy::UserCopyable;
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
-pub struct sigset_t {
-    pub __sig: [c_ulong; 1024 / (8 * size_of::<c_ulong>())],
-}
-unsafe impl UserCopyable for sigset_t {}
+pub type sigset_t = BitSet<1024>;

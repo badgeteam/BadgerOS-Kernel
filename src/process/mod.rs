@@ -6,12 +6,12 @@ use core::{
     cell::UnsafeCell,
     ffi::c_int,
     ptr::{NonNull, addr_eq},
-    sync::atomic::{AtomicI32, AtomicI64, AtomicU32, Ordering},
+    sync::atomic::{AtomicI32, AtomicI64, AtomicU32, AtomicU64, Ordering},
     usize,
 };
 
 use alloc::{
-    collections::btree_map::BTreeMap,
+    collections::{btree_map::BTreeMap, linked_list::LinkedList},
     ffi::CString,
     string::String,
     sync::{Arc, Weak},
@@ -20,6 +20,7 @@ use alloc::{
 use elf::AuxvEntry;
 use files::FileDesc;
 use signal::Sigtab;
+use uapi::signal::siginfo_t;
 use usercopy::{AccessResult, UserSlice, UserSliceMut};
 
 use crate::{
@@ -34,7 +35,10 @@ use crate::{
     filesystem::{self, File, SeekMode, device::CharDevFile, mode, oflags},
     kernel::{
         sched::Thread,
-        sync::mutex::{Mutex, SharedMutexGuard},
+        sync::{
+            mutex::{Mutex, SharedMutexGuard},
+            waitlist::Waitlist,
+        },
     },
     mem::{
         pmm::PPN,
@@ -95,6 +99,7 @@ pub struct Process {
     pub pid: PID,
     flags: AtomicU32,
     wait_status: AtomicI32,
+    wait_generation: AtomicU64,
     pcr: Mutex<PCR>,
     cmdline: Mutex<Cmdline>,
     memmap: UnsafeCell<Memmap>,
@@ -102,6 +107,10 @@ pub struct Process {
     pub files: Mutex<FDTable>,
     tid_counter: AtomicI64,
     threads: Mutex<ProcThreads>,
+    /// Queued asynchronous signals.
+    pub sigqueue: Mutex<LinkedList<siginfo_t>>,
+    /// Threads waiting on a status change for this process.
+    waitlist: Waitlist,
 }
 impl PartialEq for Process {
     fn eq(&self, other: &Self) -> bool {
@@ -203,7 +212,10 @@ impl Process {
             }),
             flags: AtomicU32::new(0),
             wait_status: AtomicI32::new(0),
+            wait_generation: AtomicU64::new(0),
+            waitlist: Waitlist::new(),
             sigtab: Mutex::new(Sigtab::default()),
+            sigqueue: Mutex::new(LinkedList::new()),
         };
         proc.prefill_stdio_fds()?;
         let entry = load_executable(
@@ -244,6 +256,8 @@ impl Process {
             }),
             flags: AtomicU32::new(0),
             wait_status: AtomicI32::new(0),
+            wait_generation: AtomicU64::new(0),
+            waitlist: Waitlist::new(),
             cmdline: Mutex::new(self.cmdline.lock_shared()?.clone()),
             memmap: UnsafeCell::new(self.memmap().fork()?),
             sigtab: Mutex::new(*self.sigtab.lock_shared()?),
@@ -253,6 +267,7 @@ impl Process {
                 threads: BTreeMap::new(),
                 detached: Vec::new(),
             }),
+            sigqueue: Mutex::new(LinkedList::new()),
         };
         let child = Arc::try_new(child)?;
         let mut pcr = self.pcr.unintr_lock();
@@ -368,12 +383,14 @@ impl Process {
         unsafe { self.memmap.as_ref_unchecked() }
     }
 
-    /// Kill this process.
-    pub fn kill(&self, status: i32) {
+    /// Cause this process to exit.
+    pub fn die(&self, status: i32) {
         self.wait_status.store(status, Ordering::Relaxed);
+        self.wait_generation.fetch_add(1, Ordering::Relaxed);
         if self.flags.fetch_or(flags::STOPPING, Ordering::Relaxed) & flags::STOPPING != 0 {
             return;
         }
+        self.waitlist.notify_all();
 
         // TODO: Spawning a full thread for this is somewhat inefficient.
         let arc_self = PROCESSES
@@ -389,6 +406,11 @@ impl Process {
             Some(format!("Process {} reaper", self.pid)),
         )
         .unwrap();
+    }
+
+    /// Send a signal to an arbitrary thread in this process.
+    pub fn send_async_sig(&self, info: siginfo_t) {
+        self.sigqueue.unintr_lock().push_back(info);
     }
 
     /// Join all currently running threads.
@@ -430,6 +452,7 @@ impl Process {
         logkf!(LogLevel::Debug, "Process {} stopped", self.pid);
 
         self.files.unintr_lock().clear();
+        self.sigqueue.unintr_lock().clear();
         unsafe { self.memmap().clear() };
     }
 
