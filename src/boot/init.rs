@@ -19,7 +19,6 @@ use crate::{
     kernel::{
         cpulocal::CpuLocal,
         sched::{Scheduler, Thread},
-        smp,
         sync::mutex::Mutex,
     },
     ktest::{KTestWhen, ktests_runlevel},
