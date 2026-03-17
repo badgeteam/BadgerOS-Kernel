@@ -12,7 +12,6 @@ use bytemuck::bytes_of;
 use crate::{
     bindings::{
         error::Errno,
-        log::LogLevel,
         raw::{seek_mode_t_SEEK_CUR, seek_mode_t_SEEK_END, seek_mode_t_SEEK_SET},
     },
     filesystem::{self, NodeType, PATH_MAX},
@@ -81,7 +80,6 @@ impl<'a> DentBuffer<'a> {
 }
 
 /// Open a file, optionally relative to a directory.
-/// If `at` is -1, `path` is relative to the working directory.
 /// Returns -errno on error, file descriptor number on success.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn syscall_fs_open(at: c_int, path: *const c_char, oflags: u32) -> c_int {
@@ -178,7 +176,6 @@ pub unsafe extern "C" fn syscall_fs_getdents(
 }
 
 /// Rename and/or move a file to another path, optionally relative to one or two directories.
-/// If `*_at` is -1, the respective `*_path` is relative to the working directory.
 /// Returns -errno on error, 0 on success.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn syscall_fs_rename(
@@ -244,7 +241,6 @@ pub unsafe extern "C" fn syscall_fs_stat(
 }
 
 /// Create a new directory.
-/// If `at` is -1, `path` is relative to the working directory.
 /// Returns -errno on error, 0 on success.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn syscall_fs_mkdir(at: c_int, path: *const c_char) -> c_int {
@@ -263,7 +259,6 @@ pub unsafe extern "C" fn syscall_fs_mkdir(at: c_int, path: *const c_char) -> c_i
 }
 
 /// Delete a directory if it is empty.
-/// If `at` is -1, `path` is relative to the working directory.
 /// Returns -errno on error, 0 on success.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn syscall_fs_rmdir(at: c_int, path: *const c_char) -> c_int {
@@ -282,7 +277,6 @@ pub unsafe extern "C" fn syscall_fs_rmdir(at: c_int, path: *const c_char) -> c_i
 }
 
 /// Create a new link to an existing inode.
-/// If `*_at` is -1, the respective `*_path` is relative to the working directory.
 /// Returns -errno on error, 0 on success.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn syscall_fs_link(
@@ -314,7 +308,6 @@ pub unsafe extern "C" fn syscall_fs_link(
 }
 
 /// Remove a link to an inode. If it is the last link, the file is deleted.
-/// If `at` is -1, `path` is relative to the working directory.
 /// Returns -errno on error, 0 on success.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn syscall_fs_unlink(at: c_int, path: *const c_char) -> c_int {
@@ -333,7 +326,6 @@ pub unsafe extern "C" fn syscall_fs_unlink(at: c_int, path: *const c_char) -> c_
 }
 
 /// Create a new FIFO / named pipe.
-/// If `at` is -1, `path` is relative to the working directory.
 /// Returns -errno on error, 0 on success.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn syscall_fs_mkfifo(at: c_int, path: *const c_char) -> c_int {
@@ -387,4 +379,30 @@ pub unsafe extern "C" fn syscall_fs_seek(fd: c_int, offset: i64, whence: c_int) 
     };
     let proc = process::current().unwrap();
     Errno::extract_i64(try { proc.files.lock_shared()?.get_file(fd)?.seek(mode, offset)? as i64 })
+}
+
+/// Create a new link to an existing inode.
+/// Returns -errno on error, 0 on success.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn syscall_fs_symlink(
+    link_target: *const c_char,
+    new_at: c_int,
+    new_path: *const c_char,
+) -> c_int {
+    let proc = process::current().unwrap();
+    Errno::extract(
+        try {
+            let files = proc.files.lock_shared()?;
+            let mut link_targetbuf = [0u8; PATH_MAX];
+            let link_targetlen = usercopy::read_user_cstr(link_target, &mut link_targetbuf)?;
+            let new_at_file = files.get_atfile(new_at)?;
+            let mut new_pathbuf = [0u8; PATH_MAX];
+            let new_pathlen = usercopy::read_user_cstr(new_path, &mut new_pathbuf)?;
+            make_file(
+                new_at_file.as_deref(),
+                &new_pathbuf[..new_pathlen],
+                MakeFileSpec::Symlink(&link_targetbuf[..link_targetlen])
+            )?;
+        },
+    ) as c_int
 }

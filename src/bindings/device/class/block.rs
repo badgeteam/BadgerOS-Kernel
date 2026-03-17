@@ -101,7 +101,8 @@ impl BlockDevice {
                 data.len() as u64,
                 data.as_ptr() as *const c_void,
             )
-        })
+        })?;
+        self.sync_all(false)
     }
 
     /// Write block device bytes.
@@ -114,7 +115,8 @@ impl BlockDevice {
                 data.len() as u64,
                 data.as_ptr() as *const c_void,
             )
-        })
+        })?;
+        self.sync_all(false)
     }
 
     /// Read block device bytes.

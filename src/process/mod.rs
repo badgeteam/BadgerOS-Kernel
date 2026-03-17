@@ -53,7 +53,7 @@ use crate::{
         pmm::PPN,
         vmm::{self, Memmap},
     },
-    process::files::FDTable,
+    process::{files::FDTable, uapi::wait::w_if_signalled},
 };
 
 pub mod elf;
@@ -126,7 +126,7 @@ impl ProcStatus {
         if flags & WCONTINUED != 0 && w_if_continued(self.wait_status) {
             return true;
         }
-        if flags & WEXITED != 0 && w_if_exited(self.wait_status) {
+        if flags & WEXITED != 0 && (w_if_exited(self.wait_status) || w_if_signalled(self.wait_status)) {
             return true;
         }
         false
@@ -549,7 +549,7 @@ impl Process {
             // Blocking wait.
             loop {
                 self.waitlist.block(timestamp_us_t::MAX, || {
-                    self.status.lock_shared().wait_matches(flags)
+                    !self.status.lock_shared().wait_matches(flags)
                 })?;
                 let mut status = self.status.lock();
                 if status.wait_matches(flags) {
@@ -574,7 +574,7 @@ impl Process {
     }
 
     /// Wait for any of this process' children to change state.
-    pub fn wait_children(&self, flags: c_int) -> EResult<c_int> {
+    pub fn wait_children(&self, flags: c_int) -> EResult<(PID, c_int)> {
         if flags & WNOHANG == 0 {
             // Blocking wait.
             let mut res = None;
@@ -586,7 +586,7 @@ impl Process {
                             if flags & WNOWAIT != 0 {
                                 status.flags &= !pflags::WAITABLE;
                             }
-                            res = Some(status.wait_status);
+                            res = Some((child.pid, status.wait_status));
                             return false;
                         }
                     }
@@ -602,7 +602,7 @@ impl Process {
                     if flags & WNOWAIT != 0 {
                         status.flags &= !pflags::WAITABLE;
                     }
-                    return Ok(status.wait_status);
+                    return Ok((child.pid, status.wait_status));
                 }
             }
             Err(Errno::EAGAIN)

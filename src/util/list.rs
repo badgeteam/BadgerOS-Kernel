@@ -58,6 +58,7 @@ impl HasListNode<InvasiveListNode> for InvasiveListNode {
 }
 
 /// Linked-list node for the [`InvasiveList`].
+#[repr(C)]
 pub struct InvasiveListNode {
     prev: *mut InvasiveListNode,
     next: *mut InvasiveListNode,
@@ -98,6 +99,7 @@ impl<'a, T: HasListNode<T>> Iterator for InvasiveListIter<'a, T> {
 }
 
 /// Invasive linked list.
+#[repr(C)]
 pub struct InvasiveList<T: HasListNode<T>> {
     first: *mut InvasiveListNode,
     last: *mut InvasiveListNode,

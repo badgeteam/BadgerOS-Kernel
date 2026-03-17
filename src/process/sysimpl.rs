@@ -179,14 +179,14 @@ pub unsafe extern "C" fn syscall_proc_waitpid(
     pid: PID,
     wstatus: *mut c_int,
     options: c_int,
-) -> c_int {
+) -> pid_t {
     let proc = current().unwrap();
-    Errno::extract(
+    Errno::extract_u64(
         try {
-            let mut wstatus = UserPtr::new_mut(wstatus)?;
+            let wstatus = UserPtr::new_nullable_mut(wstatus)?;
             let res = if pid < -1 {
                 Err(Errno::ENOSYS)?;
-                0 // TODO: process groups
+                (pid, 0) // TODO: process groups
             } else if pid > 0 {
                 // Find target process.
                 let child = PROCESSES
@@ -208,11 +208,14 @@ pub unsafe extern "C" fn syscall_proc_waitpid(
                     Err(Errno::ECHILD)?;
                 }
 
-                child.wait(options)?
+                (pid, child.wait(options)?)
             } else {
                 proc.wait_children(options)?
             };
-            wstatus.write(res)?;
+            if let Some(mut wstatus) = wstatus {
+                wstatus.write(res.1)?;
+            }
+            res.0 as u64
         },
     )
 }

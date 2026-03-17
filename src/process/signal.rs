@@ -11,7 +11,7 @@ use crate::{
         usermode::enter_signal,
     },
     kernel::sched::Thread,
-    process,
+    process::{self, uapi::wait::w_signalled},
 };
 
 use super::uapi::{signal::*, sigset::sigset_t};
@@ -170,7 +170,7 @@ pub fn run_handler(siginfo: siginfo_t, regs: &mut GpRegfile, sregs: &mut SpRegfi
 pub fn signal_die(signal: i32) {
     let proc = super::current().unwrap();
     // W_SIGNALLED
-    let status = (signal << 8) | 0x40;
+    let status = w_signalled(signal);
     proc.die(status);
     unsafe { (&*Thread::current()).die() };
 }

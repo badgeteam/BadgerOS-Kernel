@@ -47,6 +47,7 @@ pub const SYSCALL_TIME_GETTIME: usize = 32;
 pub const SYSCALL_THREAD_KILL: usize = 33;
 pub const SYSCALL_PROC_KILL: usize = 34;
 pub const SYSCALL_PROC_GETID: usize = 35;
+pub const SYSCALL_FS_SYMLINK: usize = 36;
 
 pub fn dispatch(regs: &mut GpRegfile, sregs: &mut SpRegfile, args: [usize; 6], sysno: usize) {
     unsafe {
@@ -144,6 +145,11 @@ pub fn dispatch(regs: &mut GpRegfile, sregs: &mut SpRegfile, args: [usize; 6], s
             }
             SYSCALL_PROC_KILL => {
                 regs.set_retval(syscall_proc_kill(args[0] as _, args[1] as _) as _)
+            }
+            SYSCALL_FS_SYMLINK => {
+                regs.set_retval(syscall_fs_symlink(args[0] as _,
+                args[1] as _,
+                args[2] as _,) as _);
             }
             x => {
                 logkf!(LogLevel::Warning, "Unimplemented syscall {}", x);
