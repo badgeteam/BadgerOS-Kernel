@@ -114,6 +114,9 @@ pub unsafe extern "C" fn riscv_exception_handler(regs: &mut GpRegfile, sregs: &m
                     // Request to stop thread; exit usermode so the thread can then stop.
                     exit_usermode(regs, sregs);
                     return;
+                } else if let Some(info) = thread.get_async_sig(false) {
+                    // Handle asynchronous signals.
+                    process::signal::run_handler(info, regs, sregs);
                 }
             }
 

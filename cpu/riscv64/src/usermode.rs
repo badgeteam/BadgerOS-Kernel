@@ -80,6 +80,7 @@ pub unsafe fn enter_signal(
     let mut ptr = UserPtr::new_mut(sp as *mut SignalFrame)?;
     ptr.write(frame)?;
 
+    regs.sp = sp;
     regs.pc = handler;
     regs.ra = returner;
     regs.a0 = info.si_signo as _;

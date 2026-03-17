@@ -24,7 +24,7 @@ use crate::{
 };
 
 use super::{
-    Cmdline, PID, PROCESSES, Process, current,
+    Cmdline, PID, PROCESSES, current,
     uapi::{
         self,
         inttypes::pid_t,
