@@ -2,7 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::{arch::asm, hint::unreachable_unchecked, ptr::null_mut};
+use core::{hint::unreachable_unchecked, ptr::null_mut};
 
 use crate::{
     bindings::{device::HasBaseDevice, raw::irqno_t},

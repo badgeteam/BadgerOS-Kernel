@@ -2,7 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::{arch::asm, fmt::Sign, mem::offset_of, ptr::null_mut};
+use core::{arch::asm, mem::offset_of};
 
 use crate::{
     cpu::{
@@ -11,10 +11,7 @@ use crate::{
     },
     kernel::{cpulocal::CpuLocal, sched::Thread},
     process::{
-        uapi::{
-            signal::{siginfo_t, ucontext_t},
-            sigset::sigset_t,
-        },
+        uapi::signal::{siginfo_t, ucontext_t},
         usercopy::{AccessResult, UserCopyable, UserPtr},
     },
 };

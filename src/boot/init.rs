@@ -2,7 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::{arch::asm, ffi::CStr};
+use core::ffi::CStr;
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
