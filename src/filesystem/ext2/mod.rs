@@ -1408,14 +1408,15 @@ impl E2Fs {
                         self.dirty_bgdt_ents.unintr_lock().insert(group_hint);
 
                         // Return the newly allocated inode number.
-                        let ino = bitpos
-                            + i as u32 * usize::BITS
+                        let local_ino = bitpos
+                            + i as u32 * usize::BITS;
+                        let ino = local_ino
                             + group_hint * self.inodes_per_group
                             + 1;
                         return Ok((
                             NonZeroU32::new(ino).unwrap(),
                             ((guard.inode_table as u64) << self.block_size_exp)
-                                + (ino - 1) as u64 * self.inode_size as u64,
+                                + local_ino as u64 * self.inode_size as u64,
                         ));
                     }
                 }
