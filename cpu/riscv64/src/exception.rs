@@ -104,6 +104,19 @@ pub unsafe extern "C" fn riscv_exception_handler(regs: &mut GpRegfile, sregs: &m
         riscv_exception_handler_impl(regs, sregs);
 
         if let Some(thread) = (*cpulocal).thread.as_deref() {
+            if !sregs.is_kernel_mode()
+                && let Some(proc) = thread.process.as_ref()
+            {
+                // Block until SIGCONT or the process dies.
+                proc.block_if_paused();
+                // The process could have been killed while stopped, check for it again.
+                if thread.is_stopping() {
+                    // Request to stop thread; exit usermode so the thread can then stop.
+                    exit_usermode(regs, sregs);
+                    return;
+                }
+            }
+
             thread.runtime().fstate.load_state(sregs);
             thread.runtime().irq_stack = old_irq_stack;
         }

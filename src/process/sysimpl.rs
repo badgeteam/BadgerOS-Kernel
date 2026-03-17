@@ -7,7 +7,7 @@ use core::{
     ptr::null,
 };
 
-use alloc::{ffi::CString, vec::Vec};
+use alloc::{ffi::CString, sync::Arc, vec::Vec};
 
 use crate::{
     badgelib::time::Timespec,
@@ -60,7 +60,7 @@ pub unsafe extern "C" fn syscall_proc_exit(code: c_int) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn syscall_proc_fork(regs: &GpRegfile) -> pid_t {
     let proc = current().unwrap();
-    Errno::extract_i32(try { proc.fork(regs)?.pid })
+    Errno::extract_i64(try { proc.fork(regs)?.pid })
 }
 
 /// Execute the program at `path`, replacing the calling program's code and data in the process.
@@ -180,7 +180,41 @@ pub unsafe extern "C" fn syscall_proc_waitpid(
     wstatus: *mut c_int,
     options: c_int,
 ) -> c_int {
-    todo!()
+    let proc = current().unwrap();
+    Errno::extract(
+        try {
+            let mut wstatus = UserPtr::new_mut(wstatus)?;
+            let res = if pid < -1 {
+                Err(Errno::ENOSYS)?;
+                0 // TODO: process groups
+            } else if pid > 0 {
+                // Find target process.
+                let child = PROCESSES
+                    .lock_shared()?
+                    .get(&pid)
+                    .cloned()
+                    .ok_or(Errno::ECHILD)?;
+
+                // Enforce that it is a child.
+                if !Arc::ptr_eq(
+                    &proc,
+                    &child
+                        .pcr
+                        .lock_shared()?
+                        .parent
+                        .upgrade()
+                        .ok_or(Errno::ECHILD)?,
+                ) {
+                    Err(Errno::ECHILD)?;
+                }
+
+                child.wait(options)?
+            } else {
+                proc.wait_children(options)?
+            };
+            wstatus.write(res)?;
+        },
+    )
 }
 
 /// Get the value of some clock.
@@ -199,6 +233,9 @@ pub unsafe extern "C" fn syscall_time_gettime(_clkid: c_int, timespec: *mut time
 pub unsafe extern "C" fn syscall_proc_kill(pid: pid_t, signum: c_int) -> c_int {
     Errno::extract(
         try {
+            if signum > 1023 {
+                Err(Errno::EPERM)?;
+            }
             if pid < 1 {
                 Err(Errno::ESRCH)?;
             }
@@ -218,24 +255,23 @@ pub unsafe extern "C" fn syscall_proc_kill(pid: pid_t, signum: c_int) -> c_int {
 }
 
 /// Get an ID as specified by _GETID_* macros.
-pub unsafe extern "C" fn syscall_proc_getid(getid_type: c_int) -> u64 {
-    todo!()
-    // use uapi::getid::*;
-    // match getid_type {
-    //     GETID_PID => current().unwrap().pid,
-    //     GETID_PPID => current()
-    //         .unwrap()
-    //         .pcr
-    //         .unintr_lock_shared()
-    //         .parent
-    //         .upgrade()
-    //         .map(|x| x.pid)
-    //         .unwrap_or(0),
-    //     GETID_TID => 0,
-    //     GETID_UID => 0,
-    //     GETID_EUID => 0,
-    //     GETID_GID => 0,
-    //     GETID_EGID => 0,
-    //     _ => 0,
-    // }
+pub unsafe extern "C" fn syscall_proc_getid(getid_type: c_int) -> i64 {
+    use uapi::getid::*;
+    match getid_type {
+        GETID_PID => current().unwrap().pid,
+        GETID_PPID => current()
+            .unwrap()
+            .pcr
+            .unintr_lock_shared()
+            .parent
+            .upgrade()
+            .map(|x| x.pid)
+            .unwrap_or(0),
+        GETID_TID => 0,
+        GETID_UID => 0,
+        GETID_EUID => 0,
+        GETID_GID => 0,
+        GETID_EGID => 0,
+        _ => 0,
+    }
 }

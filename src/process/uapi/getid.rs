@@ -15,6 +15,6 @@ pub const GETID_UID: c_int = 3;
 /// Effective user ID of calling process.
 pub const GETID_EUID: c_int = 4;
 /// Group ID of calling process.
-pub const GETID_GID: c_int = 3;
+pub const GETID_GID: c_int = 5;
 /// Effective group ID of calling process.
-pub const GETID_EGID: c_int = 4;
+pub const GETID_EGID: c_int = 6;

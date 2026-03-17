@@ -132,10 +132,8 @@ pub fn run_handler(siginfo: siginfo_t, regs: &mut GpRegfile, sregs: &mut SpRegfi
             | SIGXFSZ => signal_die(siginfo.si_signo), //TODO: With core dump.
             SIGALRM | SIGHUP | SIGINT | SIGPIPE | SIGPROF | SIGPWR | SIGSTKFLT | SIGTERM
             | SIGUSR1 | SIGUSR2 | SIGVTALRM => signal_die(siginfo.si_signo),
-            SIGSTOP | SIGTTIN | SIGTTOU => {
-                logkf!(LogLevel::Warning, "TODO: Signals stopping the process")
-            }
-            SIGCONT => logkf!(LogLevel::Warning, "TODO: Signals continuing the process"),
+            SIGSTOP | SIGTTIN | SIGTTOU => proc.pause(siginfo.si_signo),
+            SIGCONT => proc.resume(siginfo.si_signo),
             _ => (), // Other signals ignore by default.
         }
         return;

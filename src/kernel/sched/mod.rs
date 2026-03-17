@@ -332,6 +332,7 @@ impl Thread {
 
     /// Send a signal to this thread.
     pub fn send_async_sig(&self, info: siginfo_t) {
+        debug_assert!(info.si_signo < 1024);
         self.sigqueue.lock().push_back(info);
         // Causes interruptable locks to return Err(EINTR).
         self.flags.fetch_and(!tflags::BLOCKED, Ordering::Relaxed);

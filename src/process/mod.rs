@@ -6,7 +6,7 @@ use core::{
     cell::UnsafeCell,
     ffi::c_int,
     ptr::{NonNull, addr_eq},
-    sync::atomic::{AtomicI32, AtomicI64, AtomicU32, AtomicU64, Ordering},
+    sync::atomic::{AtomicI64, AtomicU32, Ordering},
     usize,
 };
 
@@ -20,7 +20,14 @@ use alloc::{
 use elf::AuxvEntry;
 use files::FileDesc;
 use signal::Sigtab;
-use uapi::signal::siginfo_t;
+use uapi::{
+    inttypes::pid_t,
+    signal::siginfo_t,
+    wait::{
+        WCONTINUED, WEXITED, WNOHANG, WNOWAIT, WSTOPPED, WUNTRACED, w_if_continued, w_if_exited,
+        w_if_stopped, w_stopped,
+    },
+};
 use usercopy::{AccessResult, UserSlice, UserSliceMut};
 
 use crate::{
@@ -28,6 +35,7 @@ use crate::{
         device::class::char::CharDevice,
         error::{EResult, Errno},
         log::LogLevel,
+        raw::timestamp_us_t,
     },
     config::{PAGE_SIZE, STACK_SIZE},
     cpu::{self, mmu, thread::GpRegfile, usermode::call_usermode},
@@ -37,6 +45,7 @@ use crate::{
         sched::Thread,
         sync::{
             mutex::{Mutex, SharedMutexGuard},
+            spinlock::Spinlock,
             waitlist::Waitlist,
         },
     },
@@ -47,7 +56,6 @@ use crate::{
     process::files::FDTable,
 };
 
-mod c_api;
 pub mod elf;
 pub mod files;
 pub mod signal;
@@ -56,16 +64,21 @@ pub mod sysimpl;
 pub mod uapi;
 pub mod usercopy;
 
-pub mod flags {
-    pub const STOPPING: u32 = 1 << 0;
+pub mod pflags {
+    /// The process is calling [`super::Process::exec`] or has called [`super::Process::die`].
+    pub const DESTRUCTING: u32 = 1 << 0;
+    /// The process can waited; a [`super::Process::wait`] will return success immediately.
+    pub const WAITABLE: u32 = 1 << 1;
+    /// The process is currently paused; any return to usermode will block until this flag clears.
+    pub const PAUSED: u32 = 1 << 2;
 }
 
 /// Unique process identifier.
-pub type PID = c_int;
+pub type PID = pid_t;
 
 /// Count of next PID that will be used.
 /// TODO: We can actually make this 64-bit but I'll do that later.
-pub static PID_COUNTER: AtomicI32 = AtomicI32::new(1);
+pub static PID_COUNTER: AtomicI64 = AtomicI64::new(1);
 
 /// Map of all processes by PID.
 static PROCESSES: Mutex<BTreeMap<PID, Arc<Process>>> = Mutex::new(BTreeMap::new());
@@ -89,17 +102,41 @@ pub struct Cmdline {
 }
 
 /// Process threads list.
+#[derive(Default)]
 struct ProcThreads {
     threads: BTreeMap<i64, Arc<Thread>>,
     detached: Vec<Weak<Thread>>,
 }
 
+/// Process status and flags.
+#[derive(Default)]
+struct ProcStatus {
+    flags: u32,
+    wait_status: c_int,
+}
+
+impl ProcStatus {
+    const fn wait_matches(&self, flags: c_int) -> bool {
+        if self.flags & pflags::WAITABLE == 0 {
+            return false;
+        }
+        if flags & (WSTOPPED | WUNTRACED) != 0 && w_if_stopped(self.wait_status) {
+            return true;
+        }
+        if flags & WCONTINUED != 0 && w_if_continued(self.wait_status) {
+            return true;
+        }
+        if flags & WEXITED != 0 && w_if_exited(self.wait_status) {
+            return true;
+        }
+        false
+    }
+}
+
 /// The process descriptor structure.
 pub struct Process {
     pub pid: PID,
-    flags: AtomicU32,
-    wait_status: AtomicI32,
-    wait_generation: AtomicU64,
+    status: Spinlock<ProcStatus>,
     pcr: Mutex<PCR>,
     cmdline: Mutex<Cmdline>,
     memmap: UnsafeCell<Memmap>,
@@ -111,6 +148,8 @@ pub struct Process {
     pub sigqueue: Mutex<LinkedList<siginfo_t>>,
     /// Threads waiting on a status change for this process.
     waitlist: Waitlist,
+    /// Threads waiting on a status change for any child process.
+    child_waitlist: Waitlist,
 }
 impl PartialEq for Process {
     fn eq(&self, other: &Self) -> bool {
@@ -210,10 +249,9 @@ impl Process {
                 threads: BTreeMap::new(),
                 detached: Vec::new(),
             }),
-            flags: AtomicU32::new(0),
-            wait_status: AtomicI32::new(0),
-            wait_generation: AtomicU64::new(0),
+            status: Spinlock::new(ProcStatus::default()),
             waitlist: Waitlist::new(),
+            child_waitlist: Waitlist::new(),
             sigtab: Mutex::new(Sigtab::default()),
             sigqueue: Mutex::new(LinkedList::new()),
         };
@@ -254,10 +292,9 @@ impl Process {
                 parent: Arc::downgrade(&self),
                 children: BTreeMap::new(),
             }),
-            flags: AtomicU32::new(0),
-            wait_status: AtomicI32::new(0),
-            wait_generation: AtomicU64::new(0),
+            status: Spinlock::new(ProcStatus::default()),
             waitlist: Waitlist::new(),
+            child_waitlist: Waitlist::new(),
             cmdline: Mutex::new(self.cmdline.lock_shared()?.clone()),
             memmap: UnsafeCell::new(self.memmap().fork()?),
             sigtab: Mutex::new(*self.sigtab.lock_shared()?),
@@ -305,16 +342,19 @@ impl Process {
         let file = filesystem::open(None, cmdline.binary.as_bytes(), oflags::READ_ONLY)?;
         let entry = load_executable(&new_mm, &mut cmdline, file.as_ref(), 0)?;
 
-        if self.flags.fetch_or(flags::STOPPING, Ordering::Relaxed) != 0 {
+        let mut status = self.status.lock();
+        if status.flags & pflags::DESTRUCTING != 0 {
             // Some other thread either `exit()`'ed or `exec()`'ed first.
             return Ok(());
         }
+        status.flags |= pflags::DESTRUCTING;
+        drop(status);
 
         // Commit to replacing the process.
         // TODO: From this point on, errors are to kill the process instead of returning an error code.
         self.join_all_threads();
         self.files.unintr_lock().close_cloexec();
-        self.flags.store(0, Ordering::Relaxed);
+        self.status.lock().flags = 0;
         self.tid_counter.store(0, Ordering::Relaxed);
         *self.sigtab.unintr_lock() = Sigtab::default();
         *self.cmdline.unintr_lock() = cmdline;
@@ -384,13 +424,19 @@ impl Process {
     }
 
     /// Cause this process to exit.
-    pub fn die(&self, status: i32) {
-        self.wait_status.store(status, Ordering::Relaxed);
-        self.wait_generation.fetch_add(1, Ordering::Relaxed);
-        if self.flags.fetch_or(flags::STOPPING, Ordering::Relaxed) & flags::STOPPING != 0 {
+    pub fn die(&self, wait_status: i32) {
+        let mut status = self.status.lock();
+        if status.flags & pflags::DESTRUCTING != 0 {
+            // Some other thread already called `die` or `exec`.
             return;
         }
+        status.flags |= pflags::DESTRUCTING | pflags::WAITABLE;
+        status.wait_status = wait_status;
+
         self.waitlist.notify_all();
+        if let Some(parent) = self.pcr.unintr_lock_shared().parent.upgrade() {
+            parent.child_waitlist.notify_all();
+        }
 
         // TODO: Spawning a full thread for this is somewhat inefficient.
         let arc_self = PROCESSES
@@ -410,12 +456,12 @@ impl Process {
 
     /// Send a signal to an arbitrary thread in this process.
     pub fn send_async_sig(&self, info: siginfo_t) {
+        debug_assert!(info.si_signo < 1024);
         self.sigqueue.unintr_lock().push_back(info);
     }
 
     /// Join all currently running threads.
     fn join_all_threads(&self) {
-        debug_assert!(self.flags.load(Ordering::Relaxed) & flags::STOPPING != 0);
         let mut threads = self.threads.unintr_lock();
         let thread_self = Thread::current();
 
@@ -495,6 +541,119 @@ impl Process {
         }
         self.threads.unintr_lock().threads.insert(tid, thread?);
         Ok(tid)
+    }
+
+    /// Wait for this process to change state.
+    pub fn wait(&self, flags: c_int) -> EResult<c_int> {
+        if flags & WNOHANG == 0 {
+            // Blocking wait.
+            loop {
+                self.waitlist.block(timestamp_us_t::MAX, || {
+                    self.status.lock_shared().wait_matches(flags)
+                })?;
+                let mut status = self.status.lock();
+                if status.wait_matches(flags) {
+                    if flags & WNOWAIT != 0 {
+                        status.flags &= !pflags::WAITABLE;
+                    }
+                    return Ok(status.wait_status);
+                }
+            }
+        } else {
+            // Non-blocking wait.
+            let mut status = self.status.lock();
+            if status.wait_matches(flags) {
+                if flags & WNOWAIT != 0 {
+                    status.flags &= !pflags::WAITABLE;
+                }
+                Ok(status.wait_status)
+            } else {
+                Err(Errno::EAGAIN)
+            }
+        }
+    }
+
+    /// Wait for any of this process' children to change state.
+    pub fn wait_children(&self, flags: c_int) -> EResult<c_int> {
+        if flags & WNOHANG == 0 {
+            // Blocking wait.
+            let mut res = None;
+            while res.is_none() {
+                self.child_waitlist.block(timestamp_us_t::MAX, || {
+                    for child in self.pcr.unintr_lock_shared().children.values() {
+                        let mut status = child.status.lock();
+                        if status.wait_matches(flags) {
+                            if flags & WNOWAIT != 0 {
+                                status.flags &= !pflags::WAITABLE;
+                            }
+                            res = Some(status.wait_status);
+                            return false;
+                        }
+                    }
+                    true
+                })?;
+            }
+            Ok(res.unwrap())
+        } else {
+            // Non-blocking wait.
+            for child in self.pcr.unintr_lock_shared().children.values() {
+                let mut status = child.status.lock();
+                if status.wait_matches(flags) {
+                    if flags & WNOWAIT != 0 {
+                        status.flags &= !pflags::WAITABLE;
+                    }
+                    return Ok(status.wait_status);
+                }
+            }
+            Err(Errno::EAGAIN)
+        }
+    }
+
+    /// Pause as done by [`SIGSTOP`].
+    fn pause(&self, sig: i32) {
+        let mut status = self.status.lock();
+        if status.flags & pflags::DESTRUCTING != 0 {
+            // Don't bother pausing a process being destructed.
+            return;
+        }
+        status.flags |= pflags::PAUSED | pflags::WAITABLE;
+        status.wait_status = w_stopped(sig);
+
+        self.waitlist.notify_all();
+        if let Some(parent) = self.pcr.unintr_lock_shared().parent.upgrade() {
+            parent.child_waitlist.notify_all();
+        }
+    }
+
+    /// Resume as done by [`SIGCONT`].
+    fn resume(&self, sig: i32) {
+        let mut status = self.status.lock();
+        if status.flags & pflags::DESTRUCTING != 0 {
+            // Don't bother resuming a process being destructed.
+            return;
+        }
+        status.flags |= pflags::WAITABLE;
+        status.flags &= !pflags::PAUSED;
+        status.wait_status = w_stopped(sig);
+
+        self.waitlist.notify_all();
+        if let Some(parent) = self.pcr.unintr_lock_shared().parent.upgrade() {
+            parent.child_waitlist.notify_all();
+        }
+    }
+
+    /// Whether this process is paused but not dead.
+    pub fn is_paused(&self) -> bool {
+        let status = self.status.lock();
+        status.flags & (pflags::PAUSED | pflags::DESTRUCTING) == pflags::PAUSED
+    }
+
+    /// Wait until this process is resumes.
+    pub fn block_if_paused(&self) {
+        while self.is_paused() {
+            self.waitlist
+                .unintr_block(timestamp_us_t::MAX, || self.is_paused())
+        }
     }
 }
 
