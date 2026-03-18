@@ -31,7 +31,7 @@ use crate::{
 use spec::*;
 
 use super::{
-    Dirent, FSDRIVERS, NodeType, Stat,
+    Dirent, FSDRIVERS, NodeType, Stat, UnlinkMode,
     media::Media,
     sysimpl::DentBuffer,
     vfs::{
@@ -869,7 +869,7 @@ impl VNodeOps for E2VNode {
         &mut self,
         arc_self: &Arc<VNode>,
         name: &[u8],
-        is_rmdir: bool,
+        mode: UnlinkMode,
         unlinked_vnode: Option<Arc<VNode>>,
     ) -> EResult<()> {
         let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
@@ -893,11 +893,12 @@ impl VNodeOps for E2VNode {
             .downcast_mut::<E2VNode>()
             .unwrap();
 
-        if is_rmdir {
-            // Unlinked directories must be empty.
-            if unlinked_ops.type_ != NodeType::Directory {
-                return Err(Errno::ENOTDIR);
+        let is_dir = unlinked_ops.type_ == NodeType::Directory;
+        if is_dir {
+            if mode == UnlinkMode::FileOnly {
+                return Err(Errno::EISDIR);
             }
+            // Unlinked directories must be empty.
             unlinked_ops.iter_dirents(&arc_self.vfs, &mut |_dent, _off, name| {
                 if *name == *b"." || *name == *b".." {
                     Ok(true)
@@ -909,19 +910,13 @@ impl VNodeOps for E2VNode {
             // Remove `.` and `..` because `unlink_impl` doesn't do this automatically.
             unlinked_ops.unlink_impl(&arc_self.vfs, b".", None)?;
             unlinked_ops.unlink_impl(&arc_self.vfs, b"..", Some(self))?;
-        } else {
-            // Must not be a directory.
-            if unlinked_ops.type_ == NodeType::Directory {
-                return Err(Errno::EISDIR);
-            }
+            debug_assert!(unlinked_ops.inode.unintr_lock_shared().nlink == 1);
+        } else if mode == UnlinkMode::DirOnly {
+            return Err(Errno::ENOTDIR);
         }
 
         // Inode is now ready to be unlinked.
         self.unlink_impl(&arc_self.vfs, name, Some(unlinked_ops))?;
-        debug_assert!(
-            unlinked_ops.inode.unintr_lock_shared().nlink == 0
-                || unlinked_ops.type_ != NodeType::Directory
-        );
 
         // If not currently open and nlink is 0, then delete the inode now.
         if unlinked_ops.inode.lock_shared()?.nlink == 0 && unlinked_vnode.is_none() {
@@ -1408,11 +1403,8 @@ impl E2Fs {
                         self.dirty_bgdt_ents.unintr_lock().insert(group_hint);
 
                         // Return the newly allocated inode number.
-                        let local_ino = bitpos
-                            + i as u32 * usize::BITS;
-                        let ino = local_ino
-                            + group_hint * self.inodes_per_group
-                            + 1;
+                        let local_ino = bitpos + i as u32 * usize::BITS;
+                        let ino = local_ino + group_hint * self.inodes_per_group + 1;
                         return Ok((
                             NonZeroU32::new(ino).unwrap(),
                             ((guard.inode_table as u64) << self.block_size_exp)

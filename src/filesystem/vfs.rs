@@ -7,6 +7,7 @@ use core::{
     cell::UnsafeCell,
     hint::unlikely,
     ops::Range,
+    ptr,
     sync::atomic::{AtomicU32, AtomicU64, Ordering},
 };
 
@@ -19,7 +20,8 @@ use alloc::{
 use mflags::MFlags;
 
 use super::{
-    Dirent, File, MakeFileSpec, NodeType, SeekMode, Stat, media::Media, sysimpl::DentBuffer,
+    Dirent, File, MakeFileSpec, NodeType, SeekMode, Stat, UnlinkMode, media::Media,
+    sysimpl::DentBuffer,
 };
 use crate::{
     LogLevel,
@@ -334,7 +336,7 @@ pub trait VNodeOps: Any {
         &mut self,
         arc_self: &Arc<VNode>,
         name: &[u8],
-        is_rmdir: bool,
+        mode: UnlinkMode,
         unlinked_vnode: Option<Arc<VNode>>,
     ) -> EResult<()>;
     /// Link an existing inode to this directory.
@@ -592,6 +594,24 @@ impl DentCacheDir {
         children: BTreeMap::new(),
         mounted: None,
     };
+
+    /// Check just the directory cache for this name, which must be the same entry as specified.
+    /// This is used to check for race condition; raises [`Errno::ETIMEDOUT`] if the entry is not present.
+    pub fn check_for_entry(&self, what: &DentCache) -> EResult<()> {
+        if !ptr::addr_eq(
+            self.children
+                .get(&what.dirent.name)
+                .ok_or(Errno::ETIMEDOUT)? // This would be a race condition; ETIMEDOUT here causes a retry.
+                .upgrade()
+                .ok_or(Errno::ETIMEDOUT)? // Same.
+                .as_ref(),
+            what,
+        ) {
+            // Also a race condition.
+            return Err(Errno::ETIMEDOUT);
+        }
+        Ok(())
+    }
 }
 
 /// Possible types of dirent cache entry.
@@ -611,6 +631,13 @@ impl DentCacheType {
         match self {
             Self::Directory(x) => Some(x),
             _ => None,
+        }
+    }
+
+    pub const fn is_negative(&self) -> bool {
+        match self {
+            Self::Negative => true,
+            _ => false,
         }
     }
 }

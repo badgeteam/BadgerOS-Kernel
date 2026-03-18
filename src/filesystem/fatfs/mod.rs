@@ -23,7 +23,7 @@ use crate::{
 };
 
 use super::{
-    FSDRIVERS, MakeFileSpec, NodeType, Stat,
+    FSDRIVERS, MakeFileSpec, NodeType, Stat, UnlinkMode,
     media::Media,
     vfs::{VNode, VNodeOps, Vfs, VfsDriver, VfsOps, mflags::MFlags},
 };
@@ -717,7 +717,7 @@ impl VNodeOps for FatVNode {
         &mut self,
         arc_self: &Arc<VNode>,
         name: &[u8],
-        is_rmdir: bool,
+        mode: UnlinkMode,
         unlinked_vnode: Option<Arc<VNode>>,
     ) -> EResult<()> {
         let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
@@ -737,10 +737,10 @@ impl VNodeOps for FatVNode {
         };
 
         // Determine whether removal is allowed.
-        if is_rmdir {
-            // Must be a directory.
-            if fat_ent.attr & attr::DIRECTORY == 0 {
-                return Err(Errno::ENOTDIR);
+        let is_dir = fat_ent.attr & attr::DIRECTORY != 0;
+        if is_dir {
+            if mode == UnlinkMode::FileOnly {
+                return Err(Errno::EISDIR);
             }
 
             // The directory must be empty.
@@ -759,11 +759,8 @@ impl VNodeOps for FatVNode {
                     return Err(Errno::ENOTEMPTY);
                 }
             }
-        } else {
-            // Must be a regular file.
-            if fat_ent.attr & attr::DIRECTORY != 0 {
-                return Err(Errno::EISDIR);
-            }
+        } else if mode == UnlinkMode::DirOnly {
+            return Err(Errno::ENOTDIR);
         }
 
         if let Some(unlinked_vnode) = &unlinked_vnode {
@@ -785,7 +782,7 @@ impl VNodeOps for FatVNode {
             }
         }
 
-        if unlinked_vnode.is_none() || is_rmdir {
+        if unlinked_vnode.is_none() || is_dir {
             // If not open, mark the chain as free.
             if let Some(chain) = &chain {
                 fatfs.cluster_alloc.free_chain(chain);

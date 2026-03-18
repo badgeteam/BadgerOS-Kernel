@@ -56,7 +56,7 @@ pub mod sysimpl;
 pub mod vfs;
 
 #[repr(u32)]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 /// Seek modes to give to [`File::seek`].
 pub enum SeekMode {
     /// Set absolute position.
@@ -65,6 +65,18 @@ pub enum SeekMode {
     Cur = 1,
     /// Set relative to end of file.
     End = 2,
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+/// What operation to perform with [`vfs::VNodeOps::unlink`].
+pub enum UnlinkMode {
+    /// Fail if target is a directory.
+    FileOnly,
+    /// Fail if the target is not a directory.
+    DirOnly,
+    /// Both files and directories may be unlinked.
+    Any,
 }
 
 #[rustfmt::skip]
@@ -220,7 +232,7 @@ impl Into<stat> for Stat {
 }
 
 #[repr(u32)]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 /// Types of file recognised by [`Dirent`].
 pub enum NodeType {
     #[default]
@@ -429,6 +441,14 @@ pub mod linkflags {
     pub type LinkFlags = u32;
     /// Follow symlinks for old path on [`super::link`] and [`super::rename`].
     pub const FOLLOW_LINKS: u32 = 0x0000_0001;
+}
+
+#[rustfmt::skip]
+pub mod renameflags {
+    /// Exchange oldpath and newpath instead of replacing newpath.
+    pub const EXCHANGE: u32 = 1;
+    /// Fail if newpath already exists.
+    pub const NOREPLACE: u32 = 2;
 }
 
 /// The maximum number of symlinks followed.
@@ -984,9 +1004,16 @@ pub fn unlink(at: Option<&dyn File>, path: &[u8], is_rmdir: bool) -> EResult<()>
     if dir_guard.flags & vnflags::REMOVED != 0 {
         return Err(Errno::ENOENT);
     }
-    dir_guard
-        .ops
-        .unlink(&dir_vnode, &to_remove.dirent.name, is_rmdir, unlinked_vnode)?;
+    dir_guard.ops.unlink(
+        &dir_vnode,
+        &to_remove.dirent.name,
+        if is_rmdir {
+            UnlinkMode::DirOnly
+        } else {
+            UnlinkMode::FileOnly
+        },
+        unlinked_vnode,
+    )?;
 
     // Delete the dirent cache entry.
     guard.children.remove(&*to_remove.dirent.name);
@@ -1109,6 +1136,22 @@ pub fn rename(
     }
 }
 
+/// Assert a rename would not move a directory inside itself.
+fn rename_check_loops(old: &DentCache, mut new: &DentCache) -> EResult<()> {
+    loop {
+        if let Some(parent) = &new.parent {
+            new = parent.as_ref();
+        } else {
+            // Reached root without seeing `old`.
+            return Ok(());
+        }
+        if ptr::addr_eq(old, new) {
+            // Reached `old` from `new`; renaming would cause a loop here.
+            return Err(Errno::EINVAL);
+        }
+    }
+}
+
 /// Rename a file within the same filesystem.
 /// May time out on mutexes (to avoid deadlocks).
 fn rename_impl(
@@ -1116,7 +1159,7 @@ fn rename_impl(
     old_path: &[u8],
     new_at: Option<&dyn File>,
     new_path: &[u8],
-    flags: LinkFlags,
+    flags: u32,
 ) -> EResult<()> {
     // Find source and destination.
     let old_at = at_vnode(old_at)?;
@@ -1129,8 +1172,11 @@ fn rename_impl(
             .clone()
             .ok_or(Errno::ENOTDIR)?,
         old_path,
-        flags & linkflags::FOLLOW_LINKS != 0,
+        false,
     )?;
+    if old.type_.is_negative() {
+        return Err(Errno::ENOENT);
+    }
     let new = walk(
         new_at
             .mtx
@@ -1139,7 +1185,7 @@ fn rename_impl(
             .clone()
             .ok_or(Errno::ENOTDIR)?,
         new_path,
-        flags & linkflags::FOLLOW_LINKS != 0,
+        false,
     )?;
 
     // Get parent dirent caches.
@@ -1151,12 +1197,34 @@ fn rename_impl(
     let (new_guard, dirent) = if Arc::ptr_eq(&old_dir_cache, &new_dir_cache) {
         // Rename within directory.
         let mut old_dir_guard = old_dir_vnode.mtx.lock()?;
+
+        // Check for race condition where another thread might outdate the dentcache entry for `old`.
+        old_guard.check_for_entry(&old)?;
+
         if old_dir_guard.flags & vnflags::REMOVED != 0 {
             return Err(Errno::ENOENT);
         }
         if old_dir_cache.vfs.is_read_only() {
             return Err(Errno::EROFS);
         }
+
+        // Remove existing file.
+        if !new.type_.is_negative() {
+            if flags & renameflags::NOREPLACE != 0 {
+                return Err(Errno::EEXIST);
+            }
+            let new_vnode = new.vnode.lock_shared()?;
+            let unlinked_vnode: Option<_> = try { new_vnode.clone()?.upgrade()? };
+            old_dir_guard.ops.unlink(
+                &old_dir_vnode,
+                &new.dirent.name,
+                UnlinkMode::Any,
+                unlinked_vnode,
+            )?;
+        } else {
+            old_guard.check_for_entry(&new)?
+        }
+
         let dirent =
             old_dir_guard
                 .ops
@@ -1164,10 +1232,14 @@ fn rename_impl(
         (None, dirent)
     } else {
         // Rename across directories.
-        let guard = new_dir_cache.type_.as_dir().unwrap().timed_lock(10000)?;
+        let new_guard = new_dir_cache.type_.as_dir().unwrap().timed_lock(10000)?;
         let new_dir_vnode = new_dir_cache.open_vnode()?;
         let mut old_dir_guard = old_dir_vnode.mtx.lock()?;
         let mut new_dir_guard = new_dir_vnode.mtx.timed_lock(10000)?;
+
+        // Check for race condition where another thread might outdate the dentcache entry for `old`.
+        old_guard.check_for_entry(&old)?;
+
         if old_dir_guard.flags & vnflags::REMOVED != 0 {
             return Err(Errno::ENOENT);
         }
@@ -1180,6 +1252,25 @@ fn rename_impl(
         if old_dir_cache.vfs.is_read_only() {
             return Err(Errno::EROFS);
         }
+        rename_check_loops(&old_dir_cache, &new_dir_cache)?;
+
+        // Remove existing file.
+        if !new.type_.is_negative() {
+            if flags & renameflags::NOREPLACE != 0 {
+                return Err(Errno::EEXIST);
+            }
+            let new_vnode = new.vnode.lock_shared()?;
+            let unlinked_vnode: Option<_> = try { new_vnode.clone()?.upgrade()? };
+            old_dir_guard.ops.unlink(
+                &old_dir_vnode,
+                &new.dirent.name,
+                UnlinkMode::Any,
+                unlinked_vnode,
+            )?;
+        } else {
+            new_guard.check_for_entry(&new)?
+        }
+
         let dirent = old_dir_cache.vfs.ops.lock_shared()?.rename(
             &old_dir_cache.vfs,
             &old_dir_vnode,
@@ -1189,7 +1280,7 @@ fn rename_impl(
             &new.dirent.name,
             &mut *new_dir_guard,
         )?;
-        (Some(guard), dirent)
+        (Some(new_guard), dirent)
     };
 
     // Remove old cache entry.

@@ -29,7 +29,7 @@ use crate::{
 };
 
 use super::{
-    Dirent, FSDRIVERS, MakeFileSpec, NodeMode, NodeType, Stat,
+    Dirent, FSDRIVERS, MakeFileSpec, NodeMode, NodeType, Stat, UnlinkMode,
     media::Media,
     sysimpl::DentBuffer,
     vfs::{VNode, VNodeOps, Vfs, VfsDriver, VfsOps, mflags::MFlags},
@@ -320,7 +320,7 @@ impl VNodeOps for RamVNode {
         &mut self,
         arc_self: &Arc<VNode>,
         name: &[u8],
-        is_rmdir: bool,
+        mode: UnlinkMode,
         _unlinked_vnode: Option<Arc<VNode>>,
     ) -> EResult<()> {
         let ramfs = arc_self.vfs.get_ops_as::<RamFs>();
@@ -337,12 +337,12 @@ impl VNodeOps for RamVNode {
         let ino = unsafe { ino.as_ref_unchecked() };
 
         if let RamFsData::Directory(data) = &ino.data {
-            if !is_rmdir {
+            if mode == UnlinkMode::FileOnly {
                 return Err(Errno::EISDIR);
             } else if data.len() != 0 {
                 return Err(Errno::ENOTEMPTY);
             }
-        } else if is_rmdir {
+        } else if mode == UnlinkMode::DirOnly {
             return Err(Errno::ENOTDIR);
         }
 
