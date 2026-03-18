@@ -27,3 +27,5 @@ pub struct CpuFeatures {
     pub f64: bool,
     pub vec: bool,
 }
+
+pub const MACHINE_NAME: &'static str = "riscv64";

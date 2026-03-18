@@ -9,6 +9,7 @@ use crate::{
     kernel::sysimpl::*,
     mem::sysimpl::*,
     process::sysimpl::*,
+    sys::sysimpl::*,
 };
 
 pub const SYSCALL_THREAD_YIELD: usize = 0;
@@ -49,6 +50,8 @@ pub const SYSCALL_PROC_KILL: usize = 34;
 pub const SYSCALL_PROC_GETID: usize = 35;
 pub const SYSCALL_FS_SYMLINK: usize = 36;
 pub const SYSCALL_FS_DUP: usize = 37;
+pub const SYSCALL_THREAD_SIGMASK: usize = 38;
+pub const SYSCALL_SYS_UNAME: usize = 39;
 
 pub fn dispatch(regs: &mut GpRegfile, sregs: &mut SpRegfile, args: [usize; 6], sysno: usize) {
     unsafe {
@@ -154,6 +157,12 @@ pub fn dispatch(regs: &mut GpRegfile, sregs: &mut SpRegfile, args: [usize; 6], s
             SYSCALL_FS_DUP => {
                 regs.set_retval(syscall_fs_dup(args[0] as _, args[1] as _, args[2] as _) as _)
             }
+            SYSCALL_THREAD_SIGMASK => {
+                regs.set_retval(
+                    syscall_thread_sigmask(args[0] as _, args[1] as _, args[2] as _) as _,
+                )
+            }
+            SYSCALL_SYS_UNAME => regs.set_retval(syscall_sys_uname(args[0] as _) as _),
             x => {
                 logkf!(LogLevel::Warning, "Unimplemented syscall {}", x);
                 regs.set_retval(-(Errno::ENOSYS as i32) as usize);

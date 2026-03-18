@@ -11,5 +11,6 @@ pub mod sigset;
 pub mod sigval;
 pub mod stat;
 pub mod time;
+pub mod uname;
 pub mod vm_flags;
 pub mod wait;

@@ -67,3 +67,5 @@ pub type PhysCpuID = u16;
 /// Detectable features that BadgerOS can run without but needs to support for userspace to use it.
 #[derive(Default, Clone, Copy)]
 pub struct CpuFeatures {}
+
+pub const MACHINE_NAME: &'static str = "x86_64";

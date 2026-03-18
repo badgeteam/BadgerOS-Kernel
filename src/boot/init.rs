@@ -24,6 +24,7 @@ use crate::{
     ktest::{KTestWhen, ktests_runlevel},
     mem::vmm,
     process::Process,
+    sys::version,
 };
 
 unsafe extern "C" {
@@ -47,13 +48,8 @@ unsafe extern "C" fn basic_runtime_init() -> ! {
 
         // Announce the kernel is alive.
         logk_unlocked(LogLevel::Info, "==============================");
-        #[cfg(target_arch = "riscv32")]
-        let arch = "riscv32";
-        #[cfg(target_arch = "riscv64")]
-        let arch = "riscv64";
-        #[cfg(target_arch = "x86_64")]
-        let arch = "x86_64";
-        logkf_unlocked!(LogLevel::Info, "BadgerOS {} starting", arch);
+        logkf_unlocked!(LogLevel::Info, "BadgerOS {}", version::RELEASE);
+        logk_unlocked(LogLevel::Info, version::VERSION);
         logk_unlocked(LogLevel::Info, "==============================");
 
         // Set up memory management.

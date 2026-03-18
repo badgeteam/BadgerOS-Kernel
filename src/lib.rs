@@ -51,6 +51,7 @@ pub mod kernel;
 pub mod kparam;
 pub mod mem;
 pub mod process;
+pub mod sys;
 pub mod util;
 
 #[cfg(target_arch = "riscv64")]
