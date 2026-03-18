@@ -439,7 +439,7 @@ pub unsafe extern "C" fn syscall_fs_dup(fd: c_int, flags: u32, newfd: c_int) -> 
     )
 }
 
-// Succeed if `__fd` is a TTY, fail otherwise.
+/// Succeed if `__fd` is a TTY, fail otherwise.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn syscall_fs_isatty(fd: c_int) -> c_int {
     let proc = process::current().unwrap();
@@ -452,7 +452,7 @@ pub unsafe extern "C" fn syscall_fs_isatty(fd: c_int) -> c_int {
     )
 }
 
-// Get TTY attributes.
+/// Get TTY attributes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn syscall_fs_tcgetattr(fd: c_int, attr: *mut termios::termios) -> c_int {
     let proc = process::current().unwrap();
@@ -471,7 +471,7 @@ pub unsafe extern "C" fn syscall_fs_tcgetattr(fd: c_int, attr: *mut termios::ter
     )
 }
 
-// Set TTY attributes.
+/// Set TTY attributes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn syscall_fs_tcsetattr(fd: c_int, attr: *const termios::termios) -> c_int {
     let proc = process::current().unwrap();
@@ -485,6 +485,50 @@ pub unsafe extern "C" fn syscall_fs_tcsetattr(fd: c_int, attr: *const termios::t
                 .as_tty()
                 .ok_or(Errno::ENOTTY)?
                 .setattr(&buf)?;
+        },
+    )
+}
+
+/// Get the absolute path path of the current working directory.
+/// May be outdated if the directory was moved.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn syscall_fs_getcwd(buf: *mut u8, buflen: usize) -> c_int {
+    let proc = process::current().unwrap();
+    Errno::extract(
+        try {
+            let files = proc.files.lock_shared()?;
+            let mut slice = UserSlice::new_mut(buf, buflen)?;
+            let cwd: &[u8] = &files.cwd;
+            if slice.len() < cwd.len() + 1 {
+                Err(Errno::ERANGE)?;
+            }
+            slice.write_multiple(0, cwd)?;
+            slice.write(cwd.len(), 0)?;
+        },
+    )
+}
+
+/// Change the working directory.
+/// Since setting both `at` and `path` is non-standard, it is currently unsupported.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn syscall_fs_chdir(at: c_int, path: *const u8) -> c_int {
+    let proc = process::current().unwrap();
+
+    if at >= 0 && !path.is_null() {
+        return -(Errno::EINVAL as c_int);
+    }
+
+    Errno::extract(
+        try {
+            let mut files = proc.files.lock()?;
+            if at >= 0 {
+                let file = files.get_file(at)?;
+                files.fchdir(file)?;
+            } else {
+                let mut pathbuf = [0u8; PATH_MAX];
+                let pathlen = usercopy::read_user_cstr(path, &mut pathbuf)?;
+                files.chdir(&pathbuf[..pathlen])?;
+            }
         },
     )
 }

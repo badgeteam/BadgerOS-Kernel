@@ -55,6 +55,8 @@ pub const SYSCALL_SYS_UNAME: usize = 39;
 pub const SYSCALL_FS_ISATTY: usize = 40;
 pub const SYSCALL_FS_TCGETATTR: usize = 41;
 pub const SYSCALL_FS_TCSETATTR: usize = 42;
+pub const SYSCALL_FS_GETCWD: usize = 43;
+pub const SYSCALL_FS_CHDIR: usize = 44;
 
 pub fn dispatch(regs: &mut GpRegfile, sregs: &mut SpRegfile, args: [usize; 6], sysno: usize) {
     unsafe {
@@ -173,6 +175,10 @@ pub fn dispatch(regs: &mut GpRegfile, sregs: &mut SpRegfile, args: [usize; 6], s
             SYSCALL_FS_TCSETATTR => {
                 regs.set_retval(syscall_fs_tcsetattr(args[0] as _, args[1] as _) as _)
             }
+            SYSCALL_FS_GETCWD => {
+                regs.set_retval(syscall_fs_getcwd(args[0] as _, args[1] as _) as _)
+            }
+            SYSCALL_FS_CHDIR => regs.set_retval(syscall_fs_chdir(args[0] as _, args[1] as _) as _),
             x => {
                 logkf!(LogLevel::Warning, "Unimplemented syscall {}", x);
                 regs.set_retval(-(Errno::ENOSYS as i32) as usize);

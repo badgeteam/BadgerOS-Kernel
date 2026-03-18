@@ -240,7 +240,7 @@ impl Process {
                 children: BTreeMap::new(),
             }),
             memmap: UnsafeCell::new(Memmap::new_user()?),
-            files: Mutex::new(FDTable::default()),
+            files: Mutex::new(FDTable::new()),
             cmdline: Mutex::new(Cmdline {
                 binary: init_path.clone(),
                 argv: vec![init_path],

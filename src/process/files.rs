@@ -4,11 +4,11 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use alloc::{collections::btree_map::BTreeMap, sync::Arc};
+use alloc::{collections::btree_map::BTreeMap, sync::Arc, vec::Vec};
 
 use crate::{
     bindings::error::{EResult, Errno},
-    filesystem::{File, sysimpl::AT_FDCWD},
+    filesystem::{self, File, oflags, sysimpl::AT_FDCWD},
     process::FILE_MAX,
 };
 
@@ -27,9 +27,13 @@ impl Clone for FileDesc {
 }
 
 /// Process file descriptor table.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct FDTable {
     pub inner: BTreeMap<i32, FileDesc>,
+    /// Absolute path to working directory.
+    pub cwd: Vec<u8>,
+    /// File handle that points to working directory.
+    pub fd_cwd: Option<Arc<dyn File>>,
 }
 
 pub mod fdflags {
@@ -39,10 +43,41 @@ pub mod fdflags {
 }
 
 impl FDTable {
-    /// If `fileno` is [`AT_FDCWD`], return `Ok(None)`; otherwise, the same as [`Self::get_file`].
+    pub fn new() -> Self {
+        Self {
+            inner: Default::default(),
+            cwd: (*b"/").into(),
+            fd_cwd: None,
+        }
+    }
+
+    /// Change directory to that of a file descriptor.
+    pub fn fchdir(&mut self, file: Arc<dyn File>) -> EResult<()> {
+        // Note: This call also enforces the file handle is that of a directory.
+        let path = filesystem::realpath(Some(file.as_ref()), b".", false)?;
+        self.cwd = path;
+        self.fd_cwd = Some(file);
+        Ok(())
+    }
+
+    /// Change directory with a relative path.
+    pub fn chdir(&mut self, path: &[u8]) -> EResult<()> {
+        let cwd = filesystem::abspath(&self.cwd, path)?;
+        let fd_cwd = Some(filesystem::open(
+            self.fd_cwd.as_deref(),
+            path,
+            oflags::DIR_ONLY,
+        )?);
+
+        self.cwd = cwd;
+        self.fd_cwd = fd_cwd;
+        Ok(())
+    }
+
+    /// If `fileno` is [`AT_FDCWD`], return `self.fd_cwd`; otherwise, the same as [`Self::get_file`].
     pub fn get_atfile(&self, fileno: i32) -> EResult<Option<Arc<dyn File>>> {
         if fileno == AT_FDCWD {
-            Ok(None)
+            Ok(self.fd_cwd.clone())
         } else {
             Ok(Some(self.get_file(fileno)?))
         }

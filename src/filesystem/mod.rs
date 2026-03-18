@@ -1350,6 +1350,41 @@ pub fn realpath(at: Option<&dyn File>, path: &[u8], follow_last_symlink: bool) -
     cache.realpath()
 }
 
+/// Convert into an absolute path.
+/// May return a path longer than [`PATH_MAX`].
+pub fn abspath(old_cwd: &[u8], chdir_path: &[u8]) -> EResult<Vec<u8>> {
+    if old_cwd.len() > PATH_MAX || chdir_path.len() > PATH_MAX {
+        return Err(Errno::ENAMETOOLONG);
+    }
+
+    let mut cur;
+    if chdir_path.first().cloned() == Some(b'/') {
+        cur = Vec::from(chdir_path);
+    } else {
+        cur = Vec::from(old_cwd);
+        cur.extend_from_slice(chdir_path);
+    }
+
+    let mut i = 0;
+    while i < cur.len() {
+        if cur[i..].starts_with(b"./") {
+            cur.drain(i..i + 2);
+        } else if cur[i..].starts_with(b"../") {
+            let start = cur[..i]
+                .iter()
+                .enumerate()
+                .rfind(|x| *x.1 == b'/')
+                .map(|x| x.0 + 1)
+                .unwrap_or(0);
+            cur.drain(start..i + 1);
+        } else {
+            i += 1;
+        }
+    }
+
+    Ok(cur)
+}
+
 /// Detect the filesystem on a medium.
 fn detect<'a>(
     media: &Media,
