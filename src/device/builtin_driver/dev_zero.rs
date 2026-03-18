@@ -21,12 +21,12 @@ impl DevZero {
 impl BaseDriver for DevZero {}
 
 impl CharDriver for DevZero {
-    fn read(&self, mut buf: UserSliceMut<'_, u8>) -> EResult<usize> {
+    fn read(&self, mut buf: UserSliceMut<'_, u8>, _nonblock: bool) -> EResult<usize> {
         buf.fill(0)?;
         Ok(buf.len())
     }
 
-    fn write(&self, buf: UserSlice<'_, u8>) -> EResult<usize> {
+    fn write(&self, buf: UserSlice<'_, u8>, _nonblock: bool) -> EResult<usize> {
         Ok(buf.len())
     }
 }

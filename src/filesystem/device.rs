@@ -13,11 +13,22 @@ pub struct CharDevFile {
     char_dev: CharDevice,
     /// The VNode at which this device is bound.
     vnode: Option<Arc<VNode>>,
+    /// This handle allows reading.
+    allow_read: bool,
+    /// This handle allows writing.
+    allow_write: bool,
+    /// This handle is in non-blocking mode.
+    nonblock: bool,
 }
 
 impl CharDevFile {
     /// Create a new character device file from a VNode.
-    pub(super) fn new(vnode: Arc<VNode>) -> Self {
+    pub(super) fn new(
+        vnode: Arc<VNode>,
+        allow_read: bool,
+        allow_write: bool,
+        nonblock: bool,
+    ) -> Self {
         Self {
             char_dev: vnode
                 .clone()
@@ -30,14 +41,25 @@ impl CharDevFile {
                 .unwrap()
                 .clone(),
             vnode: Some(vnode),
+            allow_read,
+            allow_write,
+            nonblock,
         }
     }
 
     /// Create a new character device file from a device handler.
-    pub fn new_raw(char_dev: CharDevice) -> Self {
+    pub fn new_raw(
+        char_dev: CharDevice,
+        allow_read: bool,
+        allow_write: bool,
+        nonblock: bool,
+    ) -> Self {
         Self {
             char_dev,
             vnode: None,
+            allow_read,
+            allow_write,
+            nonblock,
         }
     }
 }
@@ -66,11 +88,11 @@ impl File for CharDevFile {
     }
 
     fn write(&self, wdata: UserSlice<'_, u8>) -> EResult<usize> {
-        self.char_dev.write(wdata)
+        self.char_dev.write(wdata, self.nonblock)
     }
 
     fn read(&self, rdata: UserSliceMut<'_, u8>) -> EResult<usize> {
-        self.char_dev.read(rdata)
+        self.char_dev.read(rdata, self.nonblock)
     }
 
     fn resize(&self, _size: u64) -> EResult<()> {

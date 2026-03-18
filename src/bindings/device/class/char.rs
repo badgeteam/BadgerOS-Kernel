@@ -25,23 +25,25 @@ impl CharDevice {
     }
 
     /// Read bytes from the device.
-    pub fn read(&self, rdata: UserSliceMut<'_, u8>) -> EResult<usize> {
+    pub fn read(&self, rdata: UserSliceMut<'_, u8>, nonblock: bool) -> EResult<usize> {
         Errno::check_usize(unsafe {
             raw::device_char_read(
                 self.as_raw_ptr(),
                 rdata.as_mut_ptr() as *mut c_void,
                 rdata.len(),
+                nonblock,
             )
         })
     }
 
     /// Write bytes to the device.
-    pub fn write(&self, wdata: UserSlice<'_, u8>) -> EResult<usize> {
+    pub fn write(&self, wdata: UserSlice<'_, u8>, nonblock: bool) -> EResult<usize> {
         Errno::check_usize(unsafe {
             raw::device_char_write(
                 self.as_raw_ptr(),
                 wdata.as_ptr() as *const c_void,
                 wdata.len(),
+                nonblock,
             )
         })
     }
@@ -50,9 +52,9 @@ impl CharDevice {
 /// Character device driver functions.
 pub trait CharDriver: BaseDriver {
     /// Read bytes from the device.
-    fn read(&self, rdata: UserSliceMut<'_, u8>) -> EResult<usize>;
+    fn read(&self, rdata: UserSliceMut<'_, u8>, nonblock: bool) -> EResult<usize>;
     /// Write bytes to the device.
-    fn write(&self, wdata: UserSlice<'_, u8>) -> EResult<usize>;
+    fn write(&self, wdata: UserSlice<'_, u8>, nonblock: bool) -> EResult<usize>;
 }
 
 /// Helper macro for filling in character driver fields.
@@ -79,11 +81,15 @@ macro_rules! char_driver_struct {
                     device: *mut device_char_t,
                     wdata: *const c_void,
                     wdata_len: usize,
+                    nonblock: bool,
                 ) -> errno_size_t {
                     let ptr = unsafe { &mut *((*device).base.cookie as *mut $type) };
-                    Errno::extract_usize(ptr.write(UserSlice::new_kernel(unsafe {
-                        &*slice_from_raw_parts(wdata as *const u8, wdata_len)
-                    })))
+                    Errno::extract_usize(ptr.write(
+                        UserSlice::new_kernel(unsafe {
+                            &*slice_from_raw_parts(wdata as *const u8, wdata_len)
+                        }),
+                        nonblock,
+                    ))
                 }
                 Some(write_wrapper)
             },
@@ -92,11 +98,15 @@ macro_rules! char_driver_struct {
                     device: *mut device_char_t,
                     rdata: *mut c_void,
                     rdata_len: usize,
+                    nonblock: bool,
                 ) -> errno_size_t {
                     let ptr = unsafe { &mut *((*device).base.cookie as *mut $type) };
-                    Errno::extract_usize(ptr.read(UserSliceMut::new_kernel_mut(unsafe {
-                        &mut *slice_from_raw_parts_mut(rdata as *mut u8, rdata_len)
-                    })))
+                    Errno::extract_usize(ptr.read(
+                        UserSliceMut::new_kernel_mut(unsafe {
+                            &mut *slice_from_raw_parts_mut(rdata as *mut u8, rdata_len)
+                        }),
+                        nonblock,
+                    ))
                 }
                 Some(read_wrapper)
             },

@@ -443,7 +443,6 @@ impl Scheduler {
 
     /// Scheduler idle function.
     fn idle_func() -> ! {
-        unsafe { irq::disable() };
         let cur_cpu = smp::cur_cpu();
         let cur_sched = unsafe { &mut *Scheduler::get() };
         loop {
@@ -469,6 +468,7 @@ impl Scheduler {
             }
 
             let _ = try {
+                let _noirq = IrqGuard::new();
                 let sched = smp::get_sched_for(busiest_cpu?)?;
                 let mut queue = sched.queue.lock();
                 let thread = queue.choose_thread()?;

@@ -16,7 +16,7 @@ use crate::{
     },
     filesystem::{self, NodeType, PATH_MAX},
     process::{
-        self,
+        self, FILE_MAX,
         files::FileDesc,
         uapi::{dirent, stat::stat},
         usercopy::{self, AccessResult, UserPtrMut, UserSlice, UserSliceMut},
@@ -315,10 +315,10 @@ pub unsafe extern "C" fn syscall_fs_unlink(at: c_int, path: *const c_char) -> c_
     Errno::extract(
         try {
             let mut pathbuf = [0u8; PATH_MAX];
-            usercopy::read_user_cstr(path, &mut pathbuf)?;
+            let pathlen = usercopy::read_user_cstr(path, &mut pathbuf)?;
             unlink(
                 proc.files.lock_shared()?.get_atfile(at)?.as_deref(),
-                &pathbuf,
+                &pathbuf[..pathlen],
                 false,
             )?;
         },
@@ -333,10 +333,10 @@ pub unsafe extern "C" fn syscall_fs_mkfifo(at: c_int, path: *const c_char) -> c_
     Errno::extract(
         try {
             let mut pathbuf = [0u8; PATH_MAX];
-            usercopy::read_user_cstr(path, &mut pathbuf)?;
+            let pathlen = usercopy::read_user_cstr(path, &mut pathbuf)?;
             make_file(
                 proc.files.lock_shared()?.get_atfile(at)?.as_deref(),
-                &pathbuf,
+                &pathbuf[..pathlen],
                 MakeFileSpec::Fifo,
             )?;
         },
@@ -401,8 +401,39 @@ pub unsafe extern "C" fn syscall_fs_symlink(
             make_file(
                 new_at_file.as_deref(),
                 &new_pathbuf[..new_pathlen],
-                MakeFileSpec::Symlink(&link_targetbuf[..link_targetlen])
+                MakeFileSpec::Symlink(&link_targetbuf[..link_targetlen]),
             )?;
         },
     ) as c_int
+}
+
+/// Duplicate a file descriptor.
+/// If `__newfd` is `-1`, an arbitrary descriptor number is selected.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn syscall_fs_dup(fd: c_int, flags: u32, newfd: c_int) -> c_int {
+    let proc = process::current().unwrap();
+    Errno::extract_i32(
+        try {
+            let mut files = proc.files.lock()?;
+            let fd = files.get_file(fd)?;
+            if newfd == -1 {
+                files.insert_file(FileDesc {
+                    flags: AtomicU32::new(flags & 0xffff_0000),
+                    file: fd,
+                })?
+            } else if newfd > 0 && newfd < FILE_MAX {
+                files.replace_file(
+                    newfd,
+                    FileDesc {
+                        flags: AtomicU32::new(flags & 0xffff_0000),
+                        file: fd,
+                    },
+                )?;
+                newfd
+            } else {
+                Err(Errno::EINVAL)?;
+                0
+            }
+        },
+    )
 }

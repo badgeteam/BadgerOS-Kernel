@@ -20,6 +20,10 @@ pub const SIG_ERR: *mut c_void = usize::MAX as *mut c_void;
 pub const SIG_DFL: *mut c_void = 0 as *mut c_void;
 pub const SIG_IGN: *mut c_void = 1 as *mut c_void;
 
+pub const SIG_BLOCK: c_int = 0;
+pub const SIG_UNBLOCK: c_int = 1;
+pub const SIG_SETMASK: c_int = 2;
+
 pub const SA_NOCLDSTOP: c_ulong = 1;
 pub const SA_NOCLDWAIT: c_ulong = 2;
 pub const SA_SIGINFO: c_ulong = 4;

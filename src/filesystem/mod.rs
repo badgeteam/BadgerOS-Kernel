@@ -827,7 +827,13 @@ pub fn open(at: Option<&dyn File>, path: &[u8], mut oflags: OFlags) -> EResult<A
         }
         NodeType::CharDev => {
             // Character device file ops.
-            Ok(Box::<dyn File>::from(Box::try_new(CharDevFile::new(vnode.clone()))?).into())
+            Ok(Box::<dyn File>::from(Box::try_new(CharDevFile::new(
+                vnode.clone(),
+                oflags & oflags::READ_ONLY != 0,
+                oflags & oflags::WRITE_ONLY != 0,
+                oflags & oflags::NONBLOCK != 0,
+            ))?)
+            .into())
         }
         NodeType::BlockDev => {
             // Block device file ops.

@@ -11,7 +11,10 @@ use tock_registers::{
 
 use crate::{
     LogLevel,
-    badgelib::{fifo::Fifo, irq::IrqGuard},
+    badgelib::{
+        fifo::{BlockingFifo, Fifo},
+        irq::IrqGuard,
+    },
     bindings::{
         device::{BaseDriver, Device, DeviceInfoView, HasBaseDevice, class::char::CharDriver},
         error::{EResult, Errno},
@@ -143,8 +146,8 @@ register_structs! {
 
 struct Ns16550aDriver {
     device: Device,
-    txfifo: Fifo,
-    rxfifo: Fifo,
+    txfifo: BlockingFifo,
+    rxfifo: BlockingFifo,
     regs: Spinlock<&'static Ns16550a>,
 }
 
@@ -175,8 +178,8 @@ impl Ns16550aDriver {
 
         Ok(Box::try_new(Self {
             device,
-            txfifo: Fifo::new(Fifo::DEFAULT_SIZE)?,
-            rxfifo: Fifo::new(Fifo::DEFAULT_SIZE)?,
+            txfifo: BlockingFifo::new(Fifo::DEFAULT_SIZE)?,
+            rxfifo: BlockingFifo::new(Fifo::DEFAULT_SIZE)?,
             regs: Spinlock::new(regs),
         })?)
     }
@@ -197,13 +200,14 @@ impl BaseDriver for Ns16550aDriver {
         // Read all available receive data.
         while regs.lsr.get() & LSR_DATA_READY != 0 {
             // FIFO overflow is ignored.
-            self.rxfifo.writek(&[regs.fifo.get()]);
+            let _ = self.rxfifo.writek(&[regs.fifo.get()], true);
         }
 
         // Write all pending send data that will fit.
         while regs.lsr.get() & LSR_TX_EMPTY != 0 {
             let mut tmp = [0u8];
-            if self.txfifo.readk(&mut tmp) == 0 {
+            // This readk can't fail because it is non-blocking on kernel memory.
+            if self.txfifo.readk(&mut tmp, true).unwrap() == 0 {
                 break;
             }
             regs.fifo.set(tmp[0]);
@@ -221,12 +225,12 @@ impl BaseDriver for Ns16550aDriver {
 }
 
 impl CharDriver for Ns16550aDriver {
-    fn read(&self, rdata: UserSliceMut<'_, u8>) -> EResult<usize> {
-        Ok(self.rxfifo.read(rdata)?)
+    fn read(&self, rdata: UserSliceMut<'_, u8>, nonblock: bool) -> EResult<usize> {
+        Ok(self.rxfifo.read(rdata, nonblock)?)
     }
 
-    fn write(&self, wdata: UserSlice<'_, u8>) -> EResult<usize> {
-        let wcount = self.txfifo.write(wdata);
+    fn write(&self, wdata: UserSlice<'_, u8>, nonblock: bool) -> EResult<usize> {
+        let wcount = self.txfifo.write(wdata, nonblock);
 
         let _guard = IrqGuard::new();
         self.interrupt(0);

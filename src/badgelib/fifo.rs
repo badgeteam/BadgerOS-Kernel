@@ -10,7 +10,8 @@ use core::{
 use alloc::{boxed::Box, vec::Vec};
 
 use crate::{
-    bindings::error::EResult,
+    bindings::{error::EResult, raw::timestamp_us_t},
+    kernel::sync::waitlist::Waitlist,
     process::usercopy::{AccessResult, UserSlice, UserSliceMut},
 };
 
@@ -180,5 +181,99 @@ impl Fifo {
         let rx = self.read_resv.load(Ordering::Relaxed);
         let tx = self.write_commit.load(Ordering::Relaxed);
         rx.wrapping_sub(tx).wrapping_add(cap).wrapping_sub(1) % cap
+    }
+}
+
+/// Blocking wrapper around a [`Fifo`].
+pub struct BlockingFifo {
+    fifo: Fifo,
+    /// Blocked readers.
+    read_waitlist: Waitlist,
+    /// Blocked writers.
+    write_waitlist: Waitlist,
+}
+
+impl BlockingFifo {
+    /// Create a new FIFO data buffer.
+    pub fn new(size: usize) -> EResult<Self> {
+        Ok(Self {
+            fifo: Fifo::new(size)?,
+            read_waitlist: Waitlist::new(),
+            write_waitlist: Waitlist::new(),
+        })
+    }
+
+    /// Read data from the buffer.
+    #[inline(always)]
+    pub fn readk(&self, rdata: &mut [u8], nonblock: bool) -> EResult<usize> {
+        self.read(UserSliceMut::new_kernel_mut(rdata), nonblock)
+    }
+
+    /// Read data from the buffer.
+    pub fn read(&self, rdata: UserSliceMut<'_, u8>, nonblock: bool) -> EResult<usize> {
+        if nonblock {
+            let res = self.fifo.read(rdata);
+            self.write_waitlist.notify_all();
+            res
+        } else {
+            loop {
+                let ramt = self.fifo.read(rdata);
+                self.write_waitlist.notify_all();
+                let ramt = ramt?;
+
+                if ramt > 0 {
+                    return Ok(ramt);
+                }
+                self.read_waitlist
+                    .block(timestamp_us_t::MAX, || self.fifo.read_avl() == 0)?;
+            }
+        }
+    }
+
+    /// Read data from the buffer.
+    #[inline(always)]
+    pub fn writek(&self, rdata: &[u8], nonblock: bool) -> EResult<usize> {
+        self.write(UserSlice::new_kernel(rdata), nonblock)
+    }
+
+    /// Write data to the buffer.
+    pub fn write(&self, mut wdata: UserSlice<'_, u8>, nonblock: bool) -> EResult<usize> {
+        if nonblock {
+            let res = self.fifo.write(wdata);
+            self.read_waitlist.notify_all();
+            res
+        } else {
+            let mut wsize = 0;
+            while wdata.len() > 0 {
+                let wamt = self.fifo.write(wdata);
+                self.read_waitlist.notify_all();
+
+                let wamt = wamt?;
+                wdata = wdata.subslice(wamt..wdata.len());
+                wsize += wamt;
+
+                if let Err(x) = self
+                    .write_waitlist
+                    .block(timestamp_us_t::MAX, || self.fifo.write_avl() == 0)
+                {
+                    if wsize > 0 {
+                        break;
+                    } else {
+                        return Err(x);
+                    }
+                }
+            }
+            Ok(wsize)
+        }
+    }
+
+    /// Get the amount of available read data.
+    pub fn read_avl(&self) -> usize {
+        self.fifo.read_avl()
+    }
+
+    /// Get the amount of available write space.
+    pub fn write_avl(&self) -> usize {
+        self.fifo.write_avl()
     }
 }

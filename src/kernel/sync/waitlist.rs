@@ -5,6 +5,7 @@
 use core::sync::atomic::Ordering;
 
 use crate::{
+    badgelib::irq::IrqGuard,
     bindings::{
         error::{EResult, Errno},
         raw::timestamp_us_t,
@@ -60,6 +61,7 @@ impl Waitlist {
     /// Implementation of [`Self::block`] and [`Self::unintr_block`].
     fn block_impl(&self, timeout: timestamp_us_t, condition: impl FnOnce() -> bool) {
         unsafe {
+            let _noirq = IrqGuard::new();
             let current = { &*Thread::current() };
             current.runtime().timeout = timeout;
             current.flags.fetch_or(tflags::BLOCKED, Ordering::Relaxed);
@@ -84,6 +86,7 @@ impl Waitlist {
     /// Notify at least one thread on this list.
     pub fn notify(&self) {
         unsafe {
+            let _noirq = IrqGuard::new();
             let mut list = self.list.lock();
             if let Some(ticket) = list.pop_front() {
                 (&*(&*ticket).thread)
@@ -96,6 +99,7 @@ impl Waitlist {
     /// Notify all threads on this list.
     pub fn notify_all(&self) {
         unsafe {
+            let _noirq = IrqGuard::new();
             let mut list = self.list.lock();
             for ticket in list.iter() {
                 (&*(&*ticket).thread)

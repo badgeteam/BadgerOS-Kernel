@@ -20,12 +20,12 @@ typedef struct {
 typedef struct {
     driver_t base;
     // Read bytes from the device.
-    errno_size_t (*read)(device_char_t *device, void __user *rdata, size_t rdata_len);
+    errno_size_t (*read)(device_char_t *device, void __user *rdata, size_t rdata_len, bool nonblock);
     // Write bytes to the device.
-    errno_size_t (*write)(device_char_t *device, void const __user *wdata, size_t wdata_len);
+    errno_size_t (*write)(device_char_t *device, void const __user *wdata, size_t wdata_len, bool nonblock);
 } driver_char_t;
 
 // Read bytes from the device.
-errno_size_t device_char_read(device_char_t *device, void __user *rdata, size_t rdata_len);
+errno_size_t device_char_read(device_char_t *device, void __user *rdata, size_t rdata_len, bool nonblock);
 // Write bytes to the device.
-errno_size_t device_char_write(device_char_t *device, void const __user *wdata, size_t wdata_len);
+errno_size_t device_char_write(device_char_t *device, void const __user *wdata, size_t wdata_len, bool nonblock);

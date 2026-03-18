@@ -126,7 +126,9 @@ impl ProcStatus {
         if flags & WCONTINUED != 0 && w_if_continued(self.wait_status) {
             return true;
         }
-        if flags & WEXITED != 0 && (w_if_exited(self.wait_status) || w_if_signalled(self.wait_status)) {
+        if flags & WEXITED != 0
+            && (w_if_exited(self.wait_status) || w_if_signalled(self.wait_status))
+        {
             return true;
         }
         false
@@ -391,27 +393,28 @@ impl Process {
 
         let mut serial_devs = CharDevice::filter(Default::default())?;
         let stdio_dev = serial_devs.try_remove(0).unwrap_or_else(|| null_instance());
-        let file = Arc::try_new(CharDevFile::new_raw(stdio_dev))?;
+        let wfile = Arc::try_new(CharDevFile::new_raw(stdio_dev.clone(), false, true, false))?;
+        let rfile = Arc::try_new(CharDevFile::new_raw(stdio_dev, true, false, false))?;
 
         let _ = fds.inner.try_insert(
             0,
             FileDesc {
                 flags: AtomicU32::new(0),
-                file: file.clone(),
+                file: rfile.clone(),
             },
         );
         let _ = fds.inner.try_insert(
             1,
             FileDesc {
                 flags: AtomicU32::new(0),
-                file: file.clone(),
+                file: wfile.clone(),
             },
         );
         let _ = fds.inner.try_insert(
             2,
             FileDesc {
                 flags: AtomicU32::new(0),
-                file: file.clone(),
+                file: wfile.clone(),
             },
         );
 

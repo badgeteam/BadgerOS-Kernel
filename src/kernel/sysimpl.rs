@@ -7,7 +7,16 @@ use core::ffi::{c_int, c_long, c_ulong, c_void};
 use crate::{
     bindings::{error::Errno, raw::timestamp_us_t},
     kernel::sched::{thread_sleep, thread_yield},
+    process::{
+        uapi::{
+            signal::{SIG_BLOCK, SIG_SETMASK, SIG_UNBLOCK},
+            sigset::sigset_t,
+        },
+        usercopy::UserPtr,
+    },
 };
+
+use super::sched::Thread;
 
 /// Implementation of thread yield system call.
 #[unsafe(no_mangle)]
@@ -56,4 +65,28 @@ pub unsafe extern "C" fn syscall_thread_exit(code: c_int) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn syscall_thread_kill(u_tid: c_ulong, signum: c_int) -> c_int {
     todo!()
+}
+
+/// Modify the signal mask for this thread.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn syscall_thread_sigmask(
+    how: c_int,
+    set: *const sigset_t,
+    oldset: *mut sigset_t,
+) -> c_int {
+    let mask = unsafe { &mut (&*Thread::current()).runtime().sigprocmask };
+    Errno::extract(
+        try {
+            if let Some(mut oldset) = UserPtr::new_nullable_mut(oldset)? {
+                oldset.write(*mask)?;
+            }
+            let set = UserPtr::new(set)?.read()?;
+            match how {
+                SIG_BLOCK => mask.add(&set),
+                SIG_UNBLOCK => mask.subtract(&set),
+                SIG_SETMASK => *mask = set,
+                _ => Err(Errno::EINVAL)?,
+            }
+        },
+    )
 }
