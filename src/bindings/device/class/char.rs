@@ -60,7 +60,17 @@ pub trait CharDriver: BaseDriver {
 /// Helper macro for filling in character driver fields.
 #[macro_export]
 macro_rules! char_driver_struct {
-    ($type: ty, $match_: expr, $add: expr) => {{
+    ($type: ty, $match_: expr, $add: expr) => {
+        crate::abstract_char_driver_struct! {
+            $type, dev_class_t_DEV_CLASS_CHAR, $match_, $add
+        }
+    };
+}
+
+/// Helper macro for filling in character driver fields.
+#[macro_export]
+macro_rules! abstract_char_driver_struct {
+    ($type: ty, $class: expr, $match_: expr, $add: expr) => {{
         use crate::{
             bindings::{device::class::char::*, error::*, raw::*},
             process::usercopy::{UserSlice, UserSliceMut},
@@ -72,7 +82,7 @@ macro_rules! char_driver_struct {
         driver_char_t {
             base: crate::abstract_driver_struct! {
                 $type,
-                dev_class_t_DEV_CLASS_CHAR,
+                $class,
                 $match_,
                 $add
             },

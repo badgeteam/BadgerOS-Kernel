@@ -16,13 +16,19 @@ use crate::{
         irq::IrqGuard,
     },
     bindings::{
-        device::{BaseDriver, Device, DeviceInfoView, HasBaseDevice, class::char::CharDriver},
+        device::{
+            BaseDriver, Device, DeviceInfoView, HasBaseDevice,
+            class::{char::CharDriver, tty::TTYDriver},
+        },
         error::{EResult, Errno},
-        raw::{dev_atype_t_DEV_ATYPE_MMIO, driver_char_t, irqno_t},
+        raw::{dev_atype_t_DEV_ATYPE_MMIO, driver_tty_t, irqno_t},
         spinlock::Spinlock,
     },
-    char_driver_struct,
-    process::usercopy::{UserSlice, UserSliceMut},
+    process::{
+        uapi::termios,
+        usercopy::{UserSlice, UserSliceMut},
+    },
+    tty_driver_struct,
 };
 
 /// Enable for receive data available IRQ.
@@ -149,6 +155,7 @@ struct Ns16550aDriver {
     txfifo: BlockingFifo,
     rxfifo: BlockingFifo,
     regs: Spinlock<&'static Ns16550a>,
+    attr: Spinlock<termios::termios>,
 }
 
 impl Ns16550aDriver {
@@ -181,6 +188,7 @@ impl Ns16550aDriver {
             txfifo: BlockingFifo::new(Fifo::DEFAULT_SIZE)?,
             rxfifo: BlockingFifo::new(Fifo::DEFAULT_SIZE)?,
             regs: Spinlock::new(regs),
+            attr: Spinlock::new(Default::default()),
         })?)
     }
 }
@@ -196,11 +204,21 @@ impl BaseDriver for Ns16550aDriver {
 
     fn interrupt(&self, _irq: irqno_t) -> bool {
         let regs = self.regs.lock();
+        let attr = self.attr.lock();
 
         // Read all available receive data.
         while regs.lsr.get() & LSR_DATA_READY != 0 {
             // FIFO overflow is ignored.
-            let _ = self.rxfifo.writek(&[regs.fifo.get()], true);
+            let mut c = regs.fifo.get();
+            if attr.c_iflag & termios::ICRNL != 0 && c == b'\r' {
+                c = b'\n';
+            } else if attr.c_iflag & termios::INLCR != 0 && c == b'\n' {
+                c = b'\r';
+            }
+            if attr.c_lflag & termios::ECHO != 0 {
+                regs.fifo.set(c);
+            }
+            let _ = self.rxfifo.writek(&[c], true);
         }
 
         // Write all pending send data that will fit.
@@ -210,7 +228,13 @@ impl BaseDriver for Ns16550aDriver {
             if self.txfifo.readk(&mut tmp, true).unwrap() == 0 {
                 break;
             }
-            regs.fifo.set(tmp[0]);
+            let mut c = tmp[0];
+            if attr.c_oflag & termios::OCRNL != 0 && c == b'\r' {
+                c = b'\n';
+            } else if attr.c_oflag & termios::ONLCR != 0 && c == b'\n' {
+                c = b'\r';
+            }
+            regs.fifo.set(c);
         }
 
         // We only want the interrupt for transmit data empty if we have anything in the FIFO.
@@ -239,6 +263,14 @@ impl CharDriver for Ns16550aDriver {
     }
 }
 
+impl TTYDriver for Ns16550aDriver {
+    fn setattr(&self, newattr: &termios::termios) -> EResult<()> {
+        let _noirq = IrqGuard::new();
+        *self.attr.lock() = *newattr;
+        Ok(())
+    }
+}
+
 /// The AHCI controller driver struct.
-pub(super) static NS16550A_DRIVER: driver_char_t =
-    char_driver_struct!(Ns16550aDriver, Ns16550aDriver::match_, Ns16550aDriver::new);
+pub(super) static NS16550A_DRIVER: driver_tty_t =
+    tty_driver_struct!(Ns16550aDriver, Ns16550aDriver::match_, Ns16550aDriver::new);

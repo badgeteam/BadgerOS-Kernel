@@ -14,7 +14,7 @@ use core::{num::NonZero, ptr::NonNull};
 
 use addr::DevAddr;
 use alloc::vec::Vec;
-use class::{block::BlockDevice, char::CharDevice, pcictl::PciCtlDevice};
+use class::{block::BlockDevice, char::CharDevice, pcictl::PciCtlDevice, tty::TTYDevice};
 
 pub mod addr;
 pub mod class;
@@ -27,9 +27,9 @@ use super::{
     error::{EResult, Errno},
     raw::{
         self, dev_addr_t, dev_class_t_DEV_CLASS_BLOCK, dev_class_t_DEV_CLASS_CHAR,
-        dev_class_t_DEV_CLASS_PCICTL, dev_class_t_DEV_CLASS_UNKNOWN, dev_state_t, device_block_t,
-        device_char_t, device_info_t, device_pcictl_t, device_t, driver_t, dtb_handle_t,
-        dtb_node_t, irqno_t, set_next,
+        dev_class_t_DEV_CLASS_PCICTL, dev_class_t_DEV_CLASS_TTY, dev_class_t_DEV_CLASS_UNKNOWN,
+        dev_state_t, device_block_t, device_char_t, device_info_t, device_pcictl_t, device_t,
+        device_tty_t, driver_t, dtb_handle_t, dtb_node_t, irqno_t, set_next,
     },
 };
 
@@ -302,12 +302,24 @@ pub trait HasBaseDevice {
     /// Try to get this as a character device.
     fn as_char(&self) -> Option<CharDevice> {
         unsafe {
-            if (*self.base_ptr()).dev_class != dev_class_t_DEV_CLASS_CHAR {
+            if (*self.base_ptr()).dev_class != dev_class_t_DEV_CLASS_CHAR
+                && (*self.base_ptr()).dev_class != dev_class_t_DEV_CLASS_TTY
+            {
                 None
             } else {
                 Some(CharDevice::from_raw_ref(
                     self.base_ptr() as *mut device_char_t
                 ))
+            }
+        }
+    }
+    /// Try to get this as a TTY device.
+    fn as_tty(&self) -> Option<TTYDevice> {
+        unsafe {
+            if (*self.base_ptr()).dev_class != dev_class_t_DEV_CLASS_TTY {
+                None
+            } else {
+                Some(TTYDevice::from_raw_ref(self.base_ptr() as *mut device_tty_t))
             }
         }
     }
@@ -381,6 +393,7 @@ pub trait DeviceFromRaw<S: Sized, T: Sized> {
 pub enum Device {
     Unknown(BaseDevice) = dev_class_t_DEV_CLASS_UNKNOWN,
     Block(BlockDevice) = dev_class_t_DEV_CLASS_BLOCK,
+    TTY(TTYDevice) = dev_class_t_DEV_CLASS_TTY,
     Char(CharDevice) = dev_class_t_DEV_CLASS_CHAR,
     PciCtl(PciCtlDevice) = dev_class_t_DEV_CLASS_PCICTL,
 }
@@ -398,6 +411,9 @@ impl DeviceFromRaw<device_t, Device> for Device {
                 }
                 dev_class_t_DEV_CLASS_PCICTL => {
                     Device::PciCtl(PciCtlDevice::from_raw(inner as *mut device_pcictl_t))
+                }
+                dev_class_t_DEV_CLASS_TTY => {
+                    Device::TTY(TTYDevice::from_raw(inner as *mut device_tty_t))
                 }
                 dev_class_t_DEV_CLASS_CHAR => {
                     Device::Char(CharDevice::from_raw(inner as *mut device_char_t))
@@ -476,6 +492,7 @@ impl Device {
                 Device::Unknown(x) => x.leak(),
                 Device::Block(x) => core::mem::transmute(x.leak()),
                 Device::PciCtl(x) => core::mem::transmute(x.leak()),
+                Device::TTY(x) => core::mem::transmute(x.leak()),
                 Device::Char(x) => core::mem::transmute(x.leak()),
             }
         }
@@ -535,6 +552,7 @@ impl HasBaseDevice for Device {
             Device::Unknown(x) => x.as_base(),
             Device::Block(x) => x.as_base(),
             Device::PciCtl(x) => x.as_base(),
+            Device::TTY(x) => x.as_base(),
             Device::Char(x) => x.as_base(),
         }
     }
@@ -545,6 +563,7 @@ impl HasBaseDevice for Device {
             Device::Unknown(x) => x.base_ptr(),
             Device::Block(x) => x.base_ptr(),
             Device::PciCtl(x) => x.base_ptr(),
+            Device::TTY(x) => x.base_ptr(),
             Device::Char(x) => x.base_ptr(),
         }
     }

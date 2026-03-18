@@ -337,6 +337,11 @@ impl Thread {
         // Causes interruptable locks to return Err(EINTR).
         self.flags.fetch_and(!tflags::BLOCKED, Ordering::Relaxed);
     }
+
+    /// Unblock this thread early.
+    pub fn unblock(&self) {
+        self.flags.fetch_and(!tflags::BLOCKED, Ordering::Relaxed);
+    }
 }
 
 /// Number of currently running schedulers.

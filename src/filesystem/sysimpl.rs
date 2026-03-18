@@ -11,6 +11,7 @@ use bytemuck::bytes_of;
 
 use crate::{
     bindings::{
+        device::HasBaseDevice,
         error::Errno,
         raw::{seek_mode_t_SEEK_CUR, seek_mode_t_SEEK_END, seek_mode_t_SEEK_SET},
     },
@@ -18,8 +19,8 @@ use crate::{
     process::{
         self, FILE_MAX,
         files::FileDesc,
-        uapi::{dirent, stat::stat},
-        usercopy::{self, AccessResult, UserPtrMut, UserSlice, UserSliceMut},
+        uapi::{dirent, stat::stat, termios},
+        usercopy::{self, AccessResult, UserPtr, UserPtrMut, UserSlice, UserSliceMut},
     },
 };
 
@@ -434,6 +435,56 @@ pub unsafe extern "C" fn syscall_fs_dup(fd: c_int, flags: u32, newfd: c_int) -> 
                 Err(Errno::EINVAL)?;
                 0
             }
+        },
+    )
+}
+
+// Succeed if `__fd` is a TTY, fail otherwise.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn syscall_fs_isatty(fd: c_int) -> c_int {
+    let proc = process::current().unwrap();
+    Errno::extract(
+        try {
+            let files = proc.files.lock_shared()?;
+            let fd = files.get_file(fd)?;
+            fd.isatty()?;
+        },
+    )
+}
+
+// Get TTY attributes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn syscall_fs_tcgetattr(fd: c_int, attr: *mut termios::termios) -> c_int {
+    let proc = process::current().unwrap();
+    Errno::extract(
+        try {
+            let files = proc.files.lock_shared()?;
+            let fd = files.get_file(fd)?;
+            let mut buf = Default::default();
+            fd.get_device()
+                .ok_or(Errno::ENOTTY)?
+                .as_tty()
+                .ok_or(Errno::ENOTTY)?
+                .getattr(&mut buf)?;
+            UserPtr::new_mut(attr)?.write(buf)?;
+        },
+    )
+}
+
+// Set TTY attributes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn syscall_fs_tcsetattr(fd: c_int, attr: *const termios::termios) -> c_int {
+    let proc = process::current().unwrap();
+    Errno::extract(
+        try {
+            let files = proc.files.lock_shared()?;
+            let fd = files.get_file(fd)?;
+            let buf = UserPtr::new(attr)?.read()?;
+            fd.get_device()
+                .ok_or(Errno::ENOTTY)?
+                .as_tty()
+                .ok_or(Errno::ENOTTY)?
+                .setattr(&buf)?;
         },
     )
 }

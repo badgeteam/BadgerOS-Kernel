@@ -40,9 +40,10 @@ unsafe extern "C" fn device_create_null_zero() {
         phandle: None,
     })
     .unwrap();
+    dev_null.activate();
     unsafe {
         bindings::raw::device_set_driver(dev_null.as_raw_ptr(), &raw const DEV_NULL_DRIVER.base);
-        NULL_INSTANCE = dev_null.as_char();
+        NULL_INSTANCE = Some(dev_null.as_char().unwrap());
     }
 
     let dev_zero = Device::add(DeviceInfo {
@@ -52,8 +53,9 @@ unsafe extern "C" fn device_create_null_zero() {
         phandle: None,
     })
     .unwrap();
+    dev_zero.activate();
     unsafe {
         bindings::raw::device_set_driver(dev_zero.as_raw_ptr(), &raw const DEV_ZERO_DRIVER.base);
-        ZERO_INSTANCE = dev_zero.as_char();
+        ZERO_INSTANCE = Some(dev_zero.as_char().unwrap());
     }
 }

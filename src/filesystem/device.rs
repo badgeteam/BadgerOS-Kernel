@@ -3,6 +3,7 @@ use core::sync::atomic::Ordering;
 use crate::bindings::{
     device::{HasBaseDevice, class::char::CharDevice},
     error::EResult,
+    raw::dev_class_t_DEV_CLASS_TTY,
 };
 
 use super::*;
@@ -65,6 +66,14 @@ impl CharDevFile {
 }
 
 impl File for CharDevFile {
+    fn isatty(&self) -> EResult<()> {
+        if self.char_dev.class() == dev_class_t_DEV_CLASS_TTY {
+            Ok(())
+        } else {
+            Err(Errno::ENOTTY)
+        }
+    }
+
     fn get_dirents(&self, _buffer: &mut DentBuffer<'_>) -> EResult<()> {
         Err(Errno::ENOTDIR)
     }

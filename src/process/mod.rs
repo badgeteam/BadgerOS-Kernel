@@ -32,7 +32,7 @@ use usercopy::{AccessResult, UserSlice, UserSliceMut};
 
 use crate::{
     bindings::{
-        device::class::char::CharDevice,
+        device::{HasBaseDevice, class::tty::TTYDevice},
         error::{EResult, Errno},
         log::LogLevel,
         raw::timestamp_us_t,
@@ -87,6 +87,7 @@ static PROCESSES: Mutex<BTreeMap<PID, Arc<Process>>> = Mutex::new(BTreeMap::new(
 pub const FILE_MAX: i32 = 256;
 
 /// Process parent-child relations.
+#[derive(Clone)]
 struct PCR {
     parent: Weak<Process>,
     children: BTreeMap<PID, Arc<Process>>,
@@ -391,8 +392,11 @@ impl Process {
             return Ok(());
         }
 
-        let mut serial_devs = CharDevice::filter(Default::default())?;
-        let stdio_dev = serial_devs.try_remove(0).unwrap_or_else(|| null_instance());
+        let mut serial_devs = TTYDevice::filter(Default::default())?;
+        let stdio_dev = serial_devs
+            .try_remove(0)
+            .map(|x| x.as_char().unwrap())
+            .unwrap_or_else(|| null_instance());
         let wfile = Arc::try_new(CharDevFile::new_raw(stdio_dev.clone(), false, true, false))?;
         let rfile = Arc::try_new(CharDevFile::new_raw(stdio_dev, true, false, false))?;
 
@@ -435,6 +439,7 @@ impl Process {
         }
         status.flags |= pflags::DESTRUCTING | pflags::WAITABLE;
         status.wait_status = wait_status;
+        drop(status);
 
         self.waitlist.notify_all();
         if let Some(parent) = self.pcr.unintr_lock_shared().parent.upgrade() {
@@ -461,6 +466,16 @@ impl Process {
     pub fn send_async_sig(&self, info: siginfo_t) {
         debug_assert!(info.si_signo < 1024);
         self.sigqueue.unintr_lock().push_back(info);
+
+        let threads = self.threads.unintr_lock_shared();
+        for thread in threads.threads.values() {
+            thread.unblock();
+        }
+        for thread in &threads.detached {
+            if let Some(thread) = thread.upgrade() {
+                thread.unblock();
+            }
+        }
     }
 
     /// Join all currently running threads.
@@ -556,7 +571,7 @@ impl Process {
                 })?;
                 let mut status = self.status.lock();
                 if status.wait_matches(flags) {
-                    if flags & WNOWAIT != 0 {
+                    if flags & WNOWAIT == 0 {
                         status.flags &= !pflags::WAITABLE;
                     }
                     return Ok(status.wait_status);
@@ -566,7 +581,7 @@ impl Process {
             // Non-blocking wait.
             let mut status = self.status.lock();
             if status.wait_matches(flags) {
-                if flags & WNOWAIT != 0 {
+                if flags & WNOWAIT == 0 {
                     status.flags &= !pflags::WAITABLE;
                 }
                 Ok(status.wait_status)
@@ -582,11 +597,12 @@ impl Process {
             // Blocking wait.
             let mut res = None;
             while res.is_none() {
+                let pcr = self.pcr.lock_shared()?.clone();
                 self.child_waitlist.block(timestamp_us_t::MAX, || {
-                    for child in self.pcr.unintr_lock_shared().children.values() {
+                    for child in pcr.children.values() {
                         let mut status = child.status.lock();
                         if status.wait_matches(flags) {
-                            if flags & WNOWAIT != 0 {
+                            if flags & WNOWAIT == 0 {
                                 status.flags &= !pflags::WAITABLE;
                             }
                             res = Some((child.pid, status.wait_status));
@@ -602,7 +618,7 @@ impl Process {
             for child in self.pcr.unintr_lock_shared().children.values() {
                 let mut status = child.status.lock();
                 if status.wait_matches(flags) {
-                    if flags & WNOWAIT != 0 {
+                    if flags & WNOWAIT == 0 {
                         status.flags &= !pflags::WAITABLE;
                     }
                     return Ok((child.pid, status.wait_status));
@@ -621,6 +637,7 @@ impl Process {
         }
         status.flags |= pflags::PAUSED | pflags::WAITABLE;
         status.wait_status = w_stopped(sig);
+        drop(status);
 
         self.waitlist.notify_all();
         if let Some(parent) = self.pcr.unintr_lock_shared().parent.upgrade() {
@@ -638,6 +655,7 @@ impl Process {
         status.flags |= pflags::WAITABLE;
         status.flags &= !pflags::PAUSED;
         status.wait_status = w_stopped(sig);
+        drop(status);
 
         self.waitlist.notify_all();
         if let Some(parent) = self.pcr.unintr_lock_shared().parent.upgrade() {

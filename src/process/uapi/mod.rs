@@ -10,6 +10,7 @@ pub mod signal;
 pub mod sigset;
 pub mod sigval;
 pub mod stat;
+pub mod termios;
 pub mod time;
 pub mod uname;
 pub mod vm_flags;

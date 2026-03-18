@@ -11,7 +11,7 @@ use crate::{
         log::{LogLevel, logk_unlocked},
         raw::{
             bootp_early_init, bootp_full_init, bootp_postheap_init, bootp_reclaim_mem,
-            kernel_heap_init, kmodule_t,
+            device_create_null_zero, kernel_heap_init, kmodule_t,
         },
     },
     cpu::{self, spinup::arch_cpu_spinup},
@@ -91,6 +91,7 @@ unsafe fn general_init() {
             }
             cur = cur.add(1);
         }
+        device_create_null_zero();
 
         // Finish bootloader hand-over.
         bootp_full_init();

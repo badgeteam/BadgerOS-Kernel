@@ -287,6 +287,10 @@ impl Debug for Dirent {
 
 /// Handle to an open file. Dropping it closes the file.
 pub trait File: Sync {
+    /// Succeed if this is a TTY, fail otherwise.
+    fn isatty(&self) -> EResult<()> {
+        Err(Errno::ENOTTY)
+    }
     /// Read directory entries into the buffer.
     fn get_dirents(&self, buffer: &mut DentBuffer<'_>) -> EResult<()>;
     /// Get the device that this file represents, if any.
