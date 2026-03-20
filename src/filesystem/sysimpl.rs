@@ -4,7 +4,7 @@
 
 use core::{
     ffi::{c_char, c_int, c_long, c_ushort, c_void},
-    sync::atomic::AtomicU32,
+    sync::atomic::{AtomicU32, Ordering},
 };
 
 use bytemuck::bytes_of;
@@ -92,10 +92,13 @@ pub unsafe extern "C" fn syscall_fs_open(at: c_int, path: *const c_char, oflags:
             let pathlen = usercopy::read_user_cstr(path, &mut pathbuf)?;
             let at_file = files.get_atfile(at)?;
             let file = filesystem::open(at_file.as_deref(), &pathbuf[..pathlen], oflags & 0xffff)?;
-            files.insert_file(FileDesc {
-                flags: AtomicU32::new(oflags & 0xffff0000),
-                file,
-            })?
+            files.insert_file(
+                0,
+                FileDesc {
+                    flags: AtomicU32::new(oflags & 0xffff0000),
+                    file,
+                },
+            )?
         },
     )
 }
@@ -418,10 +421,21 @@ pub unsafe extern "C" fn syscall_fs_dup(fd: c_int, flags: u32, newfd: c_int) -> 
             let mut files = proc.files.lock()?;
             let fd = files.get_file(fd)?;
             if newfd == -1 {
-                files.insert_file(FileDesc {
-                    flags: AtomicU32::new(flags & 0xffff_0000),
-                    file: fd,
-                })?
+                files.insert_file(
+                    0,
+                    FileDesc {
+                        flags: AtomicU32::new(flags & 0xffff_0000),
+                        file: fd,
+                    },
+                )?
+            } else if flags & oflags::DUP_FCNTL != 0 {
+                files.insert_file(
+                    newfd,
+                    FileDesc {
+                        flags: AtomicU32::new(flags & 0xffff_0000),
+                        file: fd,
+                    },
+                )?
             } else if newfd > 0 && newfd < FILE_MAX {
                 files.replace_file(
                     newfd,
@@ -529,6 +543,65 @@ pub unsafe extern "C" fn syscall_fs_chdir(at: c_int, path: *const u8) -> c_int {
                 let pathlen = usercopy::read_user_cstr(path, &mut pathbuf)?;
                 files.chdir(&pathbuf[..pathlen])?;
             }
+        },
+    )
+}
+
+/// Get file descriptor flags.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn syscall_fs_getfd(fd: c_int) -> c_int {
+    let proc = process::current().unwrap();
+
+    Errno::extract_i32(
+        try {
+            proc.files
+                .lock_shared()?
+                .inner
+                .get(&fd)
+                .ok_or(Errno::EBADF)?
+                .flags
+                .load(Ordering::Relaxed) as i32
+        },
+    )
+}
+
+/// Set file descriptor flags.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn syscall_fs_setfd(fd: c_int, flags: c_int) -> c_int {
+    let proc = process::current().unwrap();
+
+    Errno::extract(
+        try {
+            proc.files
+                .lock_shared()?
+                .inner
+                .get(&fd)
+                .ok_or(Errno::EBADF)?
+                .flags
+                .store(flags as u32, Ordering::Relaxed);
+        },
+    )
+}
+
+/// Get file status flags.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn syscall_fs_getfl(fd: c_int) -> c_int {
+    let proc = process::current().unwrap();
+
+    Errno::extract_i32(try { proc.files.lock_shared()?.get_file(fd)?.get_flags() as c_int })
+}
+
+/// Set file status flags.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn syscall_fs_setfl(fd: c_int, flags: c_int) -> c_int {
+    let proc = process::current().unwrap();
+
+    Errno::extract(
+        try {
+            proc.files
+                .lock_shared()?
+                .get_file(fd)?
+                .set_flags(flags as u32)?;
         },
     )
 }

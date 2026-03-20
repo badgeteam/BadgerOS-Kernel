@@ -1,5 +1,3 @@
-use core::sync::atomic::Ordering;
-
 use crate::bindings::{
     device::{HasBaseDevice, class::char::CharDevice},
     error::EResult,
@@ -14,22 +12,13 @@ pub struct CharDevFile {
     char_dev: CharDevice,
     /// The VNode at which this device is bound.
     vnode: Option<Arc<VNode>>,
-    /// This handle allows reading.
-    allow_read: bool,
-    /// This handle allows writing.
-    allow_write: bool,
-    /// This handle is in non-blocking mode.
-    nonblock: bool,
+    /// Mode flags.
+    flags: Mutex<u32>,
 }
 
 impl CharDevFile {
     /// Create a new character device file from a VNode.
-    pub(super) fn new(
-        vnode: Arc<VNode>,
-        allow_read: bool,
-        allow_write: bool,
-        nonblock: bool,
-    ) -> Self {
+    pub(super) fn new(vnode: Arc<VNode>, flags: u32) -> Self {
         Self {
             char_dev: vnode
                 .clone()
@@ -42,30 +31,30 @@ impl CharDevFile {
                 .unwrap()
                 .clone(),
             vnode: Some(vnode),
-            allow_read,
-            allow_write,
-            nonblock,
+            flags: Mutex::new(flags),
         }
     }
 
     /// Create a new character device file from a device handler.
-    pub fn new_raw(
-        char_dev: CharDevice,
-        allow_read: bool,
-        allow_write: bool,
-        nonblock: bool,
-    ) -> Self {
+    pub fn new_raw(char_dev: CharDevice, flags: u32) -> Self {
         Self {
             char_dev,
             vnode: None,
-            allow_read,
-            allow_write,
-            nonblock,
+            flags: Mutex::new(flags),
         }
     }
 }
 
 impl File for CharDevFile {
+    fn get_flags(&self) -> u32 {
+        *self.flags.unintr_lock_shared()
+    }
+
+    fn set_flags(&self, newfl: u32) -> EResult<()> {
+        *self.flags.lock()? = newfl;
+        Ok(())
+    }
+
     fn isatty(&self) -> EResult<()> {
         if self.char_dev.class() == dev_class_t_DEV_CLASS_TTY {
             Ok(())
@@ -79,13 +68,11 @@ impl File for CharDevFile {
     }
 
     fn stat(&self) -> EResult<Stat> {
-        self.vnode
-            .as_ref()
-            .ok_or(Errno::EBADF)?
-            .mtx
-            .lock_shared()?
-            .ops
-            .stat(&self.vnode.as_ref().unwrap())
+        if let Some(vnode) = &self.vnode {
+            vnode.mtx.lock_shared()?.ops.stat(&vnode)
+        } else {
+            Ok(Stat::default())
+        }
     }
 
     fn tell(&self) -> EResult<u64> {
@@ -97,11 +84,19 @@ impl File for CharDevFile {
     }
 
     fn write(&self, wdata: UserSlice<'_, u8>) -> EResult<usize> {
-        self.char_dev.write(wdata, self.nonblock)
+        let flags = *self.flags.unintr_lock_shared();
+        if flags & oflags::WRITE_ONLY == 0 {
+            return Err(Errno::EBADF);
+        }
+        self.char_dev.write(wdata, flags & oflags::NONBLOCK != 0)
     }
 
     fn read(&self, rdata: UserSliceMut<'_, u8>) -> EResult<usize> {
-        self.char_dev.read(rdata, self.nonblock)
+        let flags = *self.flags.unintr_lock_shared();
+        if flags & oflags::READ_ONLY == 0 {
+            return Err(Errno::EBADF);
+        }
+        self.char_dev.read(rdata, flags & oflags::NONBLOCK != 0)
     }
 
     fn resize(&self, _size: u64) -> EResult<()> {
@@ -127,17 +122,13 @@ pub(super) struct BlockDevFile {
     block_dev: BlockDevice,
     /// The VNode at which this device is bound.
     vnode: Arc<VNode>,
-    /// The access offset for this file.
-    offset: AtomicU64,
-    /// This handle allows reading.
-    allow_read: bool,
-    /// This handle allows writing.
-    allow_write: bool,
+    /// Mode flags.
+    flags: Mutex<FlagsAndOffset>,
 }
 
 impl BlockDevFile {
     /// Create a new block device file.
-    pub fn new(vnode: Arc<VNode>, allow_read: bool, allow_write: bool) -> Self {
+    pub fn new(vnode: Arc<VNode>, flags: u32) -> Self {
         Self {
             block_dev: vnode
                 .clone()
@@ -150,14 +141,21 @@ impl BlockDevFile {
                 .unwrap()
                 .clone(),
             vnode,
-            offset: AtomicU64::new(0),
-            allow_read,
-            allow_write,
+            flags: Mutex::new(FlagsAndOffset { offset: 0, flags }),
         }
     }
 }
 
 impl File for BlockDevFile {
+    fn get_flags(&self) -> u32 {
+        self.flags.unintr_lock_shared().flags
+    }
+
+    fn set_flags(&self, newfl: u32) -> EResult<()> {
+        self.flags.lock()?.flags = newfl;
+        Ok(())
+    }
+
     fn get_dirents(&self, _buffer: &mut DentBuffer<'_>) -> EResult<()> {
         Err(Errno::ENOTDIR)
     }
@@ -167,53 +165,36 @@ impl File for BlockDevFile {
     }
 
     fn tell(&self) -> EResult<u64> {
-        Ok(self.offset.load(Ordering::Relaxed))
+        Ok(self.flags.unintr_lock_shared().offset)
     }
 
     fn seek(&self, mode: SeekMode, offset: i64) -> EResult<u64> {
+        let mut flags = self.flags.lock()?;
         let size = self.block_dev.block_count() << self.block_dev.block_size_exp();
-        let mut old_off = self.offset.load(Ordering::Relaxed);
+        let old_off = flags.offset;
 
-        let mut new_off = match mode {
+        let new_off = match mode {
             SeekMode::Set => offset.clamp(0, size as i64),
             SeekMode::Cur => offset.saturating_add(old_off as i64).clamp(0, size as i64),
             SeekMode::End => offset.saturating_add(size as i64).clamp(0, size as i64),
         } as u64;
-
-        while let Err(x) =
-            self.offset
-                .compare_exchange(old_off, new_off, Ordering::Relaxed, Ordering::Relaxed)
-        {
-            old_off = x;
-            new_off = match mode {
-                SeekMode::Set => offset.clamp(0, size as i64),
-                SeekMode::Cur => offset.saturating_add(old_off as i64).clamp(0, size as i64),
-                SeekMode::End => offset.saturating_add(size as i64).clamp(0, size as i64),
-            } as u64;
-        }
+        flags.offset = new_off;
 
         Ok(new_off)
     }
 
     fn write(&self, wdata: UserSlice<'_, u8>) -> EResult<usize> {
-        if !self.allow_write {
+        let mut flags = self.flags.lock()?;
+        if flags.flags & oflags::WRITE_ONLY == 0 {
             return Err(Errno::EBADF);
         }
 
         let size = self.block_dev.block_count() << self.block_dev.block_size_exp();
 
         // Increment offset and determine read count.
-        let mut offset = self.offset.load(Ordering::Acquire);
-        let mut readlen = (wdata.len() as u64).min(size.saturating_sub(offset)) as usize;
-        while let Err(x) = self.offset.compare_exchange(
-            offset,
-            offset + readlen as u64,
-            Ordering::Acquire,
-            Ordering::Relaxed,
-        ) {
-            offset = x;
-            readlen = (wdata.len() as u64).min(size.saturating_sub(offset)) as usize;
-        }
+        let offset = flags.offset;
+        let readlen = (wdata.len() as u64).min(size.saturating_sub(offset)) as usize;
+        flags.offset = offset + readlen as u64;
 
         // Perform read on device.
         self.block_dev.write_bytes(offset, wdata)?;
@@ -221,24 +202,17 @@ impl File for BlockDevFile {
     }
 
     fn read(&self, rdata: UserSliceMut<'_, u8>) -> EResult<usize> {
-        if !self.allow_read {
+        let mut flags = self.flags.lock()?;
+        if flags.flags & oflags::READ_ONLY == 0 {
             return Err(Errno::EBADF);
         }
 
         let size = self.block_dev.block_count() << self.block_dev.block_size_exp();
 
-        // Increment offset and determine read count.
-        let mut offset = self.offset.load(Ordering::Acquire);
-        let mut readlen = (rdata.len() as u64).min(size.saturating_sub(offset)) as usize;
-        while let Err(x) = self.offset.compare_exchange(
-            offset,
-            offset + readlen as u64,
-            Ordering::Acquire,
-            Ordering::Relaxed,
-        ) {
-            offset = x;
-            readlen = (rdata.len() as u64).min(size.saturating_sub(offset)) as usize;
-        }
+        // Increment offset and determine write count.
+        let offset = flags.offset;
+        let readlen = (rdata.len() as u64).min(size.saturating_sub(offset)) as usize;
+        flags.offset = offset + readlen as u64;
 
         // Perform read on device.
         self.block_dev.read_bytes(offset, rdata)?;

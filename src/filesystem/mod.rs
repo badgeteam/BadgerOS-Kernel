@@ -18,7 +18,10 @@ use linkflags::LinkFlags;
 use media::Media;
 use oflags::OFlags;
 use sysimpl::DentBuffer;
-use vfs::{DentCache, DentCacheDir, DentCacheType, VNode, Vfs, VfsDriver, VfsFile, mflags::MFlags};
+use vfs::{
+    DentCache, DentCacheDir, DentCacheType, FlagsAndOffset, VNode, Vfs, VfsDriver, VfsFile,
+    mflags::MFlags,
+};
 
 use crate::{
     LogLevel,
@@ -299,6 +302,10 @@ impl Debug for Dirent {
 
 /// Handle to an open file. Dropping it closes the file.
 pub trait File: Sync {
+    /// Get file mode and access flags.
+    fn get_flags(&self) -> u32;
+    /// Try to set file mode and access flags.
+    fn set_flags(&self, newfl: u32) -> EResult<()>;
     /// Succeed if this is a TTY, fail otherwise.
     fn isatty(&self) -> EResult<()> {
         Err(Errno::ENOTTY)
@@ -434,6 +441,8 @@ pub mod oflags {
     pub const NONBLOCK:   u32 = 0x0000_0200;
     /// TODO: Delete file after last reference to it is dropped.
     pub const TMPFILE:    u32 = 0x0000_0400;
+    /// Dup: Use next available instead of overwriting (fncntl(F_DUPFD)-style).
+    pub const DUP_FCNTL:  u32 = 0x0000_0800;
 }
 
 #[rustfmt::skip]
@@ -840,33 +849,26 @@ pub fn open(at: Option<&dyn File>, path: &[u8], mut oflags: OFlags) -> EResult<A
     match vnode.type_ {
         NodeType::Fifo => {
             // FIFO file ops.
-            Ok(Box::<dyn File>::from(Box::try_new(Fifo {
-                vnode: Some(vnode.clone()),
-                is_nonblock: oflags & oflags::NONBLOCK != 0,
-                allow_read: oflags & oflags::READ_ONLY != 0,
-                allow_write: oflags & oflags::WRITE_ONLY != 0,
-                shared: vnode.fifo.clone().unwrap(),
-            })?)
+            Ok(Box::<dyn File>::from(Box::try_new(Fifo::new(
+                Some(vnode.clone()),
+                oflags,
+                vnode.fifo.clone().unwrap(),
+            )?)?)
             .into())
         }
         NodeType::CharDev => {
             // Character device file ops.
-            Ok(Box::<dyn File>::from(Box::try_new(CharDevFile::new(
-                vnode.clone(),
-                oflags & oflags::READ_ONLY != 0,
-                oflags & oflags::WRITE_ONLY != 0,
-                oflags & oflags::NONBLOCK != 0,
-            ))?)
-            .into())
+            Ok(
+                Box::<dyn File>::from(Box::try_new(CharDevFile::new(vnode.clone(), oflags))?)
+                    .into(),
+            )
         }
         NodeType::BlockDev => {
             // Block device file ops.
-            Ok(Box::<dyn File>::from(Box::try_new(BlockDevFile::new(
-                vnode.clone(),
-                oflags & oflags::READ_ONLY != 0,
-                oflags & oflags::WRITE_ONLY != 0,
-            ))?)
-            .into())
+            Ok(
+                Box::<dyn File>::from(Box::try_new(BlockDevFile::new(vnode.clone(), oflags))?)
+                    .into(),
+            )
         }
         NodeType::UnixSocket => {
             logkf!(LogLevel::Warning, "TODO: UNIX domain socket file ops");
@@ -881,10 +883,10 @@ pub fn open(at: Option<&dyn File>, path: &[u8], mut oflags: OFlags) -> EResult<A
             }
             Ok(Box::<dyn File>::from(Box::try_new(VfsFile {
                 vnode,
-                offset: Mutex::new(0),
-                is_append: oflags & oflags::APPEND != 0,
-                allow_read: oflags & oflags::READ_ONLY != 0,
-                allow_write: oflags & oflags::WRITE_ONLY != 0,
+                flags: Mutex::new(FlagsAndOffset {
+                    offset: 0,
+                    flags: oflags,
+                }),
             })?)
             .into())
         }
@@ -1639,19 +1641,15 @@ pub fn pipe(oflags: OFlags) -> EResult<(Arc<dyn File>, Arc<dyn File>)> {
     // TODO: OOM handling.
     let shared = FifoShared::new();
     shared.open(true, true, true)?;
-    let write_end = Arc::new(Fifo {
-        vnode: None,
-        is_nonblock: (oflags & oflags::NONBLOCK) != 0,
-        allow_read: false,
-        allow_write: true,
-        shared: shared.clone(),
-    });
-    let read_end = Arc::new(Fifo {
-        vnode: None,
-        is_nonblock: (oflags & oflags::NONBLOCK) != 0,
-        allow_read: true,
-        allow_write: false,
+    let write_end = Arc::new(Fifo::new(
+        None,
+        (oflags & oflags::NONBLOCK) | oflags::WRITE_ONLY,
+        shared.clone(),
+    )?);
+    let read_end = Arc::new(Fifo::new(
+        None,
+        (oflags & oflags::NONBLOCK) | oflags::READ_ONLY,
         shared,
-    });
+    )?);
     Ok((write_end, read_end))
 }

@@ -1,50 +1,4 @@
-use std::{
-    fs,
-    io::{Read, Write},
-    process::Command,
-};
-
 fn main() {
-    let mut release = [0u8; 64];
-    let version_len = fs::File::open("VERSION")
-        .expect("Can't open VERSION file")
-        .read(&mut release)
-        .expect("Failed to read version");
-    let release = str::from_utf8(&release[..version_len]).unwrap();
-
-    let output = Command::new("git")
-        .args(["describe", "--tags", "--always", "--dirty"])
-        .output()
-        .unwrap();
-
-    let tag;
-    if output.status.success() {
-        tag = output.stdout;
-    } else {
-        tag = Vec::from(b"(no commit)");
-    }
-    let tag = str::from_utf8(&tag).unwrap();
-
-    let date = Command::new("date")
-        .args(["+%Y-%m-%d %H:%M:%S %Z"])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .unwrap_or_else(|| "(undated)".into());
-
-    let version = format!("{} {}", tag.trim_ascii(), date.trim_ascii());
-
-    let verfile = fs::File::create("target/version.rs").expect("Can't create version file");
-    write!(
-        &verfile,
-        "
-pub const RELEASE: &'static str = {:?};
-pub const VERSION: &'static str = {:?};
-",
-        release, version
-    )
-    .unwrap();
-
     // The bindgen::Builder is the main entry point
     // to bindgen, and lets you build up options for
     // the resulting bindings.
@@ -52,10 +6,7 @@ pub const VERSION: &'static str = {:?};
         .clang_args([
             "-Iinclude",
             "-Iinclude/badgelib",
-            "-Iport/generic/include",
             "-Icpu/riscv64/include",
-            "-I../common/include",
-            "-I../common/badgelib/include",
             "-Wno-unknown-attributes",
             "-DBADGEROS_KERNEL",
         ])

@@ -5,8 +5,12 @@
 
 #pragma once
 
-#include "block.h"
+#include "device/class/ahci.h"
+#include "device/class/block.h"
+#include "device/class/char.h"
+#include "device/class/irqctl.h"
 #include "device/class/pcictl.h"
+#include "device/class/tty.h"
 #include "irqctl.h"
 #include "tty.h"
 

@@ -9,6 +9,7 @@
 #include "device/class/union.h"
 #include "device/device.h"
 #include "device/dtb/dtb.h"
+#include "device/dtb/dtparse.h"
 #include "filesystem.h"
 #include "interrupt.h"
 #include "kmodule.h"

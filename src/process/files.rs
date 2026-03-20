@@ -103,9 +103,9 @@ impl FDTable {
     }
 
     /// Insert a file into an empty slot of the file descriptor table.
-    pub fn insert_file(&mut self, file: FileDesc) -> EResult<i32> {
+    pub fn insert_file(&mut self, minfd: i32, file: FileDesc) -> EResult<i32> {
         let mut fileno = Err(Errno::EMFILE);
-        for i in 0..FILE_MAX {
+        for i in minfd..FILE_MAX {
             if !self.inner.contains_key(&i) {
                 fileno = Ok(i);
                 break;

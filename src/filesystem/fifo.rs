@@ -14,11 +14,11 @@ use crate::{
         spinlock::Spinlock,
     },
     cpu::irq,
-    kernel::sync::waitlist::Waitlist,
+    kernel::sync::{mutex::Mutex, waitlist::Waitlist},
     process::usercopy::{UserSlice, UserSliceMut},
 };
 
-use super::{File, SeekMode, Stat, VNode, sysimpl::DentBuffer};
+use super::{File, SeekMode, Stat, VNode, oflags, sysimpl::DentBuffer};
 
 pub type FifoBuffer = badgelib::fifo::Fifo;
 
@@ -217,24 +217,62 @@ unsafe impl Sync for FifoShared {}
 /// A FIFO or a pipe file descriptor.
 pub struct Fifo {
     /// VNode, if any.
-    pub(super) vnode: Option<Arc<VNode>>,
-    /// Access is non-blocking.
-    pub(super) is_nonblock: bool,
-    /// This handle allows reading.
-    pub(super) allow_read: bool,
-    /// This handle allows writing.
-    pub(super) allow_write: bool,
+    vnode: Option<Arc<VNode>>,
+    /// Mode flags.
+    flags: Mutex<u32>,
     /// Handle to the FIFO data buffer.
-    pub(super) shared: Arc<FifoShared>,
+    shared: Arc<FifoShared>,
+}
+
+impl Fifo {
+    pub(super) fn new(
+        vnode: Option<Arc<VNode>>,
+        flags: u32,
+        shared: Arc<FifoShared>,
+    ) -> EResult<Self> {
+        shared.open(
+            flags & oflags::NONBLOCK != 0,
+            flags & oflags::READ_ONLY != 0,
+            flags & oflags::WRITE_ONLY != 0,
+        )?;
+        Ok(Self {
+            vnode,
+            flags: Mutex::new(flags),
+            shared,
+        })
+    }
 }
 
 impl Drop for Fifo {
     fn drop(&mut self) {
-        self.shared.close(self.allow_read, self.allow_write);
+        let flags = *self.flags.unintr_lock_shared();
+        self.shared.close(
+            flags & oflags::READ_ONLY != 0,
+            flags & oflags::WRITE_ONLY != 0,
+        );
     }
 }
 
 impl File for Fifo {
+    fn get_flags(&self) -> u32 {
+        *self.flags.unintr_lock_shared()
+    }
+
+    fn set_flags(&self, newfl: u32) -> EResult<()> {
+        let mut flags = self.flags.unintr_lock();
+        self.shared.open(
+            true,
+            newfl & oflags::READ_ONLY != 0,
+            newfl & oflags::WRITE_ONLY != 0,
+        )?;
+        self.shared.close(
+            *flags & oflags::READ_ONLY != 0,
+            *flags & oflags::WRITE_ONLY != 0,
+        );
+        *flags = newfl;
+        Ok(())
+    }
+
     fn get_dirents(&self, _buffer: &mut DentBuffer<'_>) -> EResult<()> {
         Err(Errno::ENOTDIR)
     }
@@ -256,10 +294,19 @@ impl File for Fifo {
     }
 
     fn write(&self, mut wdata: UserSlice<'_, u8>) -> EResult<usize> {
-        let mut wlen = self.shared.write(self.is_nonblock, wdata, false)?;
+        let flags = self.flags.lock_shared()?;
+        if *flags & oflags::WRITE_ONLY == 0 {
+            return Err(Errno::EBADF);
+        }
+        let mut wlen = self
+            .shared
+            .write(*flags & oflags::NONBLOCK != 0, wdata, false)?;
         wdata = wdata.subslice(wlen..wdata.len());
         while wdata.len() > 0 {
-            match self.shared.write(self.is_nonblock, wdata, true) {
+            match self
+                .shared
+                .write(*flags & oflags::NONBLOCK != 0, wdata, true)
+            {
                 Ok(res) => {
                     wlen += res;
                     wdata = wdata.subslice(res..wdata.len());
@@ -272,7 +319,11 @@ impl File for Fifo {
     }
 
     fn read(&self, mut rdata: UserSliceMut<'_, u8>) -> EResult<usize> {
-        let mut rlen = self.shared.read(self.is_nonblock, rdata)?;
+        let flags = self.flags.lock_shared()?;
+        if *flags & oflags::READ_ONLY == 0 {
+            return Err(Errno::EBADF);
+        }
+        let mut rlen = self.shared.read(*flags & oflags::NONBLOCK != 0, rdata)?;
         rdata = rdata.subslice_mut(rlen..rdata.len());
         while rdata.len() > 0
             && let Ok(res) = self.shared.read(true, rdata)

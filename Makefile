@@ -17,9 +17,12 @@ CLANG_FORMAT      ?= clang-format-18
 CLANG_TIDY        ?= clang-tidy-18
 DRIVE             ?= /dev/null
 PORT              ?= /dev/ttyUSB1
-
+	
 .PHONY: build
 build: cmake-configure
+	mkdir -p target
+	echo "pub const RELEASE: &'static str = \"$$(echo -n $$(git describe --tags --always --dirty))\";" > target/version.rs
+	echo "pub const VERSION: &'static str = \"$$(echo -n $$(date '+%Y-%m-%d %H:%M:%S %Z'))\";" >> target/version.rs
 	cmake --build '$(BUILDDIR)'
 	cmake --install '$(BUILDDIR)' --prefix '$(OUTPUT)'
 
