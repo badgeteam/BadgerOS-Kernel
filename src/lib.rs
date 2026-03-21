@@ -43,6 +43,7 @@ pub mod badgelib;
 pub mod boot;
 pub mod config;
 pub mod device;
+pub mod dev2;
 pub mod filesystem;
 pub mod misc;
 #[macro_use]
