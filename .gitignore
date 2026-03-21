@@ -12,3 +12,4 @@ root/
 target/
 kernel/chromedump.json
 uftrace.data
+*.bak

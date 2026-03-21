@@ -84,16 +84,16 @@ pub struct InvasiveListIter<'a, T: HasListNode<T>> {
 }
 
 impl<'a, T: HasListNode<T>> Iterator for InvasiveListIter<'a, T> {
-    type Item = *mut T;
+    type Item = &'a T;
 
-    fn next(&mut self) -> Option<*mut T> {
+    fn next(&mut self) -> Option<&'a T> {
         if self.cur <= 1 as _ {
             return None;
         }
         unsafe {
             let tmp = T::from_node(self.cur);
             self.cur = (*self.cur).next;
-            Some(tmp)
+            Some(&*tmp)
         }
     }
 }
