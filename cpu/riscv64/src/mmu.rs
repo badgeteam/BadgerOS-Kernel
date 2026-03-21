@@ -6,7 +6,7 @@ use core::arch::asm;
 
 use crate::mem::{
     pmm::PPN,
-    vmm::pagetable::{ASID_BITS, PAGING_LEVELS, PTE},
+    vmm::pmap::{ASID_BITS, PAGING_LEVELS, PTE},
 };
 
 pub mod flags {
@@ -24,15 +24,6 @@ pub mod flags {
     pub const A: u32 = 0b0000_0100_0000;
     /// Page was written since this flag was last cleared.
     pub const D: u32 = 0b0000_1000_0000;
-
-    /// Mark page as copy-on-write (W must be disabled).
-    pub const COW: u32 = 0b0001_0000_0000;
-    /// Mark page as shared (will not be turned into CoW on fork).
-    pub const SHM: u32 = 0b0010_0000_0000;
-    /// Mark page as memory-mapped I/O (anything except normal RAM; informational in case hardare doesn't support this flag).
-    pub const MMIO: u32 = 0b0011_0000_0000;
-    /// What kind of memory is mapped at this page.
-    pub const MODE: u32 = 0b0011_0000_0000;
 
     /// Map memory as I/O (uncached, no write coalescing).
     pub const IO: u32 = 0b0100_0000_0000;

@@ -74,6 +74,17 @@ pub struct Page {
 }
 
 impl Page {
+    /// Get the PPN of this page from its metadata pointer.
+    pub fn ppn(&self) -> PPN {
+        unsafe {
+            let vaddr = self as *const Self as usize;
+            (vaddr
+                .wrapping_sub(PAGE_STRUCTS_PAGE.wrapping_mul(PAGE_SIZE as usize))
+                .wrapping_sub(vmm::HHDM_OFFSET)
+                / size_of::<Page>())
+            .wrapping_sub(PAGE_RANGE.start)
+        }
+    }
     /// Get the buddy alloc page order.
     pub fn order(&self) -> u8 {
         ((self.flags.load(Ordering::Relaxed) & pgflags::ORDER_MASK) >> pgflags::ORDER_EXP) as u8
