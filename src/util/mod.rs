@@ -8,6 +8,7 @@ use crate::bindings::error::EResult;
 pub mod atomic_bitset;
 pub mod bitset;
 pub mod list;
+pub mod rtree;
 
 /// Enum that represents either a const or a mut reference.
 #[derive(PartialEq, Eq, PartialOrd, Ord)]

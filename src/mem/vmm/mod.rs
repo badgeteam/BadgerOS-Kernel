@@ -546,10 +546,14 @@ impl Drop for Memmap {
 /// Returns `true` if the fault should be ignored and the faulting operation retried.
 pub fn page_fault(vpn: VPN, access: u32, allow_sum: bool) -> bool {
     let thread = Thread::current();
-    if let Some(proc) = unsafe { (*thread).process.as_ref() } {
+    if !thread.is_null()
+        && let Some(proc) = unsafe { (*thread).process.as_ref() }
+    {
         proc.memmap().page_fault(vpn, access, allow_sum)
+    } else if let Some(mm) = unsafe { (&*&raw const KERNEL_MM).as_ref_unchecked() } {
+        mm.page_fault(vpn, access, allow_sum)
     } else {
-        kernel_mm().page_fault(vpn, access, allow_sum)
+        false
     }
 }
 

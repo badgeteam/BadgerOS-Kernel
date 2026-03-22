@@ -149,7 +149,8 @@ macro_rules! ktest {
             name: stringify!($name),
             func: {
                 fn func() -> crate::bindings::error::EResult<()> {
-                    try { $($code)* }
+                    {$($code)*}
+                    Ok(())
                 }
                 &(func as fn() -> crate::bindings::error::EResult<()>)
             },
@@ -172,7 +173,7 @@ macro_rules! ktest_expect {
         let rhs = $rhs;
         if !(lhs $oper rhs) {
             crate::printf!(
-                "\n\x1b[31mExpected\x1b[0m {} {} {}\x1b[31m, got\x1b[0m {} \x1b[31mand\x1b[0m {}\n",
+                "\n\x1b[31mExpected\x1b[0m {} {} {}\x1b[31m, got\x1b[0m {:?} \x1b[31mand\x1b[0m {:?}\n",
                 stringify!($lhs), stringify!($oper), stringify!($rhs), {lhs}, {rhs}
             );
             $($(
@@ -196,7 +197,7 @@ macro_rules! ktest_assert {
                 stringify!($cond)
             );
             $($(
-                crate::printf!("    where {} => {}\n", stringify!($ctx), {$ctx});
+                crate::printf!("    where {} => {:?}\n", stringify!($ctx), {$ctx});
             )*)?
             Err(crate::bindings::error::Errno::EASSERT)?;
         }
