@@ -4,9 +4,9 @@
 
 use core::ops::Range;
 
-use alloc::{boxed::Box, collections::linked_list::LinkedList, sync::Arc};
+use alloc::{collections::linked_list::LinkedList, sync::Arc, vec::Vec};
 
-use crate::{kernel::sync::spinlock::Spinlock, mem::pmm::Page};
+use crate::{kernel::sync::spinlock::Spinlock, mem::pmm::PPN};
 
 use super::*;
 
@@ -19,16 +19,26 @@ pub const FIXED: u32 = 0x10;
 
 /// A region of anonymous memory.
 struct Anon {
-    /// Current page for this anon.
-    page: *const Page,
+    ppn: PPN,
 }
 
 #[derive(Clone)]
-struct AMap {
+struct AnonMap {
     /// Offset from the parent [`MapEntry`].
     offset: VPN,
     /// Resident pages of this region.
-    pages: Option<Box<[Option<Arc<Anon>>]>>,
+    pages: Vec<Option<Arc<Anon>>>,
+}
+
+impl AnonMap {
+    /// Get the page currently mapped at `offset`.
+    pub fn get_page(&self, offset: VPN) -> Option<PPN> {
+        let offset = offset.checked_sub(self.offset)?;
+        if offset > self.pages.len() {
+            return None;
+        }
+        self.pages[offset as usize].as_deref().map(|x| x.ppn)
+    }
 }
 
 /// Entry in the linked list in [`Map`].
@@ -41,10 +51,10 @@ struct MapEntry {
     /// Region mapping flags.
     map: u8,
     /// Anonymous memory overlay.
-    amap: Option<Arc<AMap>>,
+    amap: Option<Arc<AnonMap>>,
 }
 
 /// Virtual address-space map.
 pub struct Map {
-    regions: LinkedList<Spinlock<AMap>>,
+    regions: LinkedList<Spinlock<AnonMap>>,
 }

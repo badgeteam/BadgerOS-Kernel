@@ -111,7 +111,6 @@ impl<'a> Drop for SharedRawSpinlockGuard<'a> {
 }
 
 /// Simple synchronization primitive which spins in a loop until successfully acquiring the lock.
-#[repr(C)]
 pub struct Spinlock<T> {
     pub inner: RawSpinlock,
     data: UnsafeCell<T>,

@@ -5,8 +5,9 @@
 use core::sync::atomic::AtomicUsize;
 
 pub mod map;
-pub mod mobj;
-pub mod pager;
+pub mod memmap;
+pub mod memobject;
+pub mod pagecache;
 pub mod pmap;
 
 /// Mapping protection flags.
