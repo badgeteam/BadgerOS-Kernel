@@ -32,6 +32,7 @@
 #![feature(try_trait_v2)]
 #![feature(transmutability)]
 #![feature(vec_try_remove)]
+#![feature(arc_is_unique)]
 
 #[macro_use]
 extern crate alloc;

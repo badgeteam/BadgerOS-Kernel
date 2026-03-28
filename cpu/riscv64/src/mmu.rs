@@ -6,7 +6,7 @@ use core::arch::asm;
 
 use crate::mem::{
     pmm::PPN,
-    vmm::pmap::{ASID_BITS, PAGING_LEVELS, PTE},
+    vmm::physmap::{ASID_BITS, PAGING_LEVELS, PTE},
 };
 
 pub mod flags {

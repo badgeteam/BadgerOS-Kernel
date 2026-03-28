@@ -4,11 +4,12 @@
 
 use core::sync::atomic::AtomicUsize;
 
+use crate::mem::pmm::PPN;
+
 pub mod map;
-pub mod memmap;
 pub mod memobject;
 pub mod pagecache;
-pub mod pmap;
+pub mod physmap;
 
 /// Mapping protection flags.
 pub mod prot {
@@ -24,6 +25,9 @@ pub mod prot {
 pub type AtomicVPN = AtomicUsize;
 /// Unsigned integer that can store a virtual page number.
 pub type VPN = usize;
+
+/// Page number of a page that is filled with zeroes.
+pub static mut PAGE_OF_ZEROES: PPN = 0;
 
 unsafe extern "C" {
     static __start_text: [u8; 0];

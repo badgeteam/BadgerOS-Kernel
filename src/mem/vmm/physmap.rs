@@ -72,11 +72,11 @@ impl PTE {
 
 /// Physical mapping structure; informs the CPU of the virtual address map.
 /// While it's safe to modify this structure in theory, actually providing it to the CPU is *unsafe*.
-pub struct PMap {
+pub struct PhysMap {
     root: PPN,
 }
 
-impl PMap {
+impl PhysMap {
     /// Get the physical page number of the root page table.
     /// While this structure is safe, actually providing it to the CPU is *unsafe*.
     pub const fn root(&self) -> PPN {
@@ -161,7 +161,7 @@ impl PMap {
     }
 }
 
-impl Drop for PMap {
+impl Drop for PhysMap {
     fn drop(&mut self) {
         todo!()
     }
