@@ -1,0 +1,33 @@
+Table;          Result; Header;                 C;                  Rust
+TID;            ;       abi-bits/tid_t.h;       tid_t;              process::TID
+PID;            ;       abi-bits/pid_t.h;       pid_t;              process::PID
+usize;          isize;  bits/types;             __mlibc_size;       usize
+isize;          ;       bits/types;             __mlibc_ptrdiff;    isize
+VAddr;          ;       ;                       void *;             usize
+bool;           i32;    bits/types;             __mlibc_bool;       bool
+char;           i32;    ;                       char;               u8
+ushort;         short;  ;                       unsigned short;     core::ffi::c_ushort
+short;          ;       ;                       short;              core::ffi::c_short
+uint;           int;    ;                       unsigned int;       core::ffi::c_uint
+int;            ;       ;                       int;                core::ffi::c_int
+ulong;          long;   ;                       unsigned long;      core::ffi::c_ulong
+long;           ;       ;                       long;               core::ffi::c_long
+ullong;         llong;  ;                       unsigned long long; core::ffi::c_ullong
+llong;          ;       ;                       long long;          core::ffi::c_llong
+u8;             i32;    bits/types;             __mlibc_uint8;      u8
+i8;             i32;    bits/types;             __mlibc_int8;       i8
+u16;            i32;    bits/types;             __mlibc_uint16;     u16
+i16;            i32;    bits/types;             __mlibc_int16;      i16
+u32;            i32;    bits/types;             __mlibc_uint32;     u32
+i32;            ;       bits/types;             __mlibc_int32;      i32
+u64;            i64;    bits/types;             __mlibc_uint64;     u64
+i64;            ;       bits/types;             __mlibc_int64;      i64
+VAddr;          ;       bits/types;             __mlibc_size;       usize
+UTSName;        ;       bits/utsname.h;         struct utsname;     process::uapi::uname::utsname
+Stat;           ;       abi-bits/stat.h;        struct stat;        process::uapi::stat::stat
+Timespec;       ;       bits/ansi/timespec.h;   struct timespec;    process::uapi::time::timespec
+Sigaction;      ;       abi-bits/signal.h;      struct sigaction;   process::uapi::signal::sigaction
+Sigset;         ;       abi-bits/signal.h;      sigset_t;           kernel::process::uapi::sigset::sigset_t
+Termios;        ;       abi-bits/termios.h;     struct termios;     kernel::process::uapi::termios::termios
+Path;           ;       ;                       char const *;       *const u8
+CStr;           ;       ;                       char const *;       *const u8

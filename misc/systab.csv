@@ -1,0 +1,49 @@
+Index;  Namespace;  Name;        Returns;    Params;                                                                Desc
+0;      thread;     yield;       ;           ;                                                                      Yield to other threads.
+1;      thread;     sleep;       ;           delay: u64;                                                            Sleep for a certain microsecond time.
+2;      thread;     create;      TID;        entry: VAddr, arg: VAddr, priority: u32;                               Create and start a new thread.
+3;      thread;     detach;      ;           thread_id: TID;                                                        Detach a thread; the thread will be destroyed as soon as it exits.
+4;      thread;     join;        int;        thread_id: TID;                                                        Wait for a thread to stop and return its exit code.
+5;      thread;     exit;        int;        code: int;                                                             Exit the current thread; exit code can be read unless destroyed or detached.
+6;      proc;       exit;        int;        code: int;                                                             Exit the process; exit code can be read by parent process.
+8;      proc;       fork;        i64;        ;                                                                      Create a copy of the running process and return its PID (to the parent) or -1 (to the child).
+9;      proc;       exec;        int;        path: Path, argv: **char, envp: **char;                                Execute the program at `path`, replacing the calling program's code and data in the process.
+10;     proc;       sigaction;   int;        signum: int, newhandler: *Sigaction, oldhandler: *mut Sigaction;       Set the signal handler for a specific signal number.
+11;     proc;       sigret;      int;        ;                                                                      Return from a signal handler.
+12;     proc;       waitpid;     i64;        pid: i64, wstatus: *mut int, options: int;                             Get child process status update.
+13;     fs;         open;        int;        at: int, path: Path, oflags: int;                                      Open a file, optionally relative to a directory.
+14;     fs;         close;       int;        fd: int;                                                               Flush and close a file.
+15;     fs;         read;        i64;        fd: int, read_buf: []mut u8;                                           Read bytes from a file.
+16;     fs;         write;       i64;        fd: int, write_buf: []u8;                                              Write bytes to a file.
+17;     fs;         getdents;    isize;      fd: int, read_buf: []mut u8;                                           Read directory entries from a directory handle.\nSee `dirent_t` for the format.
+18;     fs;         rename;      int;        old_at: int, old_path: Path, new_at: int, new_path: Path, flags: u32;  Rename and/or move a file to another path, optionally relative to one or two directories.
+19;     fs;         stat;        int;        fd: int, path: Path, follow_link: bool, stat_out: *mut Stat;           Get file status given file handler or path, optionally following the final symlink.\nIf `path` is specified, it is interpreted as relative to the working directory.\nIf both `path` and `fd` are specified, `path` is relative to the directory that `fd` describes.\nIf only `fd` is specified, the inode referenced by `fd` is stat'ed.\nIf `follow_link` is false, the last symlink in the path is not followed.
+20;     fs;         mkdir;       int;        at: int, path: Path;                                                   Create a new directory.
+21;     fs;         rmdir;       int;        at: int, path: Path;                                                   Delete a directory if it is empty.
+22;     fs;         link;        int;        old_at: int, old_path: Path, new_at: int, new_path: Path, flags: u32;  Create a new link to an existing inode.
+23;     fs;         unlink;      int;        at: int, path: Path;                                                   Remove a link to an inode. If it is the last link, the file is deleted.
+24;     fs;         mkfifo;      int;        at: int, path: Path;                                                   Create a new FIFO / named pipe.
+25;     fs;         pipe;        int;        fds: [2]mut int, flags: int;                                           Create a new pipe.\n`fds[0]` will be written with the pointer to the read end, `fds[1]` the write end.
+26;     fs;         seek;        i64;        fd: int, offset: i64, whence: int;                                     TODO: DESCRIPTION.
+27;     mem;        map;         VAddr;      address: VAddr, size: usize, prot: int, flags: int;                    Map a new range of memory at an arbitrary virtual address.\nThis may round up to a multiple of the page size.\nAlignment may be less than `align` if the kernel doesn't support it.
+28;     mem;        unmap;       int;        address: VAddr, size: usize;                                           Unmap a range of memory previously allocated with `SYSCALL_MEM_MAP`.
+29;     mem;        protect;     int;        address: VAddr, size: usize, prot: int;                                Change the protection flags on a range of memory.\nMay fail if the process does not have write access to mapped objects.
+30;     temp;       write;       int;        message: CStr, len: usize;                                             TODO: DESCRIPTION.
+31;     sys;        shutdown;    int;        is_reboot: bool;                                                       Start the shutdown process.
+32;     time;       gettime;     int;        clkid: int, time: *mut Timespec;                                       Get the value of some clock.
+33;     thread;     kill;        int;        thread_id: TID, signum: int;                                           Send a signal to a thread in this process.
+34;     proc;       kill;        int;        pid: i64, signum: int;                                                 Send a signal to an arbitrary thread in a specified process. See man kill(2).
+35;     proc;       getid;       int;        getid_type: int;                                                       Get an ID as specified by _GETID_* macros.
+36;     fs;         symlink;     int;        link_target: Path, at: int, path: Path;                                Create a new directory.
+37;     fs;         dup;         int;        fd: int, flags: int, newfd: int;                                       Duplicate a file descriptor.\nIf `newfd` is `-1`, an arbitrary descriptor number is selected.
+38;     thread;     sigmask;     int;        how: int, set: *Sigset, oldset: *mut Sigset;                           Modify the signal mask for this thread.
+39;     sys;        uname;       int;        name: *UTSName;                                                        Get system information.
+40;     fs;         isatty;      int;        fd: int;                                                               Succeed if `fd` is a TTY, fail otherwise.
+41;     fs;         tcgetattr;   int;        fd: int, attr: *mut Termios;                                           Get TTY attributes.
+42;     fs;         tcsetattr;   int;        fd: int, attr: *Termios;                                               Set TTY attributes.
+43;     fs;         getcwd;      int;        buf: []mut u8;                                                         Get the absolute path path of the current working directory.\nMay be outdated if the directory was moved.
+44;     fs;         chdir;       int;        at: int, path: Path;                                                   Change the working directory.\nSince setting both `at` and `path` is non-standard, it is currently unsupported.
+45;     fs;         getfd;       int;        fd: int;                                                               Get file descriptor flags.
+46;     fs;         setfd;       int;        fd: int, flags: int;                                                   Set file descriptor flags.
+47;     fs;         getfl;       int;        fd: int;                                                               Get file status flags.
+48;     fs;         setfl;       int;        fd: int, flags: int;                                                   Set file status flags.
