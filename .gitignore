@@ -10,6 +10,7 @@ root/
 .venv/
 .config
 target/
+src/process/syscall/templates
 kernel/chromedump.json
 uftrace.data
 *.bak
