@@ -13,5 +13,4 @@ pub mod stat;
 pub mod termios;
 pub mod time;
 pub mod uname;
-pub mod vm_flags;
 pub mod wait;

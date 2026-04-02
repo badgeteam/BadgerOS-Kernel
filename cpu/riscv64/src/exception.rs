@@ -6,7 +6,6 @@ use core::{hint::unreachable_unchecked, ptr::null_mut};
 
 use crate::{
     bindings::{device::HasBaseDevice, raw::irqno_t},
-    config,
     cpu::{
         self, irq,
         thread::{GpRegfile, SpRegfile},
@@ -202,17 +201,24 @@ unsafe fn riscv_exception_handler_impl(regs: &mut GpRegfile, sregs: &mut SpRegfi
     // Demand paging.
     if let CAUSE_IPAGE | CAUSE_LPAGE | CAUSE_SPAGE = sregs.scause {
         let is_sum = cpu::mmu::check_sum();
-        if vmm::page_fault(
-            sregs.stval / config::PAGE_SIZE as usize,
-            match sregs.scause {
-                CAUSE_IPAGE => vmm::flags::X,
-                CAUSE_LPAGE => vmm::flags::R,
-                CAUSE_SPAGE => vmm::flags::W,
-                _ => unsafe { unreachable_unchecked() },
-            } + !sregs.is_kernel_mode() as u32 * vmm::flags::U,
-            is_sum && sregs.scause != CAUSE_IPAGE,
-        ) {
-            return;
+        let access = match sregs.scause {
+            CAUSE_IPAGE => vmm::prot::EXEC,
+            CAUSE_LPAGE => vmm::prot::READ,
+            CAUSE_SPAGE => vmm::prot::WRITE,
+            _ => unsafe { unreachable_unchecked() },
+        };
+
+        if sregs.is_kernel_mode() && vmm::physmap::is_canon_kernel_addr(sregs.stval) {
+            if vmm::kernel_mm().fault(sregs.stval, access).is_ok() {
+                return;
+            }
+        } else if (!sregs.is_kernel_mode() || is_sum)
+            && vmm::physmap::is_canon_user_addr(sregs.stval)
+        {
+            let mm = unsafe { &*(&*thread).runtime().memmap };
+            if mm.fault(sregs.stval, access).is_ok() {
+                return;
+            }
         }
     }
 

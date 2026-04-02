@@ -12,7 +12,10 @@ use crate::{
         self,
         usercopy::{copy_from_user, copy_to_user, fallible_load_u8},
     },
-    mem,
+    mem::{
+        self,
+        vmm::physmap::{is_canon_user_addr, is_canon_user_range},
+    },
 };
 
 pub type AccessResult<T> = Result<T, Errno>;
@@ -95,7 +98,7 @@ impl<'a, T: UserCopyable> UserSlice<'a, T, false> {
     pub fn new(ptr: *const T, length: usize) -> AccessResult<Self> {
         let vaddr = ptr as usize;
         if !ptr.is_aligned()
-            || !mem::vmm::pagetable::is_canon_user_range(
+            || !is_canon_user_range(
                 vaddr
                     ..vaddr
                         .checked_add(length.checked_mul(size_of::<T>()).ok_or(AccessFault)?)
@@ -125,7 +128,7 @@ impl<'a, T: UserCopyable> UserSlice<'a, T, true> {
     /// Create a new user-access slice; will validate that the range is user memory.
     pub fn new_mut(ptr: *mut T, length: usize) -> AccessResult<Self> {
         let vaddr = ptr as usize;
-        if !mem::vmm::pagetable::is_canon_user_range(
+        if !is_canon_user_range(
             vaddr
                 ..vaddr
                     .checked_add(length.checked_mul(size_of::<T>()).ok_or(AccessFault)?)
@@ -329,9 +332,7 @@ impl<'a, T: UserCopyable> UserPtr<'a, T, false> {
     pub fn new(ptr: *const T) -> AccessResult<Self> {
         let vaddr = ptr as usize;
         if !ptr.is_aligned()
-            || !mem::vmm::pagetable::is_canon_user_range(
-                vaddr..vaddr.checked_add(size_of::<T>()).ok_or(AccessFault)?,
-            )
+            || !is_canon_user_range(vaddr..vaddr.checked_add(size_of::<T>()).ok_or(AccessFault)?)
         {
             return Err(AccessFault);
         }
@@ -344,9 +345,7 @@ impl<'a, T: UserCopyable> UserPtr<'a, T, false> {
     /// Create a new nullable user-access pointer; will validate that the range is user memory.
     pub fn new_nullable(ptr: *const T) -> AccessResult<Option<Self>> {
         let vaddr = ptr as usize;
-        if !mem::vmm::pagetable::is_canon_user_range(
-            vaddr..vaddr.checked_add(size_of::<T>()).ok_or(AccessFault)?,
-        ) {
+        if !is_canon_user_range(vaddr..vaddr.checked_add(size_of::<T>()).ok_or(AccessFault)?) {
             return Err(AccessFault);
         }
         Ok(try {
@@ -370,9 +369,7 @@ impl<'a, T: UserCopyable> UserPtr<'a, T, true> {
     /// Create a new user-access pointer; will validate that the range is user memory.
     pub fn new_mut(ptr: *mut T) -> AccessResult<Self> {
         let vaddr = ptr as usize;
-        if !mem::vmm::pagetable::is_canon_user_range(
-            vaddr..vaddr.checked_add(size_of::<T>()).ok_or(AccessFault)?,
-        ) {
+        if !is_canon_user_range(vaddr..vaddr.checked_add(size_of::<T>()).ok_or(AccessFault)?) {
             return Err(AccessFault);
         }
         Ok(Self {
@@ -384,9 +381,7 @@ impl<'a, T: UserCopyable> UserPtr<'a, T, true> {
     /// Create a new nullable user-access pointer; will validate that the range is user memory.
     pub fn new_nullable_mut(ptr: *mut T) -> AccessResult<Option<Self>> {
         let vaddr = ptr as usize;
-        if !mem::vmm::pagetable::is_canon_user_range(
-            vaddr..vaddr.checked_add(size_of::<T>()).ok_or(AccessFault)?,
-        ) {
+        if !is_canon_user_range(vaddr..vaddr.checked_add(size_of::<T>()).ok_or(AccessFault)?) {
             return Err(AccessFault);
         }
         Ok(try {
@@ -446,7 +441,7 @@ pub fn read_user_cstr(mut user_cstr: *const c_char, buffer: &mut [u8]) -> Access
     unsafe { cpu::mmu::enable_sum() };
 
     for i in 0..buffer.len() {
-        if !mem::vmm::pagetable::is_canon_user_addr(user_cstr as usize) {
+        if !is_canon_user_addr(user_cstr as usize) {
             unsafe { cpu::mmu::disable_sum() };
             return Err(AccessFault);
         }
@@ -473,7 +468,7 @@ pub fn copy_user_cstr(mut user_cstr: *const c_char) -> EResult<CString> {
     let mut res = Vec::new();
 
     loop {
-        if !mem::vmm::pagetable::is_canon_user_addr(user_cstr as usize) {
+        if !is_canon_user_addr(user_cstr as usize) {
             unsafe { cpu::mmu::disable_sum() };
             return Err(AccessFault);
         }

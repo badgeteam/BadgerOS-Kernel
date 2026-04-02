@@ -11,7 +11,10 @@ use super::*;
 use crate::{
     bindings::{error::EResult, raw::phys_page_free},
     config::PAGE_SIZE,
-    cpu::mmu::{BITS_PER_LEVEL, INVALID_PTE, PackedPTE},
+    cpu::{
+        self,
+        mmu::{BITS_PER_LEVEL, INVALID_PTE, PackedPTE},
+    },
     mem::{
         pmm::{self, PPN},
         vmm::VPN,
@@ -77,6 +80,10 @@ pub struct PhysMap {
 }
 
 impl PhysMap {
+    pub fn new() -> EResult<Self> {
+        todo!()
+    }
+
     /// Get the physical page number of the root page table.
     /// While this structure is safe, actually providing it to the CPU is *unsafe*.
     pub const fn root(&self) -> PPN {
@@ -158,6 +165,14 @@ impl PhysMap {
         }
 
         Ok(())
+    }
+
+    /// Enable this physical map on this CPU.
+    pub unsafe fn enable(&self) {
+        unsafe {
+            cpu::mmu::set_page_table(self.root, 0);
+            cpu::mmu::vmem_fence(None, None);
+        }
     }
 }
 
@@ -314,4 +329,14 @@ pub fn canon_half_pages() -> usize {
 /// Get the size of a "half" of the canonical ranges.
 pub fn canon_half_size() -> usize {
     (PAGE_SIZE as usize) << (BITS_PER_LEVEL * unsafe { PAGING_LEVELS } - 1)
+}
+
+/// Get the start of the higher half.
+pub fn higher_half_page() -> VPN {
+    VPN::MAX / PAGE_SIZE as VPN - canon_half_pages()
+}
+
+/// Get the start of the higher half.
+pub fn higher_half_vaddr() -> usize {
+    usize::MAX - canon_half_size()
 }

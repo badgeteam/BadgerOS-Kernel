@@ -108,7 +108,7 @@ pub unsafe fn exit_signal(regs: &mut GpRegfile, sregs: &mut SpRegfile) -> Access
 /// Call into userspace from this thread.
 pub fn call_usermode(regs: &GpRegfile) {
     unsafe {
-        let uctx = &mut (&mut *Thread::current()).runtime().uctx;
+        let uctx = &mut (&*Thread::current()).runtime().uctx;
         debug_assert!(uctx.pc == 0, "Cannot recursively call into usermode");
         irq::disable();
 
@@ -136,7 +136,7 @@ unsafe extern "C" {
 /// Return from userspace in this thread.
 /// Overwrites `regs` and `sregs` with the values needed to continue into the kernel.
 pub fn exit_usermode(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
-    let uctx = unsafe { &mut (&mut *Thread::current()).runtime().uctx };
+    let uctx = unsafe { &mut (&*Thread::current()).runtime().uctx };
     sregs.sepc = uctx.pc;
     sregs.sstatus |= (1 << 8) | (1 << 5); // +SPP +SPIE
     sregs.sstatus &= !(xs::MASK << SSTATUS_VS_BIT); // Float and vector state disabled.

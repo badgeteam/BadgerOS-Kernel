@@ -2,7 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use crate::{bindings::device::dtb::DtbNode, cpu::CpuFeatures, mem::vmm::pagetable::PAGING_LEVELS};
+use crate::{bindings::device::dtb::DtbNode, cpu::CpuFeatures, mem::vmm::physmap::PAGING_LEVELS};
 
 #[derive(Debug, Default, Clone, Copy)]
 struct IsaSpec {

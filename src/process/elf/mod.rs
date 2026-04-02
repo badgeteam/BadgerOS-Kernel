@@ -10,7 +10,7 @@ use crate::{
     config::PAGE_SIZE,
     cpu,
     filesystem::{self, File, oflags},
-    mem::vmm::{self, Memmap},
+    mem::vmm::{self, map::VmSpace},
     process::usercopy::UserSliceMut,
 };
 
@@ -71,21 +71,19 @@ pub struct ElfIdent {
 /// Temporary mapping helper for [`load`].
 fn map_helper(
     file: &dyn File,
-    memmap: &Memmap,
+    memmap: &VmSpace,
     phdr: elf64::ProgHeader,
     load_offset: usize,
 ) -> EResult<()> {
     let vaddr = phdr.vaddr as usize + load_offset;
     let vaddr_end = vaddr + phdr.mem_size as usize;
 
-    unsafe {
-        memmap.map_ram(
-            Some(vaddr / PAGE_SIZE as usize),
-            (vaddr_end - vaddr).div_ceil(PAGE_SIZE as usize),
-            vmm::flags::RWX,
-        )?;
-    }
-    cpu::mmu::vmem_fence(None, None);
+    memmap.map(
+        vaddr / PAGE_SIZE as usize,
+        (vaddr_end - vaddr).div_ceil(PAGE_SIZE as usize),
+        vmm::map::FIXED | vmm::map::PRIVATE,
+        vmm::prot::READ | vmm::prot::WRITE | vmm::prot::EXEC,
+    )?;
 
     let mut uslice = UserSliceMut::new_mut(vaddr as *mut u8, phdr.mem_size as usize)?;
     uslice.fill(0)?;
@@ -114,13 +112,13 @@ fn map_helper(
 
 /// Load an ELF file into a memory map.
 /// Returns the entrypoint to jump to.
-pub fn load(file: &dyn File, memmap: &Memmap, auxv: &mut Vec<AuxvEntry>) -> EResult<usize> {
+pub fn load(file: &dyn File, memmap: &VmSpace, auxv: &mut Vec<AuxvEntry>) -> EResult<usize> {
     load_impl(file, memmap, auxv, false)
 }
 
 pub fn load_impl(
     file: &dyn File,
-    memmap: &Memmap,
+    memmap: &VmSpace,
     auxv: &mut Vec<AuxvEntry>,
     is_interp: bool,
 ) -> EResult<usize> {
@@ -161,7 +159,7 @@ pub fn load_impl(
         // Decide the best address to load.
         let base = if is_interp {
             // Halfway through virtual memory to avoid getting in user code's way.
-            vmm::pagetable::canon_half_size() / 2
+            vmm::physmap::canon_half_size() / 2
         } else {
             // 64K away from the start to have some margin without anything mapped.
             0x10000

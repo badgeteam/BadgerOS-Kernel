@@ -18,14 +18,23 @@ use crate::{
     util::list::{InvasiveList, InvasiveListNode},
 };
 
-use super::*;
+use super::{
+    physmap::{canon_half_pages, higher_half_page},
+    *,
+};
 
 /// Mapping is shared (not CoW'ed on fork).
-pub const SHARED: u8 = 0x01;
+pub const SHARED: u32 = 0x01;
 /// Mapping is private (CoW'ed on fork).
-pub const PRIVATE: u8 = 0x02;
+pub const PRIVATE: u32 = 0x02;
 /// Replace the mapping at the given address if it exists.
-pub const FIXED: u8 = 0x10;
+pub const FIXED: u32 = 0x10;
+/// Anonymous mapping (doesn't have an associated file descriptor).
+pub const ANONYMOUS: u32 = 0x20;
+/// Mapping must be populated immediately.
+pub const POPULATE: u32 = 0x8000;
+/// Kernel mapping need not be populated immediately; has no effect on user mappings.
+pub const LAZY_KERNEL: u32 = 0x8000_0000;
 
 /// A region of anonymous memory.
 struct Anon {
@@ -124,7 +133,7 @@ impl AnonMap {
             anon = match Arc::try_new(Anon { ppn: new_page }) {
                 Ok(x) => x,
                 Err(x) => {
-                    pmm::page_free(new_page);
+                    pmm::page_free(new_page, 0);
                     return Err(x.into());
                 }
             };
@@ -162,7 +171,7 @@ struct MapEntryInner {
     /// Region protection flags.
     prot: u8,
     /// Region mapping flags.
-    map: u8,
+    map: u32,
     /// Anonymous memory overlay.
     amap: Option<Arc<AnonMap>>,
     // TODO: Memory object offset and reference.
@@ -297,7 +306,7 @@ impl MapEntryInner {
 }
 
 /// Virtual address-space map.
-pub struct VmSpace {
+struct VmSpaceInner {
     /// Architecture-specific virtual to physical address map.
     pmap: PhysMap,
     /// Doubly-linked list of contiguous ranges with identical map and protection flags.
@@ -306,7 +315,14 @@ pub struct VmSpace {
     map: Spinlock<InvasiveList<MapEntry>>,
 }
 
-impl VmSpace {
+impl VmSpaceInner {
+    fn new(pmap: PhysMap) -> Self {
+        Self {
+            pmap,
+            map: Spinlock::new(InvasiveList::new()),
+        }
+    }
+
     /// Create a new mapping that must exist somewhere within `bounds` and try to place it at `hint`.
     /// If the `FIXED` flag is set in `map`, then overwrite any existing mappings in the way.
     /// Will never touch ranges of memory outside of `bounds`.
@@ -316,9 +332,9 @@ impl VmSpace {
         size: VPN,
         hint: VPN,
         bounds: Range<VPN>,
-        map: u8,
+        map: u32,
         prot: u8,
-    ) -> EResult<()> {
+    ) -> EResult<usize> {
         todo!()
     }
 
@@ -332,24 +348,152 @@ impl VmSpace {
     /// Unmap all pages within `bounds`.
     /// No changes are made on failure.
     /// Preserves the outer portion of mappings on the border of `bounds`.
-    pub unsafe fn unmap(&self, bounds: Range<VPN>, prot: u8) -> EResult<()> {
+    pub unsafe fn unmap(&self, bounds: Range<VPN>) -> EResult<()> {
         todo!()
     }
 
     /// Handle a page fault at address `vaddr`.
     /// If this returns [`Ok`], the access should be retried.
-    pub unsafe fn fault(&self, vaddr: usize) -> EResult<()> {
+    pub fn fault(&self, vaddr: usize, access: u8) -> EResult<()> {
+        todo!()
+    }
+
+    /// Clear the entire address-space.
+    pub fn clear(&self) {
         todo!()
     }
 }
 
-impl Drop for VmSpace {
+impl Drop for VmSpaceInner {
     fn drop(&mut self) {
         let mut map = self.map.lock();
         unsafe {
             while let Some(entry) = map.pop_front() {
                 drop(Box::from_raw(entry));
             }
+        }
+    }
+}
+
+/// Virtual address-space map for user memory.
+pub struct VmSpace(VmSpaceInner);
+
+impl VmSpace {
+    /// Create a new address-space for user memory.
+    pub fn new() -> EResult<Self> {
+        let pmap = PhysMap::new()?;
+        Ok(Self(VmSpaceInner::new(pmap)))
+    }
+
+    /// The virtual page number bounds within which user virtual address-space maps work.
+    pub fn bounds() -> Range<VPN> {
+        // Not including the last page before the non-canonical addresses because on x86 it could allow userspace to cause a kernel page fault.
+        0..canon_half_pages() - 1
+    }
+
+    /// Create a new mapping that must exist somewhere within `bounds` and try to place it at `hint`.
+    /// If the `FIXED` flag is set in `map`, then overwrite any existing mappings in the way.
+    /// Will never touch ranges of memory outside of `bounds`.
+    /// TODO: MemObject parameter.
+    pub fn map(&self, size: VPN, hint: VPN, map: u32, prot: u8) -> EResult<usize> {
+        unsafe {
+            self.0.map(
+                size,
+                hint,
+                Self::bounds(),
+                map,
+                prot & !prot::IO & !prot::NC,
+            )
+        }
+    }
+
+    /// Change the protection flags for pages within `bounds`.
+    /// No changes are made on failure.
+    /// Preserves the outer portion of mappings on the border of `bounds`.
+    pub fn protect(&self, bounds: Range<usize>, prot: u8) -> EResult<()> {
+        assert!(Self::bounds().start <= bounds.start && Self::bounds().end >= bounds.end);
+        unsafe { self.0.protect(bounds, prot) }
+    }
+
+    /// Unmap all pages within `bounds`.
+    /// No changes are made on failure.
+    /// Preserves the outer portion of mappings on the border of `bounds`.
+    pub fn unmap(&self, bounds: Range<usize>) -> EResult<()> {
+        assert!(Self::bounds().start <= bounds.start && Self::bounds().end >= bounds.end);
+        unsafe { self.0.unmap(bounds) }
+    }
+
+    /// Handle a page fault at address `vaddr`.
+    /// If this returns [`Ok`], the access should be retried.
+    pub fn fault(&self, vaddr: usize, access: u8) -> EResult<()> {
+        self.0.fault(vaddr, access)
+    }
+
+    /// Clone this virtual-address space as needed for the `fork` system call.
+    pub fn fork(&self) -> EResult<Self> {
+        todo!()
+    }
+
+    /// Clear the entire address-space.
+    pub fn clear(&self) {
+        self.0.clear();
+    }
+
+    /// Enable the underlying physical map on this CPU.
+    pub unsafe fn enable(&self) {
+        unsafe {
+            self.0.pmap.enable();
+        }
+    }
+}
+
+/// Virtual address-space map for user memory.
+pub struct KernelVmSpace(VmSpaceInner);
+
+impl KernelVmSpace {
+    /// The virtual page number bounds within which user virtual address-space maps work.
+    pub fn bounds() -> Range<VPN> {
+        // The upper quarter of the higher half is used for miscellaneous mappings.
+        higher_half_page() + canon_half_pages() / 4..higher_half_page() + canon_half_pages()
+    }
+
+    /// Create a new mapping that must exist somewhere within `bounds` and try to place it at `hint`.
+    /// If the `FIXED` flag is set in `map`, then overwrite any existing mappings in the way.
+    /// Will never touch ranges of memory outside of `bounds`.
+    /// TODO: MemObject parameter.
+    pub unsafe fn map(&self, size: VPN, hint: VPN, mut map: u32, prot: u8) -> EResult<usize> {
+        if map & LAZY_KERNEL == 0 {
+            map |= POPULATE;
+        }
+        unsafe { self.0.map(size, hint, Self::bounds(), map, prot) }
+    }
+
+    /// Change the protection flags for pages within `bounds`.
+    /// No changes are made on failure.
+    /// Preserves the outer portion of mappings on the border of `bounds`.
+    pub unsafe fn protect(&self, bounds: Range<usize>, prot: u8) -> EResult<()> {
+        assert!(Self::bounds().start <= bounds.start && Self::bounds().end >= bounds.end);
+        unsafe { self.0.protect(bounds, prot) }
+    }
+
+    /// Unmap all pages within `bounds`.
+    /// No changes are made on failure.
+    /// Preserves the outer portion of mappings on the border of `bounds`.
+    pub unsafe fn unmap(&self, bounds: Range<usize>) -> EResult<()> {
+        assert!(Self::bounds().start <= bounds.start && Self::bounds().end >= bounds.end);
+        unsafe { self.0.unmap(bounds) }
+    }
+
+    /// Handle a page fault at address `vaddr`.
+    /// If this returns [`Ok`], the access should be retried.
+    pub fn fault(&self, vaddr: usize, access: u8) -> EResult<()> {
+        self.0.fault(vaddr, access)
+    }
+
+    /// Enable the underlying physical map on this CPU.
+    pub fn enable(&self) {
+        unsafe {
+            self.0.pmap.enable();
         }
     }
 }

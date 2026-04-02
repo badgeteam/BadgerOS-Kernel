@@ -25,6 +25,9 @@ pub mod flags {
     /// Page was written since this flag was last cleared.
     pub const D: u32 = 0b0000_1000_0000;
 
+    /// Enable reference-counting logic in [`PhysMap`].
+    pub const REFCOUNT: u32 = 0b0001_0000_0000;
+
     /// Map memory as I/O (uncached, no write coalescing).
     pub const IO: u32 = 0b0100_0000_0000;
     /// Map memory as uncached write coalescing.

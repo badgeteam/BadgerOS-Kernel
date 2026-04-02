@@ -5,7 +5,7 @@
 use core::{
     cell::UnsafeCell,
     ffi::c_int,
-    ptr::{NonNull, addr_eq},
+    ptr::addr_eq,
     sync::atomic::{AtomicI64, AtomicU32, Ordering},
     usize,
 };
@@ -38,7 +38,7 @@ use crate::{
         raw::timestamp_us_t,
     },
     config::{PAGE_SIZE, STACK_SIZE},
-    cpu::{self, mmu, thread::GpRegfile, usermode::call_usermode},
+    cpu::{thread::GpRegfile, usermode::call_usermode},
     device::builtin_driver::null_instance,
     filesystem::{self, File, SeekMode, device::CharDevFile, mode, oflags},
     kernel::{
@@ -49,10 +49,7 @@ use crate::{
             waitlist::Waitlist,
         },
     },
-    mem::{
-        pmm::PPN,
-        vmm::{self, Memmap},
-    },
+    mem::vmm::{self, map::VmSpace},
     process::{files::FDTable, uapi::wait::w_if_signalled},
 };
 
@@ -142,7 +139,7 @@ pub struct Process {
     status: Spinlock<ProcStatus>,
     pcr: Mutex<PCR>,
     cmdline: Mutex<Cmdline>,
-    memmap: UnsafeCell<Memmap>,
+    memmap: UnsafeCell<VmSpace>,
     sigtab: Mutex<Sigtab>,
     pub files: Mutex<FDTable>,
     tid_counter: AtomicI64,
@@ -177,11 +174,6 @@ impl Process {
     /// View the process' command line.
     pub fn cmdline<'a>(&'a self) -> SharedMutexGuard<'a, Cmdline> {
         self.cmdline.unintr_lock_shared()
-    }
-
-    /// Get the page table's root physical page number.
-    pub fn pagetable(&self) -> PPN {
-        self.memmap().root_ppn()
     }
 
     /// Prepare the entrypoint stack.
@@ -239,7 +231,7 @@ impl Process {
                 parent: Weak::new(),
                 children: BTreeMap::new(),
             }),
-            memmap: UnsafeCell::new(Memmap::new_user()?),
+            memmap: UnsafeCell::new(VmSpace::new()?),
             files: Mutex::new(FDTable::new()),
             cmdline: Mutex::new(Cmdline {
                 binary: init_path.clone(),
@@ -341,7 +333,7 @@ impl Process {
 
     /// Execute a new binary, replacing this process.
     pub fn exec(self: &Arc<Self>, mut cmdline: Cmdline) -> EResult<()> {
-        let new_mm = Memmap::new_user()?;
+        let new_mm = VmSpace::new()?;
         let file = filesystem::open(None, cmdline.binary.as_bytes(), oflags::READ_ONLY)?;
         let entry = load_executable(&new_mm, &mut cmdline, file.as_ref(), 0)?;
 
@@ -363,10 +355,8 @@ impl Process {
         *self.cmdline.unintr_lock() = cmdline;
         self.prefill_stdio_fds().unwrap();
 
-        unsafe {
-            cpu::mmu::set_page_table(new_mm.root_ppn(), 0);
-            *self.memmap.as_mut_unchecked() = new_mm;
-        }
+        // Set to kernel memmap again since this thread will exit before returning from syscall anyway.
+        vmm::kernel_mm().enable();
         let proc2 = self.clone();
         self.create_thread(
             move |stack_top| {
@@ -426,7 +416,7 @@ impl Process {
     }
 
     /// Subject to replacement.
-    pub fn memmap(&self) -> &Memmap {
+    pub fn memmap(&self) -> &VmSpace {
         unsafe { self.memmap.as_ref_unchecked() }
     }
 
@@ -517,7 +507,7 @@ impl Process {
 
         self.files.unintr_lock().clear();
         self.sigqueue.unintr_lock().clear();
-        unsafe { self.memmap().clear() };
+        self.memmap().clear();
     }
 
     /// Create a new thread in this process.
@@ -530,13 +520,24 @@ impl Process {
         let tid = self.tid_counter.fetch_add(1, Ordering::Relaxed);
         let stack_pages = (STACK_SIZE / PAGE_SIZE) as usize;
         // TODO: Safe and owning API for memory objects?
-        let u_stack = unsafe { self.memmap().map_ram(None, stack_pages, vmm::flags::RW) }?;
+        let u_stack = self.memmap().map(
+            stack_pages,
+            0,
+            vmm::map::PRIVATE,
+            vmm::prot::READ | vmm::prot::EXEC,
+        )?;
         let proc_self = self.clone();
         let thread = Thread::new(
             move || {
                 // Set up things on the stack.
                 let u_stack_top = ((u_stack + stack_pages) * PAGE_SIZE as usize) as *mut ();
                 let (pc, sp) = setup(u_stack_top);
+
+                // Enable the process' memory map.
+                unsafe {
+                    (&*Thread::current()).runtime().memmap = proc_self.memmap();
+                    proc_self.memmap().enable();
+                }
 
                 // Call user mode.
                 let mut regs = GpRegfile::default();
@@ -545,17 +546,13 @@ impl Process {
                 call_usermode(&regs);
 
                 // Clean up the stack.
-                unsafe {
-                    proc_self.memmap().unmap(u_stack..u_stack + stack_pages);
-                }
+                proc_self.memmap().unmap(u_stack..u_stack + stack_pages);
             },
             Some(self.clone()),
             name,
         );
         if thread.is_err() {
-            unsafe {
-                self.memmap().unmap(u_stack..u_stack + stack_pages);
-            }
+            self.memmap().unmap(u_stack..u_stack + stack_pages);
         }
         self.threads.unintr_lock().threads.insert(tid, thread?);
         Ok(tid)
@@ -680,30 +677,33 @@ impl Process {
 
 /// Implementation of [`load_executable`] for ELF files.
 fn load_executable_elf(
-    memmap: &Memmap,
-
+    memmap: &VmSpace,
     auxv: &mut Vec<AuxvEntry>,
     file: &dyn File,
     _recursion: u8,
 ) -> EResult<usize> {
     let thread = Thread::current();
+    let oldmap;
     unsafe {
-        (*thread).mm_override = Some(NonNull::from_ref(memmap));
-        cpu::mmu::set_page_table(memmap.root_ppn(), 0);
-        mmu::vmem_fence(None, None);
+        oldmap = (*thread).runtime().memmap;
+        (*thread).runtime().memmap = memmap;
+        memmap.enable();
     }
     let res = elf::load(file, memmap, auxv);
     unsafe {
-        (*thread).mm_override = None;
-        cpu::mmu::set_page_table(memmap.root_ppn(), 0);
-        mmu::vmem_fence(None, None);
+        (*thread).runtime().memmap = oldmap;
+        if oldmap.is_null() {
+            vmm::kernel_mm().enable();
+        } else {
+            (&*oldmap).enable();
+        }
     }
     res
 }
 
 /// Implementation of [`load_executable`] for `#!` interpreted executables.
 fn load_executable_shebang(
-    memmap: &Memmap,
+    memmap: &VmSpace,
     cmdline: &mut Cmdline,
     file: &dyn File,
     recursion: u8,
@@ -733,7 +733,7 @@ fn load_executable_shebang(
 
 /// Load the binary for a process and prepare for its execution.
 fn load_executable(
-    memmap: &Memmap,
+    memmap: &VmSpace,
 
     cmdline: &mut Cmdline,
     file: &dyn File,

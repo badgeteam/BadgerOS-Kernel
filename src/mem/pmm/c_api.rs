@@ -16,8 +16,8 @@ unsafe extern "C" fn pmm_page_alloc(order: u8, usage: PageUsage) -> errno_ppn_t 
 
 /// Free pages of physical memory.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn pmm_page_free(block: PPN) {
-    unsafe { page_free(block) };
+unsafe extern "C" fn pmm_page_free(block: PPN, order: u8) {
+    unsafe { page_free(block, order) };
 }
 
 /// Get the `pmm_page_t` struct for some physical page number.

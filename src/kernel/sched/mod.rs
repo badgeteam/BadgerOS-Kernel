@@ -4,7 +4,7 @@
 
 use core::{
     cell::UnsafeCell,
-    ptr::{NonNull, null_mut, slice_from_raw_parts_mut},
+    ptr::{null, null_mut, slice_from_raw_parts_mut},
     sync::atomic::{AtomicI32, AtomicI64, AtomicU32, Ordering, fence},
 };
 
@@ -29,7 +29,7 @@ use crate::{
             waitlist::Waitlist,
         },
     },
-    mem::vmm::{self, Memmap, kernel_mm},
+    mem::vmm::{self, map::VmSpace},
     misc::panic,
     process::{
         Process,
@@ -83,15 +83,18 @@ pub struct ThreadRuntime {
     pub sigaltstack: stack_t,
     /// Masked signals; anything in this set delivered asynchronously will be ignored.
     pub sigprocmask: sigset_t,
+    /// Current memory map, or null() if default.
+    pub memmap: *const VmSpace,
 }
 
 impl ThreadRuntime {
     fn new(code: Box<dyn FnOnce() + 'static + Send>) -> EResult<Self> {
         unsafe {
-            let stack_vpn = vmm::kernel_mm().map_ram(
-                None,
+            let stack_vpn = vmm::kernel_mm().map(
                 STACK_SIZE as usize / PAGE_SIZE as usize,
-                vmm::flags::RW,
+                0,
+                0,
+                vmm::prot::READ | vmm::prot::WRITE,
             )?;
 
             let stack_bottom = stack_vpn * PAGE_SIZE as usize;
@@ -114,6 +117,7 @@ impl ThreadRuntime {
                 fstate: FloatState::new(),
                 sigaltstack: stack_t::default(),
                 sigprocmask: sigset_t::default(),
+                memmap: null(),
             })
         }
     }
@@ -158,8 +162,6 @@ pub struct Thread {
     pub process: Option<Arc<Process>>,
     /// Thread name for debugging purposes.
     pub name: Option<String>,
-    /// Temporary memory map override.
-    pub mm_override: Option<NonNull<Memmap>>,
     /// Queued asynchronous signals.
     /// **WARNING:** Despite being a spinlock, this may NOT be acquired from interrupts.
     pub sigqueue: Spinlock<LinkedList<siginfo_t>>,
@@ -199,7 +201,6 @@ impl Thread {
             waitlist: Waitlist::new(),
             process,
             name,
-            mm_override: None,
             sigqueue: Spinlock::new(LinkedList::new()),
         })?;
 
@@ -239,8 +240,9 @@ impl Thread {
     }
 
     /// Get the currently running thread.
-    pub fn current() -> *mut Thread {
+    pub fn current() -> *const Thread {
         unsafe {
+            let _noirq = IrqGuard::new();
             let cpulocal = CpuLocal::get();
             if cpulocal.is_null() {
                 return null_mut();
@@ -531,20 +533,16 @@ impl Scheduler {
             self.preempt_ticks = (config::TICKS_PER_SEC as u32).div_ceil(100);
 
             // Switch to next page table.
-            let new_mm: &Memmap;
-            if let Some(mm) = next.mm_override {
-                new_mm = mm.as_ref();
-            } else if let Some(process) = next.process.as_ref() {
-                new_mm = process.memmap();
+            let runtime = next.runtime();
+            if !runtime.memmap.is_null() {
+                (&*runtime.memmap).enable();
             } else {
-                new_mm = kernel_mm();
+                vmm::kernel_mm().enable();
             }
-            cpu::mmu::set_page_table(new_mm.root_ppn(), 0);
-            cpu::mmu::vmem_fence(None, None);
 
             // Context switch into new thread.
-            cpulocal.arch.set_irq_stack(next.runtime().irq_stack);
-            let new_stack = &raw const next.runtime().stack_ptr;
+            cpulocal.arch.set_irq_stack(runtime.irq_stack);
+            let new_stack = &raw const runtime.stack_ptr;
             cpulocal.thread = Some(next);
 
             // The queue cannot be transmitted through this so we will manually unlock it afterward.

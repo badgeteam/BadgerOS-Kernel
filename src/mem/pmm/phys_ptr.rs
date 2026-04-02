@@ -41,7 +41,7 @@ impl PhysPtr {
     /// Create from page number and order, increasing the refcount.
     pub unsafe fn from_ref_parts(ppn: PPN, order: u8) -> Self {
         unsafe { &*page_struct(ppn) }
-            .refcount
+            .refcount_
             .fetch_add(1, Ordering::Relaxed);
         Self { ppn, order }
     }
@@ -51,7 +51,7 @@ impl PhysPtr {
         let order = unsafe { (*page_struct(ppn)).order() };
         let ppn = ppn >> order << order;
         unsafe { &*page_struct(ppn) }
-            .refcount
+            .refcount_
             .fetch_add(1, Ordering::Relaxed);
         Self { ppn, order }
     }
@@ -90,7 +90,7 @@ impl Clone for PhysPtr {
     fn clone(&self) -> Self {
         unsafe {
             (*page_struct(self.ppn))
-                .refcount
+                .refcount_
                 .fetch_add(1, Ordering::Relaxed);
         }
         Self {

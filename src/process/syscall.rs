@@ -144,7 +144,9 @@ pub fn dispatch(regs: &mut GpRegfile, sregs: &mut SpRegfile, args: [usize; 6], s
                 args[4] as _,
                 args[5] as _,
             ) as _),
-            SYSCALL_MEM_UNMAP => syscall_mem_unmap(args[0] as _, args[1] as _),
+            SYSCALL_MEM_UNMAP => {
+                regs.set_retval(syscall_mem_unmap(args[0] as _, args[1] as _) as _)
+            }
             SYSCALL_MEM_PROTECT => {
                 logkf!(LogLevel::Warning, "TODO: protect syscall");
                 regs.set_retval(0);
