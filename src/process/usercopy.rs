@@ -12,10 +12,7 @@ use crate::{
         self,
         usercopy::{copy_from_user, copy_to_user, fallible_load_u8},
     },
-    mem::{
-        self,
-        vmm::physmap::{is_canon_user_addr, is_canon_user_range},
-    },
+    mem::vmm::physmap::{is_canon_user_addr, is_canon_user_range},
 };
 
 pub type AccessResult<T> = Result<T, Errno>;

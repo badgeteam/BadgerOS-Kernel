@@ -7,7 +7,10 @@ use core::ops::{Deref, DerefMut};
 use crate::{
     bindings::error::EResult,
     config::{self, PAGE_SIZE},
-    mem::{self, vmm::kernel_mm},
+    mem::{
+        self,
+        vmm::{self, VPN, kernel_mm},
+    },
 };
 
 use super::{PageUsage, phys_ptr::PhysPtr};
@@ -28,13 +31,10 @@ impl<T: Sized> PhysBox<T> {
             let aligned_pages = mem::pmm::order_to_pages(order);
             let ptr = PhysPtr::new(order, PageUsage::KernelAnon)?;
 
-            let flags = mem::vmm::flags::RW
-                + mem::vmm::flags::A
-                + mem::vmm::flags::D
-                + io as u32 * mem::vmm::flags::IO
-                + nc as u32 * mem::vmm::flags::NC;
+            let flags = vmm::prot::READ
+                | vmm::prot::WRITE + io as u8 * vmm::prot::IO + nc as u8 * vmm::prot::NC;
 
-            let vpn = kernel_mm().map_fixed(ptr.ppn(), None, aligned_pages, flags)?;
+            let vpn: VPN = todo!("This needs a memory object to implement");
 
             let vaddr = (vpn * PAGE_SIZE as usize) as *mut T;
             core::ptr::write_bytes(vaddr as *mut u8, 0, aligned_pages);
@@ -70,7 +70,9 @@ impl<T: Sized> Drop for PhysBox<T> {
             let aligned_pages = mem::pmm::order_to_pages(order);
             let vpn = self.vaddr as usize / config::PAGE_SIZE as usize;
 
-            kernel_mm().unmap(vpn..vpn + aligned_pages);
+            kernel_mm()
+                .unmap(vpn..vpn + aligned_pages)
+                .expect("PhysBox unmap failed");
         }
     }
 }

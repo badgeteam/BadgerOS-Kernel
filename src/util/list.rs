@@ -246,6 +246,26 @@ impl<T: HasListNode<T>> InvasiveList<T> {
         Some(unsafe { T::from_node(self.last) })
     }
 
+    pub unsafe fn insert_after(&mut self, at: *mut T, insert: *mut T) {
+        let at_node = unsafe { &mut *at }.list_node_mut();
+        let ins_node = unsafe { &mut *insert }.list_node_mut();
+        dlist_debug_assert!(self.contains(at));
+        dlist_debug_assert!(!self.contains(insert));
+
+        unsafe {
+            if at_node.next > 1 as _ {
+                (*at_node.next).prev = ins_node;
+            } else {
+                self.last = ins_node;
+            }
+            ins_node.prev = at_node;
+            ins_node.next = at_node.next;
+            at_node.next = ins_node;
+        }
+
+        self.len += 1;
+    }
+
     pub fn clear(&mut self) {
         let mut cur = self.first;
         self.first = null_mut();
@@ -266,7 +286,7 @@ impl<T: HasListNode<T>> InvasiveList<T> {
         if node.next.is_null() {
             return false;
         }
-        for elem in self.iter() {
+        for elem in unsafe { self.iter() } {
             if core::ptr::addr_eq(elem, thing) {
                 return true;
             }
@@ -311,7 +331,7 @@ impl<T: HasListNode<T>> InvasiveList<T> {
         self.consistency_check();
     }
 
-    pub fn iter<'a>(&'a self) -> InvasiveListIter<'a, T> {
+    pub unsafe fn iter<'a>(&'a self) -> InvasiveListIter<'a, T> {
         InvasiveListIter {
             cur: self.first,
             marker: PhantomData,
@@ -401,7 +421,7 @@ impl<T: HasListNode<T>> ArcInvasiveList<T> {
     }
 
     pub fn iter<'a>(&'a self) -> InvasiveListIter<'a, T> {
-        self.inner.iter()
+        unsafe { self.inner.iter() }
     }
 }
 
@@ -487,7 +507,7 @@ impl<T: HasListNode<T>> BoxInvasiveList<T> {
     }
 
     pub fn iter<'a>(&'a self) -> InvasiveListIter<'a, T> {
-        self.inner.iter()
+        unsafe { self.inner.iter() }
     }
 }
 

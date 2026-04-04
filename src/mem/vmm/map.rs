@@ -13,7 +13,7 @@ use crate::{
     kernel::sync::spinlock::Spinlock,
     mem::{
         pmm::{self, PPN},
-        vmm::physmap::PhysMap,
+        vmm::physmap::{PhysMap, Virt2Phys},
     },
     util::list::{InvasiveList, InvasiveListNode},
 };
@@ -177,9 +177,6 @@ struct MapEntryInner {
     // TODO: Memory object offset and reference.
 }
 
-/// # Memory Leaks
-/// This struct itself does not have all information needed to release pages to the underlying MemObject;
-/// when the pmap is dropped, it must notify the MapEntry of all pages that were previously mapped.
 impl MapEntryInner {
     /// Trim pages from the start and/or end of this entry.
     pub fn trim(&mut self, subrange: Range<VPN>) -> EResult<()> {
@@ -202,7 +199,6 @@ impl MapEntryInner {
     }
 
     /// Split this entry into two starting at `offset`.
-    /// On error, returns the old entry unchanged.
     pub fn split(&self, offset: VPN) -> EResult<(Self, Self)> {
         let mut first = Self {
             range: self.range.start..offset,
@@ -290,19 +286,6 @@ impl MapEntryInner {
             Ok(new)
         }
     }
-
-    /// Notify that a page has been dropped from the pmap for any reason.
-    /// Used mostly for error handling cleanup in mapping to the pmap, but the pmap is allowed to arbitrarily unmap pages.
-    pub unsafe fn free_page(&mut self, offset: VPN, orig: PPN) {
-        if let Some(amap) = &self.amap
-            && amap.get_page(offset).is_some()
-        {
-            // An anon is present; this page is not currently leased from the MemObject.
-            return;
-        }
-
-        // TODO: Return orig to MemObject.
-    }
 }
 
 /// Virtual address-space map.
@@ -320,6 +303,22 @@ impl VmSpaceInner {
         Self {
             pmap,
             map: Spinlock::new(InvasiveList::new()),
+        }
+    }
+
+    /// Try to split the mappings so that they do not cross `threshold`.
+    /// Used to implement the splitting logic used by the various manipulation functions.
+    fn split(&self, threshold: VPN, map: &InvasiveList<MapEntry>) -> EResult<()> {
+        unsafe {
+            let mut cur = map.front();
+            while let Some(cur) = cur {
+                let guard = (&*cur).inner.lock();
+                if guard.range.start < threshold && guard.range.end > threshold {
+                    let (first, second) = guard.split(threshold - guard.range.start)?;
+                }
+                drop(guard);
+            }
+            Ok(())
         }
     }
 
@@ -445,6 +444,11 @@ impl VmSpace {
             self.0.pmap.enable();
         }
     }
+
+    /// Do a virtual to physical address lookup.
+    pub fn virt2phys(&self, vaddr: usize) -> Virt2Phys {
+        self.0.pmap.virt2phys(vaddr)
+    }
 }
 
 /// Virtual address-space map for user memory.
@@ -495,5 +499,10 @@ impl KernelVmSpace {
         unsafe {
             self.0.pmap.enable();
         }
+    }
+
+    /// Do a virtual to physical address lookup.
+    pub fn virt2phys(&self, vaddr: usize) -> Virt2Phys {
+        self.0.pmap.virt2phys(vaddr)
     }
 }

@@ -3,12 +3,14 @@
 // SPDX-License-Identifier: MIT
 
 use core::{
+    fmt::Debug,
     ops::Range,
     sync::atomic::{Atomic, Ordering},
 };
 
 use super::*;
 use crate::{
+    badgelib::irq::IrqGuard,
     bindings::{error::EResult, raw::phys_page_free},
     config::PAGE_SIZE,
     cpu::{
@@ -91,7 +93,26 @@ impl PhysMap {
     }
 
     /// Create or replace one page-sized mapping.
-    pub fn map(&self) {}
+    pub unsafe fn map(&self, vpn: VPN, ppn: PPN, flags: u32) -> EResult<()> {
+        unsafe {
+            self.map_raw_impl(
+                vpn,
+                Some(PTE {
+                    ppn,
+                    flags,
+                    level: 0,
+                    valid: true,
+                    leaf: true,
+                }),
+                0,
+            )
+        }
+    }
+
+    /// Delete one page-sized mapping.
+    pub unsafe fn unmap(&self, vpn: VPN) -> EResult<()> {
+        unsafe { self.map_raw_impl(vpn, None, 0) }
+    }
 
     unsafe fn map_raw_impl(&self, vpn: VPN, new_pte: Option<PTE>, level: u8) -> EResult<()> {
         let mut pgtable_ppn = self.root;
@@ -167,6 +188,66 @@ impl PhysMap {
         Ok(())
     }
 
+    /// Walk down the page table and read the target vaddr's PTE.
+    #[inline(always)]
+    pub fn walk(&self, vpn: VPN) -> PTE {
+        self.walk_shallow(vpn, 0)
+    }
+
+    /// Walk down the page table and read the target vaddr's PTE.
+    pub fn walk_shallow(&self, vpn: VPN, min_level: u32) -> PTE {
+        debug_assert!(min_level < unsafe { PAGING_LEVELS });
+        let mut pgtable_ppn = self.root;
+        let mut pte;
+
+        let _noirq = IrqGuard::new();
+
+        // Descend the page until a leaf is found.
+        for level in (0..unsafe { PAGING_LEVELS }).rev() {
+            let index = get_vpn_index(vpn, level as u8);
+            pte = PTE::unpack(unsafe { read_pte(pgtable_ppn, index) }, level as u8);
+
+            if level == min_level || !pte.valid && level > 0 {
+                return pte;
+            } else if pte.valid && !pte.leaf {
+                pgtable_ppn = pte.ppn;
+            } else {
+                return pte;
+            }
+        }
+
+        unreachable!("Valid non-leaf PTE at level 0");
+    }
+
+    /// Do a virtual to physical address lookup.
+    pub fn virt2phys(&self, vaddr: usize) -> Virt2Phys {
+        if !is_canon_addr(vaddr) {
+            return Virt2Phys {
+                page_vaddr: vaddr & !(PAGE_SIZE as usize - 1),
+                page_paddr: 0,
+                size: PAGE_SIZE as usize,
+                paddr: 0,
+                flags: 0,
+                valid: false,
+            };
+        }
+
+        let pte: PTE = self.walk(vaddr / PAGE_SIZE as usize);
+
+        let size = (PAGE_SIZE as usize) << (cpu::mmu::BITS_PER_LEVEL * pte.level as u32);
+        let page_vaddr = vaddr & !(size - 1);
+        let page_paddr = pte.ppn * PAGE_SIZE as usize;
+        let offset = vaddr - page_vaddr;
+        Virt2Phys {
+            page_vaddr,
+            page_paddr,
+            size,
+            paddr: page_paddr + offset,
+            flags: pte.flags,
+            valid: pte.valid,
+        }
+    }
+
     /// Enable this physical map on this CPU.
     pub unsafe fn enable(&self) {
         unsafe {
@@ -179,6 +260,62 @@ impl PhysMap {
 impl Drop for PhysMap {
     fn drop(&mut self) {
         todo!()
+    }
+}
+
+/// Result of a virtual to physical lookup.
+#[derive(Clone, Copy)]
+pub struct Virt2Phys {
+    /// Virtual address of page start.
+    pub page_vaddr: VPN,
+    /// Physical address of page start.
+    pub page_paddr: PPN,
+    /// Size of the mapping in bytes.
+    pub size: usize,
+    /// Physical address.
+    pub paddr: usize,
+    /// Flags of the mapping.
+    pub flags: u32,
+    /// Whether the mapping exists; if false, only `vpn` and `size` are valid.
+    pub valid: bool,
+}
+
+impl Debug for Virt2Phys {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        use flags::*;
+        f.debug_struct("Virt2Phys")
+            .field("page_vaddr", &format_args!("0x{:x}", self.page_vaddr))
+            .field("page_paddr", &format_args!("0x{:x}", self.page_paddr))
+            .field("size", &format_args!("0x{:x}", self.size))
+            .field("paddr", &format_args!("0x{:x}", self.paddr))
+            .field(
+                "flags",
+                &format_args!(
+                    "0x{:x} /* {}{}{}{}{}{}{} {} {} */",
+                    self.flags,
+                    if self.flags & R != 0 { 'R' } else { '-' },
+                    if self.flags & W != 0 { 'W' } else { '-' },
+                    if self.flags & X != 0 { 'X' } else { '-' },
+                    if self.flags & U != 0 { 'U' } else { '-' },
+                    if self.flags & G != 0 { 'G' } else { '-' },
+                    if self.flags & A != 0 { 'A' } else { '-' },
+                    if self.flags & D != 0 { 'D' } else { '-' },
+                    if self.flags & REFCOUNT != 0 {
+                        "RC"
+                    } else {
+                        "--"
+                    },
+                    if self.flags & IO != 0 {
+                        "IO"
+                    } else if self.flags & NC != 0 {
+                        "NC"
+                    } else {
+                        "--"
+                    }
+                ),
+            )
+            .field("valid", &self.valid)
+            .finish()
     }
 }
 

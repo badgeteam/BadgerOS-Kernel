@@ -134,8 +134,7 @@ void *uacpi_kernel_map(uacpi_phys_addr paddr, uacpi_size len) {
         len += CONFIG_PAGE_SIZE - len % CONFIG_PAGE_SIZE;
     }
     vpn_t vpn;
-    if (vmm_map_k(&vpn, len / CONFIG_PAGE_SIZE, paddr / CONFIG_PAGE_SIZE, VMM_FLAG_RW | VMM_FLAG_IO | VMM_FLAG_MMIO) <
-        0) {
+    if (vmm_map_k(&vpn, len / CONFIG_PAGE_SIZE, paddr / CONFIG_PAGE_SIZE, VMM_FLAG_RW | VMM_FLAG_IO) < 0) {
         return NULL;
     }
     return (void *)(vpn * CONFIG_PAGE_SIZE + off);

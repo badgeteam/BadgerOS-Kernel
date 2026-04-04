@@ -4,7 +4,10 @@
 
 use crate::{
     bindings::error::EResult,
-    mem::{pmm::PPN, vmm::VPN},
+    mem::{
+        pmm::PPN,
+        vmm::{PAGE_OF_ZEROES, VPN},
+    },
 };
 
 /// An object that can be mapped into a [`super::VMSpace`].
@@ -12,11 +15,11 @@ pub trait MemObject {
     /// Get the size in pages of the object.
     fn len(&self) -> VPN;
 
-    /// Get a page from the object and increase its refcount.
-    fn get(&self, page: VPN) -> EResult<PPN>;
+    /// Whether to enable reference-counting for the pages from [`Self::get`].
+    fn use_refcount(&self) -> bool;
 
-    /// Release a reference to a page, decreasing its refcount.
-    fn put(&self, page: VPN);
+    /// Get a page from the object.
+    fn get(&self, page: VPN) -> EResult<PPN>;
 
     /// Mark a page as being dirty.
     fn mark_dirty(&self, page: VPN);
@@ -29,11 +32,13 @@ impl MemObject for ZeroFill {
         VPN::MAX
     }
 
-    fn get(&self, page: VPN) -> EResult<PPN> {
-        todo!()
+    fn use_refcount(&self) -> bool {
+        false
     }
 
-    fn put(&self, _page: VPN) {}
+    fn get(&self, _page: VPN) -> EResult<PPN> {
+        unsafe { Ok(PAGE_OF_ZEROES) }
+    }
 
     fn mark_dirty(&self, _page: VPN) {}
 }

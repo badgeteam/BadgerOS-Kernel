@@ -98,7 +98,7 @@ static bool device_init(device_union_t *device) {
                     &vpn,
                     (addr->size - 1) / CONFIG_PAGE_SIZE + 1,
                     addr->paddr / CONFIG_PAGE_SIZE,
-                    VMM_FLAG_RW | VMM_FLAG_IO | VMM_FLAG_A | VMM_FLAG_D | VMM_FLAG_MMIO
+                    VMM_FLAG_RW | VMM_FLAG_IO
                 ) < 0) {
                 for (i--; i != SIZE_MAX; i--) {
                     if (device->base.info.addrs[i].type == DEV_ATYPE_MMIO) {

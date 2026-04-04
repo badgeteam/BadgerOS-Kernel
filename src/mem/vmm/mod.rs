@@ -8,6 +8,7 @@ use map::KernelVmSpace;
 
 use crate::mem::pmm::PPN;
 
+mod c_api;
 pub mod map;
 pub mod memobject;
 pub mod pagecache;
