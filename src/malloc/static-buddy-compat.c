@@ -24,12 +24,12 @@ void *buddy_allocate(size_t size, enum block_type type, uint32_t flags) {
     while (((size_t)CONFIG_PAGE_SIZE << order) < size) {
         order++;
     }
-    errno_ppn_t page = pmm_page_alloc(order, usage);
+    errno_size_t page = pmm_page_alloc(order, usage);
     if (page < 0) {
         logkf(LOG_WARN, "Out of memory (allocating block of order %{u32;d})", order);
         return NULL;
     }
-    return (void *)(page * CONFIG_PAGE_SIZE + vmm_hhdm_offset);
+    return (void *)(page + vmm_hhdm_offset);
 }
 
 void *buddy_reallocate(void *ptr, size_t size) {
@@ -57,16 +57,13 @@ void *buddy_reallocate(void *ptr, size_t size) {
 }
 
 void buddy_deallocate(void *ptr) {
-    pmm_page_t *page_meta = pmm_page_struct(((size_t)ptr - vmm_hhdm_offset) / CONFIG_PAGE_SIZE);
-    pmm_page_free(
-        ((size_t)ptr - vmm_hhdm_offset) / CONFIG_PAGE_SIZE,
-        (page_meta->flags & PGFLAGS_ORDER_MASK) >> PGFLAGS_ORDER_EXP
-    );
+    pmm_page_t *page_meta = pmm_page_struct((size_t)ptr - vmm_hhdm_offset);
+    pmm_page_free((size_t)ptr - vmm_hhdm_offset, page_meta->order);
 }
 
 enum block_type buddy_get_type(void *ptr) {
-    pmm_page_t *page_meta = pmm_page_struct(((size_t)ptr - vmm_hhdm_offset) / CONFIG_PAGE_SIZE);
-    switch ((page_usage_t)((page_meta->flags & PGFLAGS_USAGE_MASK) >> PGFLAGS_USAGE_EXP)) {
+    pmm_page_t *page_meta = pmm_page_struct((size_t)ptr - vmm_hhdm_offset);
+    switch ((page_usage_t)page_meta->usage) {
         case PAGE_USAGE_FREE: return BLOCK_TYPE_FREE;
         case PAGE_USAGE_PAGE_TABLE:
         case PAGE_USAGE_KERNEL_ANON:
@@ -80,6 +77,6 @@ enum block_type buddy_get_type(void *ptr) {
 }
 
 size_t buddy_get_size(void *ptr) {
-    pmm_page_t *page_meta = pmm_page_struct(((size_t)ptr - vmm_hhdm_offset) / CONFIG_PAGE_SIZE);
-    return (size_t)CONFIG_PAGE_SIZE << ((page_meta->flags & PGFLAGS_ORDER_MASK) >> PGFLAGS_ORDER_EXP);
+    pmm_page_t *page_meta = pmm_page_struct((size_t)ptr - vmm_hhdm_offset);
+    return (size_t)CONFIG_PAGE_SIZE << page_meta->order;
 }

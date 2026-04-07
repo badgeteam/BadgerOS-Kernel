@@ -30,8 +30,7 @@
 
 // Note: These types are copied from the Rust code, do not change them!
 
-typedef size_t vpn_t;
-typedef size_t ppn_t;
+typedef size_t paddr_t;
 
 
 
@@ -52,8 +51,8 @@ extern size_t vmm_kernel_paddr;
 void vmm_init();
 
 // Map a range of memory for the kernel at any virtual address.
-errno_t vmm_map_k(vpn_t *virt_base_out, vpn_t virt_len, ppn_t phys_base, uint32_t flags);
+errno_t vmm_map_k(size_t *virt_base_out, size_t virt_len, paddr_t phys_base, uint32_t flags);
 // Map a range of memory for a kernel page table at a specific virtual address.
-errno_t vmm_map_k_at(vpn_t virt_base, vpn_t virt_len, ppn_t phys_base, uint32_t flags);
+errno_t vmm_map_k_at(size_t virt_base, size_t virt_len, paddr_t phys_base, uint32_t flags);
 // Unmap a range of kernel memory.
-void    vmm_unmap_k(vpn_t virt_base, vpn_t virt_len);
+void    vmm_unmap_k(size_t virt_base, size_t virt_len);

@@ -266,6 +266,52 @@ impl<T: HasListNode<T>> InvasiveList<T> {
         self.len += 1;
     }
 
+    pub unsafe fn insert_before(&mut self, at: *mut T, insert: *mut T) {
+        let at_node = unsafe { &mut *at }.list_node_mut();
+        let ins_node = unsafe { &mut *insert }.list_node_mut();
+        dlist_debug_assert!(self.contains(at));
+        dlist_debug_assert!(!self.contains(insert));
+
+        unsafe {
+            if at_node.prev > 1 as _ {
+                (*at_node.prev).next = ins_node;
+            } else {
+                self.first = ins_node;
+            }
+            ins_node.next = at_node;
+            ins_node.prev = at_node.prev;
+            at_node.prev = ins_node;
+        }
+
+        self.len += 1;
+    }
+
+    pub unsafe fn next(&self, item: *mut T) -> Option<*mut T> {
+        let node = unsafe { &mut *item }.list_node_mut();
+        dlist_debug_assert!(self.contains(at));
+
+        unsafe {
+            if node.next > 1 as _ {
+                Some(T::from_node(node.next))
+            } else {
+                None
+            }
+        }
+    }
+
+    pub unsafe fn prev(&self, item: *mut T) -> Option<*mut T> {
+        let node = unsafe { &mut *item }.list_node_mut();
+        dlist_debug_assert!(self.contains(at));
+
+        unsafe {
+            if node.prev > 1 as _ {
+                Some(T::from_node(node.prev))
+            } else {
+                None
+            }
+        }
+    }
+
     pub fn clear(&mut self) {
         let mut cur = self.first;
         self.first = null_mut();

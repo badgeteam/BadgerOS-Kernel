@@ -28,7 +28,10 @@ pub unsafe extern "C" fn syscall_mem_map(
     }
 
     let proc = process::current().unwrap();
-    match proc.memmap().map(size, address as usize, flags, prot as u8) {
+    match proc
+        .memmap()
+        .map(size, address as usize, flags, prot as u8, None)
+    {
         Ok(addr) => addr as *mut c_void,
         Err(err) => -(err as i32) as isize as *mut c_void,
     }

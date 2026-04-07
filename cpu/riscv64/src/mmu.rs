@@ -4,9 +4,12 @@
 
 use core::arch::asm;
 
-use crate::mem::{
-    pmm::PPN,
-    vmm::physmap::{ASID_BITS, PAGING_LEVELS, PTE},
+use crate::{
+    config::PAGE_SIZE,
+    mem::{
+        pmm::PAddrr,
+        vmm::physmap::{ASID_BITS, PAGING_LEVELS, PTE},
+    },
 };
 
 pub mod flags {
@@ -120,15 +123,15 @@ pub unsafe fn early_init() {
 }
 
 /// Initialize and detect capabilities of the MMU, given the constructed page table.
-pub unsafe fn init(root_ppn: PPN) {
+pub unsafe fn init(root_paddr: PAddrr) {
     unsafe {
         // Set the kernel page table with the maximum ASID to detect how many ASID bits are available.
-        set_page_table(root_ppn, 0);
+        set_page_table(root_paddr, 0);
         let asid = read_asid();
         ASID_BITS = asid.trailing_ones();
 
         // Set kernel page table with ASID 0 this time (which is reserved for the kernel itself).
-        set_page_table(root_ppn, 0);
+        set_page_table(root_paddr, 0);
 
         // Virtual memory fence to ensure any new things in the kernel page table become visible.
         vmem_fence(None, None);
@@ -139,7 +142,8 @@ pub unsafe fn init(root_ppn: PPN) {
 
 #[inline(always)]
 /// Switch page table and address space ID.
-pub unsafe fn set_page_table(root_ppn: PPN, asid: u32) {
+pub unsafe fn set_page_table(root_paddr: PAddrr, asid: u32) {
+    let root_ppn = root_paddr / PAGE_SIZE as usize;
     #[cfg(target_arch = "riscv32")]
     let new_val = root_ppn + (asid << 22) + (1 << 31);
     #[cfg(target_arch = "riscv64")]

@@ -2,11 +2,15 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::sync::atomic::AtomicUsize;
+use core::{mem::MaybeUninit, ops::Deref};
 
-use map::KernelVmSpace;
+use alloc::sync::Arc;
+use map::{KernelVmSpace, Mapping};
+use memobject::RawMemory;
 
-use crate::mem::pmm::PPN;
+use crate::{bindings::log::LogLevel, config::PAGE_SIZE, cpu::mmu, mem::pmm::PAddrr};
+
+use super::pmm::phys_box::PhysBox;
 
 mod c_api;
 pub mod map;
@@ -16,6 +20,8 @@ pub mod physmap;
 
 /// Mapping protection flags.
 pub mod prot {
+    use crate::cpu::mmu;
+
     /// Mapping is readable.
     pub const READ: u8 = 1 << 0;
     /// Mapping is writable.
@@ -26,21 +32,62 @@ pub mod prot {
     pub const NC: u8 = 1 << 3;
     /// Mapping is non-cacheable, non-idempotent, strongly-ordered (e.g. memory-mapped I/O).
     pub const IO: u8 = 1 << 4;
+
+    /// Convert MMU flags into prot flags.
+    pub(super) const fn from_mmu_flags(mmu_flags: u32) -> u8 {
+        let mut prot = 0;
+        if mmu_flags & mmu::flags::R != 0 {
+            prot |= READ;
+        }
+        if mmu_flags & mmu::flags::W != 0 {
+            prot |= WRITE;
+        }
+        if mmu_flags & mmu::flags::X != 0 {
+            prot |= EXEC;
+        }
+        if mmu_flags & mmu::flags::NC != 0 {
+            prot |= NC;
+        }
+        if mmu_flags & mmu::flags::IO != 0 {
+            prot |= IO;
+        }
+        prot
+    }
+
+    /// Convert prot flags into MMU flags.
+    pub(super) const fn into_mmu_flags(prot_flags: u8) -> u32 {
+        let mut mmu = mmu::flags::A | mmu::flags::D;
+        if prot_flags & READ != 0 {
+            mmu |= mmu::flags::R;
+        }
+        if prot_flags & WRITE != 0 {
+            mmu |= mmu::flags::W;
+        }
+        if prot_flags & EXEC != 0 {
+            mmu |= mmu::flags::X;
+        }
+        if prot_flags & NC != 0 {
+            mmu |= mmu::flags::NC;
+        }
+        if prot_flags & IO != 0 {
+            mmu |= mmu::flags::IO;
+        }
+        mmu
+    }
 }
 
-/// Unsigned integer that can store a virtual page number.
-pub type AtomicVPN = AtomicUsize;
-/// Unsigned integer that can store a virtual page number.
-pub type VPN = usize;
-
 /// Page number of a page that is filled with zeroes.
-pub static mut PAGE_OF_ZEROES: PPN = 0;
-/// Virtual address of the page of zeroes.
-pub static mut ZEROES: *const [u8] = &[];
+pub static mut PAGE_OF_ZEROES: MaybeUninit<PhysBox<[u8; PAGE_SIZE as usize]>> =
+    MaybeUninit::uninit();
 
 /// Get the page that is filled with zeroes.
 pub fn zeroes() -> &'static [u8] {
-    unsafe { &*ZEROES }
+    unsafe { (&*&raw const PAGE_OF_ZEROES).assume_init_ref().deref() }
+}
+
+/// Get the physical address of the page full of zeroes.
+pub fn zeroes_paddr() -> PAddrr {
+    unsafe { (&*&raw const PAGE_OF_ZEROES).assume_init_ref().paddr() }
 }
 
 unsafe extern "C" {
@@ -73,10 +120,99 @@ unsafe extern "C" {
     pub static mut KERNEL_PADDR: usize;
 }
 
+/// The kernel memory map.
+static mut KERNEL_MM: MaybeUninit<KernelVmSpace> = MaybeUninit::uninit();
+
 /// Get the kernel memory map.
 pub fn kernel_mm() -> &'static KernelVmSpace {
-    todo!()
+    unsafe { (&mut *&raw mut KERNEL_MM).assume_init_ref() }
 }
 
 /// Initialize the virtual-memory management subsystem.
-pub unsafe fn init() {}
+pub unsafe fn init() {
+    unsafe {
+        mmu::early_init();
+
+        let kernel_mm = KernelVmSpace::new();
+        let k_v2p = KERNEL_PADDR.wrapping_sub(KERNEL_VADDR);
+
+        // Kernel RX.
+        let vpn = &raw const __start_text as usize;
+        let size = &raw const __stop_text as usize - &raw const __start_text as usize;
+        kernel_mm
+            .0
+            .map(
+                size,
+                vpn,
+                0..0,
+                map::FIXED | map::POPULATE | map::SHARED,
+                prot::READ | prot::EXEC,
+                Some(Mapping {
+                    offset: 0,
+                    object: Arc::new(RawMemory::new(vpn.wrapping_add(k_v2p), size)),
+                }),
+            )
+            .expect("Failed to map kernel RX");
+
+        // Kernel RO.
+        let vpn = &raw const __start_rodata as usize;
+        let size = &raw const __stop_rodata as usize - &raw const __start_rodata as usize;
+        kernel_mm
+            .0
+            .map(
+                size,
+                vpn,
+                0..0,
+                map::FIXED | map::POPULATE | map::SHARED,
+                prot::READ,
+                Some(Mapping {
+                    offset: 0,
+                    object: Arc::new(RawMemory::new(vpn.wrapping_add(k_v2p), size)),
+                }),
+            )
+            .expect("Failed to map kernel RO");
+
+        // Kernel RW.
+        let vpn = &raw const __start_data as usize;
+        let size = &raw const __stop_data as usize - &raw const __start_data as usize;
+        kernel_mm
+            .0
+            .map(
+                size,
+                vpn,
+                0..0,
+                map::FIXED | map::POPULATE | map::SHARED,
+                prot::READ | prot::WRITE,
+                Some(Mapping {
+                    offset: 0,
+                    object: Arc::new(RawMemory::new(vpn.wrapping_add(k_v2p), size)),
+                }),
+            )
+            .expect("Failed to map kernel RW");
+
+        // Higher-half direct map.
+        // TODO: Support a sparse HHDM?
+        kernel_mm
+            .0
+            .map(
+                HHDM_SIZE,
+                HHDM_VADDR,
+                0..0,
+                map::FIXED | map::POPULATE | map::SHARED,
+                prot::READ | prot::WRITE,
+                Some(Mapping {
+                    offset: 0,
+                    object: Arc::new(RawMemory::new(HHDM_VADDR - HHDM_OFFSET, HHDM_SIZE)),
+                }),
+            )
+            .expect("Failed to create HHDM");
+
+        logkf!(LogLevel::Info, "Switching to own page tables");
+        mmu::init(kernel_mm.0.pmap.root());
+        KERNEL_MM = MaybeUninit::new(kernel_mm);
+
+        // Page of zeroes.
+        PAGE_OF_ZEROES =
+            MaybeUninit::new(PhysBox::try_new(false, false).expect("Failed to map page of zeroes"));
+    }
+}

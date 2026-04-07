@@ -3,6 +3,7 @@
 
 use core::{
     array,
+    fmt::Debug,
     marker::PhantomData,
     mem::{ManuallyDrop, MaybeUninit},
     ptr::{NonNull, null_mut},
@@ -19,6 +20,17 @@ where
 {
     root: Option<Box<Node<K, V, L>>>,
     marker: PhantomData<K>,
+}
+
+impl<K: PrimInt + Debug, V: Sized + Debug, const L: usize> Debug for RadixTree<K, V, L>
+where
+    [(); 1 << L]:,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("RadixTree")
+            .field("root", &self.root)
+            .finish()
+    }
 }
 
 impl<K: PrimInt, V: Sized, const L: usize> RadixTree<K, V, L>
@@ -118,6 +130,7 @@ where
                         child: ManuallyDrop::new(None),
                     });
                     let tmp = core::mem::take(&mut self.root);
+                    debug_assert!(height == tmp.as_deref().unwrap().height + 1);
                     array[0] = NodeValue {
                         child: ManuallyDrop::new(tmp),
                     };
@@ -153,7 +166,8 @@ where
                 if let Some(next) = next {
                     node = next;
                 } else {
-                    let mut subtree = Self::create_subtree(Self::key_height(key), key, value)?;
+                    let mut subtree = Self::create_subtree(node.height, key, value)?;
+                    debug_assert!(node.height == subtree.height + 1);
                     subtree.parent = node_ptr;
                     node.occupancy += 1;
                     *next = Some(subtree);
@@ -162,6 +176,7 @@ where
             }
         } else {
             let subtree = Self::create_subtree(Self::key_height(key), key, value)?;
+            debug_assert!(subtree.height == Self::key_height(key) - 1);
             self.root = Some(subtree);
             Ok(None)
         }
@@ -323,6 +338,31 @@ where
                     core::ptr::drop_in_place(&raw mut self.array[i].child);
                 }
             }
+        }
+    }
+}
+
+impl<'a, K: PrimInt, V: Sized + Debug, const L: usize> Debug for Node<K, V, L>
+where
+    [(); 1 << L]:,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if self.height == 0 {
+            let mut arr = f.debug_map();
+            for i in 0..1 << L {
+                if let Some(data) = unsafe { self.array[i].data.as_deref() } {
+                    arr.entry(&i, data);
+                }
+            }
+            arr.finish()
+        } else {
+            let mut arr = f.debug_map();
+            for i in 0..1 << L {
+                if let Some(child) = unsafe { self.array[i].child.as_deref() } {
+                    arr.entry(&(i << (L * self.height as usize)), child);
+                }
+            }
+            arr.finish()
         }
     }
 }

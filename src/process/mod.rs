@@ -525,6 +525,7 @@ impl Process {
             0,
             vmm::map::PRIVATE,
             vmm::prot::READ | vmm::prot::EXEC,
+            None,
         )?;
         let proc_self = self.clone();
         let thread = Thread::new(

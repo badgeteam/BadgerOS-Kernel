@@ -13,7 +13,7 @@ use alloc::{boxed::Box, collections::linked_list::LinkedList, string::String, sy
 use crate::{
     badgelib::irq::IrqGuard,
     bindings::{error::EResult, raw::timestamp_us_t, time_us},
-    config::{self, PAGE_SIZE, STACK_SIZE},
+    config::{self, STACK_SIZE},
     cpu::{
         self, irq,
         thread::{FloatState, context_switch, pause_hint},
@@ -90,14 +90,14 @@ pub struct ThreadRuntime {
 impl ThreadRuntime {
     fn new(code: Box<dyn FnOnce() + 'static + Send>) -> EResult<Self> {
         unsafe {
-            let stack_vpn = vmm::kernel_mm().map(
-                STACK_SIZE as usize / PAGE_SIZE as usize,
+            let stack_bottom = vmm::kernel_mm().map(
+                STACK_SIZE as usize,
                 0,
                 0,
                 vmm::prot::READ | vmm::prot::WRITE,
+                None,
             )?;
 
-            let stack_bottom = stack_vpn * PAGE_SIZE as usize;
             let stack = slice_from_raw_parts_mut(
                 stack_bottom as *mut usize,
                 STACK_SIZE as usize / size_of::<usize>(),
@@ -126,8 +126,9 @@ impl ThreadRuntime {
 impl Drop for ThreadRuntime {
     fn drop(&mut self) {
         unsafe {
-            let stack_vpn = self.stack_bottom / PAGE_SIZE as usize;
-            vmm::kernel_mm().unmap(stack_vpn..stack_vpn + STACK_SIZE as usize / PAGE_SIZE as usize);
+            vmm::kernel_mm()
+                .unmap(self.stack_bottom..self.stack_bottom + STACK_SIZE as usize)
+                .expect("Unmapping kernel stack failed");
         }
     }
 }

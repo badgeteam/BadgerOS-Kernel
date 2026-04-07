@@ -8,7 +8,6 @@ use bytemuck_derive::{AnyBitPattern, NoUninit};
 use crate::{
     bindings::error::{EResult, Errno},
     config::PAGE_SIZE,
-    cpu,
     filesystem::{self, File, oflags},
     mem::vmm::{self, map::VmSpace},
     process::usercopy::UserSliceMut,
@@ -83,6 +82,7 @@ fn map_helper(
         (vaddr_end - vaddr).div_ceil(PAGE_SIZE as usize),
         vmm::map::FIXED | vmm::map::PRIVATE,
         vmm::prot::READ | vmm::prot::WRITE | vmm::prot::EXEC,
+        None,
     )?;
 
     let mut uslice = UserSliceMut::new_mut(vaddr as *mut u8, phdr.mem_size as usize)?;

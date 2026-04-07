@@ -7,25 +7,23 @@ use core::ops::Range;
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
 use crate::{
-    bindings::error::EResult,
+    bindings::error::{EResult, Errno},
     config::PAGE_SIZE,
+    cpu::mmu,
     impl_has_list_node,
     kernel::sync::spinlock::Spinlock,
     mem::{
-        pmm::{self, PPN},
-        vmm::physmap::{PhysMap, Virt2Phys},
+        pmm::{self, PAddrr},
+        vmm::physmap::{PhysMap, Virt2Phys, higher_half_vaddr},
     },
     util::list::{InvasiveList, InvasiveListNode},
 };
 
-use super::{
-    physmap::{canon_half_pages, higher_half_page},
-    *,
-};
+use super::{memobject::MemObject, physmap::canon_half_size, *};
 
-/// Mapping is shared (not CoW'ed on fork).
+/// Mapping is shared (written back to memory object and not CoW'ed on fork).
 pub const SHARED: u32 = 0x01;
-/// Mapping is private (CoW'ed on fork).
+/// Mapping is private (memory object read-only and CoW'ed on fork).
 pub const PRIVATE: u32 = 0x02;
 /// Replace the mapping at the given address if it exists.
 pub const FIXED: u32 = 0x10;
@@ -34,45 +32,35 @@ pub const ANONYMOUS: u32 = 0x20;
 /// Mapping must be populated immediately.
 pub const POPULATE: u32 = 0x8000;
 /// Kernel mapping need not be populated immediately; has no effect on user mappings.
+/// If omitted, the mapping is forced to be [`SHARED`] and [`POPULATE`].
 pub const LAZY_KERNEL: u32 = 0x8000_0000;
+
+/// Specification for how to map a memory object.
+#[derive(Clone)]
+pub struct Mapping {
+    /// Page-aligned byte offset within the memory object.
+    pub offset: usize,
+    /// The memory object to map.
+    pub object: Arc<dyn MemObject>,
+}
 
 /// A region of anonymous memory.
 struct Anon {
-    ppn: PPN,
+    paddr: PAddrr,
 }
 
 #[derive(Clone)]
 struct AnonMap {
-    /// Offset from the parent [`MapEntry`].
-    offset: VPN,
+    /// Page-aligned byte offset the parent [`MapEntry`].
+    offset: usize,
     /// Resident pages of this region.
     pages: Vec<Option<Arc<Anon>>>,
 }
 
 impl AnonMap {
-    /// Determine whether this amap would need trimming to fit in the given range.
-    pub fn needs_trim(&self, subrange: Range<VPN>) -> bool {
-        subrange.start > self.offset || subrange.end < self.offset + self.pages.len()
-    }
-
-    /// Trim pages from the start and/or end of this amap.
-    pub fn trim(&self, subrange: Range<VPN>) -> EResult<Option<Self>> {
-        if subrange.end <= self.offset || subrange.start >= self.offset + self.pages.len() {
-            return Ok(None);
-        }
-
-        let offset = self.offset.max(subrange.start);
-        let mut pages =
-            Vec::try_with_capacity((self.offset + self.pages.len()).min(subrange.end) - offset)?;
-        pages.extend_from_slice(
-            &self.pages[offset - self.offset..offset - self.offset + pages.len()],
-        );
-
-        Ok(Some(Self { offset, pages }))
-    }
-
     /// Split this entry into two starting at `offset`.
-    pub fn split(&self, offset: VPN) -> EResult<(Option<Self>, Option<Self>)> {
+    fn split(&self, offset: usize) -> EResult<(Option<Self>, Option<Self>)> {
+        debug_assert!(offset % PAGE_SIZE as usize == 0);
         if offset < self.offset {
             return Ok((None, Some(self.clone())));
         }
@@ -80,7 +68,7 @@ impl AnonMap {
             return Ok((Some(self.clone()), None));
         }
 
-        let mut first = Vec::try_with_capacity(offset - self.offset)?;
+        let mut first = Vec::try_with_capacity((offset - self.offset) / PAGE_SIZE as usize)?;
         let mut second = Vec::try_with_capacity(self.pages.len() - first.len())?;
         first.extend_from_slice(&self.pages[..first.len()]);
         second.extend_from_slice(&self.pages[first.len()..]);
@@ -98,19 +86,19 @@ impl AnonMap {
     }
 
     /// Get the page currently mapped at `offset`.
-    pub fn get_page(&self, offset: VPN) -> Option<PPN> {
-        let offset = offset.checked_sub(self.offset)?;
-        if offset > self.pages.len() {
+    fn get_page(&self, offset: usize) -> Option<PAddrr> {
+        debug_assert!(offset % PAGE_SIZE as usize == 0);
+        let page_index = offset.checked_sub(self.offset)? / PAGE_SIZE as usize;
+        if page_index >= self.pages.len() {
             return None;
         }
-        self.pages[(offset - self.offset) as usize]
-            .as_deref()
-            .map(|x| x.ppn)
+        self.pages[page_index as usize].as_deref().map(|x| x.paddr)
     }
 
     /// Get or allocate the page at `offset`.
     /// If a new page is allocated, the existing data in the page at `orig` is copied.
-    pub unsafe fn alloc_page(&mut self, offset: VPN, orig: Option<PPN>) -> EResult<PPN> {
+    unsafe fn alloc_page(&mut self, offset: usize, orig: Option<PAddrr>) -> EResult<PAddrr> {
+        debug_assert!(offset % PAGE_SIZE as usize == 0);
         if let Some(page) = self.get_page(offset) {
             return Ok(page);
         }
@@ -120,17 +108,21 @@ impl AnonMap {
             self.pages.try_reserve(1)?;
             self.pages.push(None);
         } else if offset < self.offset {
-            let shift = self.offset - offset;
+            let shift = (self.offset - offset) / PAGE_SIZE as usize;
             self.pages.try_reserve(shift)?;
-            self.pages.splice(0..0, (0..shift).map(|_| None));
-            self.offset -= shift;
+            self.pages.splice(0..0, (0..shift + 1).map(|_| None));
+            self.offset -= shift * PAGE_SIZE as usize;
+        } else if offset >= self.offset + self.pages.len() * PAGE_SIZE as usize {
+            let shift = offset + 1 - self.offset - self.pages.len() * PAGE_SIZE as usize;
+            self.pages.try_reserve(shift)?;
+            self.pages.resize(self.pages.len() + shift, None);
         }
 
         let new_page;
         let anon;
         unsafe {
             new_page = pmm::page_alloc(0, pmm::PageUsage::UserAnon)?;
-            anon = match Arc::try_new(Anon { ppn: new_page }) {
+            anon = match Arc::try_new(Anon { paddr: new_page }) {
                 Ok(x) => x,
                 Err(x) => {
                     pmm::page_free(new_page, 0);
@@ -138,9 +130,9 @@ impl AnonMap {
                 }
             };
 
-            let new_hhdm = new_page * PAGE_SIZE as usize + HHDM_OFFSET;
+            let new_hhdm = new_page as usize + HHDM_OFFSET;
             if let Some(orig) = orig {
-                let old_hhdm = orig * PAGE_SIZE as usize + HHDM_OFFSET;
+                let old_hhdm = orig as usize + HHDM_OFFSET;
                 core::ptr::copy_nonoverlapping(
                     old_hhdm as *const u8,
                     new_hhdm as *mut u8,
@@ -151,7 +143,7 @@ impl AnonMap {
             }
         }
 
-        self.pages[(offset - self.offset) as usize] = Some(anon);
+        self.pages[(offset - self.offset) / PAGE_SIZE as usize] = Some(anon);
 
         Ok(new_page)
     }
@@ -160,57 +152,40 @@ impl AnonMap {
 /// One contiguous range of mapped memory with the same protection and mapping flags.
 struct MapEntry {
     node: InvasiveListNode,
+    /// Region start and end virtual addresses.
+    range: Range<usize>,
+    /// Mapping dynamic state.
     inner: Spinlock<MapEntryInner>,
 }
 impl_has_list_node!(MapEntry, node);
 
 /// One contiguous range of mapped memory with the same protection and mapping flags.
 struct MapEntryInner {
-    /// Region start and end.
-    range: Range<VPN>,
     /// Region protection flags.
-    prot: u8,
+    prot_flags: u8,
     /// Region mapping flags.
-    map: u32,
+    map_flags: u32,
     /// Anonymous memory overlay.
     amap: Option<Arc<AnonMap>>,
-    // TODO: Memory object offset and reference.
+    /// Memory object mapped here.
+    mapping: Option<Mapping>,
 }
 
 impl MapEntryInner {
-    /// Trim pages from the start and/or end of this entry.
-    pub fn trim(&mut self, subrange: Range<VPN>) -> EResult<()> {
-        debug_assert!(subrange.start >= self.range.start);
-        debug_assert!(subrange.end <= self.range.end);
-
-        if let Some(amap) = &mut self.amap
-            && amap.needs_trim(subrange.clone())
-        {
-            if let Some(amap) = amap.trim(subrange.clone())? {
-                self.amap = Some(Arc::try_new(amap)?);
-            } else {
-                self.amap = None;
-            }
-        }
-
-        self.range = subrange;
-
-        Ok(())
-    }
-
-    /// Split this entry into two starting at `offset`.
-    pub fn split(&self, offset: VPN) -> EResult<(Self, Self)> {
+    /// Split this entry into two starting at `offset` within this mapping.
+    fn split(&self, offset: usize) -> EResult<(Self, Self)> {
+        debug_assert!(offset % PAGE_SIZE as usize == 0);
         let mut first = Self {
-            range: self.range.start..offset,
-            prot: self.prot,
-            map: self.map,
+            prot_flags: self.prot_flags,
+            map_flags: self.map_flags,
             amap: None,
+            mapping: self.mapping.clone(),
         };
         let mut second = Self {
-            range: self.range.start..offset,
-            prot: self.prot,
-            map: self.map,
+            prot_flags: self.prot_flags,
+            map_flags: self.map_flags,
             amap: None,
+            mapping: self.mapping.clone(),
         };
 
         if let Some(amap) = self.amap.as_deref() {
@@ -228,41 +203,66 @@ impl MapEntryInner {
 
     /// Get the page currently mapped at `offset`.
     /// Must only be called if there is no page currently mapped for `offset`.
-    pub fn get_page(&self, offset: VPN) -> Option<PPN> {
+    fn get_page(&self, offset: usize, allow_writing: Option<&mut bool>) -> Option<PAddrr> {
+        debug_assert!(offset % PAGE_SIZE as usize == 0);
         if let Some(amap) = &self.amap
             && let Some(page) = amap.get_page(offset)
         {
+            if let Some(allow_writing) = allow_writing {
+                *allow_writing = true;
+            }
             return Some(page);
         }
 
-        // TODO: Fetch pages from MemObject, which could return None here.
-        Some(unsafe { PAGE_OF_ZEROES })
+        if let Some(mapping) = &self.mapping {
+            if let Some(allow_writing) = allow_writing {
+                *allow_writing = self.map_flags & SHARED == 0;
+            }
+            mapping.object.get(offset + mapping.offset)
+        } else {
+            if let Some(allow_writing) = allow_writing {
+                *allow_writing = false;
+            }
+            Some(zeroes_paddr())
+        }
     }
 
     /// Get or allocate the page at `offset`.
-    /// If a backing page was already mapped in the pmap, the existing data at `orig` cay be copied into the anon.
-    /// If an anon was created, the page `orig` is put back to the pager (its refcount decreased).
-    pub unsafe fn alloc_page(
+    unsafe fn alloc_page(
         &mut self,
-        offset: VPN,
+        offset: usize,
         mut for_writing: bool,
-        orig: Option<PPN>,
-    ) -> EResult<PPN> {
-        if self.map & SHARED != 0 {
-            // Shared memory will not create anons overlaying the backing memory.
-            for_writing = false;
-        }
-        if !for_writing
-            && let Some(amap) = &self.amap
+        allow_writing: Option<&mut bool>,
+    ) -> EResult<PAddrr> {
+        debug_assert!(offset % PAGE_SIZE as usize == 0);
+        if let Some(amap) = &self.amap
             && let Some(page) = amap.get_page(offset)
         {
+            if let Some(allow_writing) = allow_writing {
+                *allow_writing = true;
+            }
             return Ok(page);
         }
 
-        if orig.is_none() {
-            // TODO: Alloc pages from MemObject.
-            return Ok(unsafe { PAGE_OF_ZEROES });
+        // Page is not cached, get it from the memory object.
+        let paddr;
+        if let Some(mapping) = &self.mapping {
+            paddr = mapping.object.alloc(offset + mapping.offset)?;
+        } else {
+            paddr = zeroes_paddr();
         }
+
+        if !for_writing || self.map_flags & SHARED == 0 {
+            // Page can be immediately mapped given for the given access type.
+            if let Some(allow_writing) = allow_writing {
+                *allow_writing = self.map_flags & SHARED == 0;
+            }
+            return Ok(paddr);
+        }
+
+        // Page can't be immediately mapped; instead, it shall be copied to a new anon.
+        // However, we don't do this for the page of zeroes so we know to memset instead of memcpy later.
+        let orig = self.mapping.is_some().then_some(paddr);
 
         // Ensure we have a mutable reference to an AnonMap.
         if let Some(amap) = &mut self.amap {
@@ -271,6 +271,7 @@ impl MapEntryInner {
                 *amap = Arc::try_new((**amap).clone())?;
             }
         } else {
+            // Initial creation of the AnonMap.
             self.amap = Some(Arc::try_new(AnonMap {
                 offset: 0,
                 pages: Vec::new(),
@@ -278,20 +279,15 @@ impl MapEntryInner {
         }
         let amap = Arc::get_mut(self.amap.as_mut().unwrap()).unwrap();
 
-        unsafe {
-            // TODO: Pass Some(orig) iff a MemObject is associated.
-            let new = amap.alloc_page(offset, None)?;
-            // TODO: Return orig to MemObject.
-
-            Ok(new)
-        }
+        // SAFETY: `orig` here comes from the memory object, which promises it is valid physical memory.
+        unsafe { amap.alloc_page(offset, orig) }
     }
 }
 
 /// Virtual address-space map.
-struct VmSpaceInner {
+pub(super) struct VmSpaceInner {
     /// Architecture-specific virtual to physical address map.
-    pmap: PhysMap,
+    pub(super) pmap: PhysMap,
     /// Doubly-linked list of contiguous ranges with identical map and protection flags.
     /// The map may be modified in an unrelated place while a given entry is locked,
     /// so we opted for the raw pointer variant.
@@ -299,7 +295,11 @@ struct VmSpaceInner {
 }
 
 impl VmSpaceInner {
-    fn new(pmap: PhysMap) -> Self {
+    /// Margin in bytes between mappings that [`Self::map`] guarantees.
+    pub const MAP_MARGIN: usize = PAGE_SIZE as usize;
+
+    /// Create a new, empty address space.
+    pub(super) fn new(pmap: PhysMap) -> Self {
         Self {
             pmap,
             map: Spinlock::new(InvasiveList::new()),
@@ -308,18 +308,182 @@ impl VmSpaceInner {
 
     /// Try to split the mappings so that they do not cross `threshold`.
     /// Used to implement the splitting logic used by the various manipulation functions.
-    fn split(&self, threshold: VPN, map: &InvasiveList<MapEntry>) -> EResult<()> {
+    fn split(threshold: usize, map: &mut InvasiveList<MapEntry>) -> EResult<()> {
         unsafe {
+            debug_assert!(threshold % PAGE_SIZE as usize == 0);
             let mut cur = map.front();
-            while let Some(cur) = cur {
-                let guard = (&*cur).inner.lock();
-                if guard.range.start < threshold && guard.range.end > threshold {
-                    let (first, second) = guard.split(threshold - guard.range.start)?;
+            while let Some(entry) = cur {
+                let mut guard = (&*entry).inner.lock();
+                if (*entry).range.start < threshold && (*entry).range.end > threshold {
+                    let (first, second) = guard.split(threshold - (*entry).range.start)?;
+                    let new = Box::into_raw(Box::try_new(MapEntry {
+                        range: threshold..(*entry).range.end,
+                        node: InvasiveListNode::new(),
+                        inner: Spinlock::new(second),
+                    })?);
+                    (*entry).range.end = threshold;
+                    *guard = first;
+                    map.insert_after(entry, new);
                 }
                 drop(guard);
+                cur = map.next(entry);
             }
             Ok(())
         }
+    }
+
+    /// Removes entries within `bounds`.
+    unsafe fn remove_mappings(map: &mut InvasiveList<MapEntry>, bounds: Range<usize>) {
+        unsafe {
+            debug_assert!(bounds.start % PAGE_SIZE as usize == 0);
+            debug_assert!(bounds.end % PAGE_SIZE as usize == 0);
+            let mut cur = map.front();
+            while let Some(entry) = cur {
+                let next = map.next(entry);
+                if (*entry).range.start >= bounds.end {
+                    break;
+                } else if bounds.contains(&(*entry).range.start) {
+                    map.remove(entry);
+                    drop(Box::from_raw(entry));
+                }
+                cur = next;
+            }
+        }
+    }
+
+    /// Insert a new mapping.
+    unsafe fn insert_mapping(map: &mut InvasiveList<MapEntry>, insert: Box<MapEntry>) {
+        unsafe {
+            debug_assert!(insert.range.start % PAGE_SIZE as usize == 0);
+            debug_assert!(insert.range.end % PAGE_SIZE as usize == 0);
+            if map.len() == 0 {
+                map.push_front(Box::into_raw(insert)).unwrap();
+                return;
+            }
+
+            let mut cur = map.front();
+            if let Some(entry) = cur
+                && (*entry).range.start >= insert.range.end
+            {
+                map.push_front(Box::into_raw(insert)).unwrap();
+                return;
+            }
+
+            while let Some(entry) = cur {
+                let next = map.next(entry);
+                if let Some(next) = next {
+                    debug_assert!((*next).range.start >= (*entry).range.end);
+                }
+                if (*entry).range.end <= insert.range.start {
+                    map.insert_after(entry, Box::into_raw(insert));
+                    return;
+                }
+                cur = next;
+            }
+
+            unreachable!("Mapping has no space to be inserted into");
+        }
+    }
+
+    /// Implementation of [`Self::map`] with the [`FIXED`] flag.
+    unsafe fn map_fixed(
+        map: &mut InvasiveList<MapEntry>,
+        size: usize,
+        addr: usize,
+        map_flags: u32,
+        prot_flags: u8,
+        mapping: Option<Mapping>,
+    ) -> EResult<()> {
+        debug_assert!(addr % PAGE_SIZE as usize == 0);
+        debug_assert!(size % PAGE_SIZE as usize == 0);
+        Self::split(addr, map)?;
+        Self::split(addr + size, map)?;
+
+        let entry = Box::try_new(MapEntry {
+            node: InvasiveListNode::new(),
+            range: addr..addr + size,
+            inner: Spinlock::new(MapEntryInner {
+                prot_flags,
+                map_flags,
+                amap: None,
+                mapping,
+            }),
+        })?;
+        unsafe {
+            Self::remove_mappings(map, addr..addr + size);
+            Self::insert_mapping(map, entry);
+        }
+
+        Ok(())
+    }
+
+    /// Implementation of [`Self::map`] without the [`FIXED`] flag.
+    unsafe fn map_dynamic(
+        map: &mut InvasiveList<MapEntry>,
+        size: usize,
+        mut hint: usize,
+        mut bounds: Range<usize>,
+        map_flags: u32,
+        prot_flags: u8,
+        mapping: Option<Mapping>,
+    ) -> EResult<usize> {
+        debug_assert!(hint % PAGE_SIZE as usize == 0);
+        debug_assert!(size % PAGE_SIZE as usize == 0);
+        debug_assert!(bounds.start % PAGE_SIZE as usize == 0);
+        debug_assert!(bounds.end % PAGE_SIZE as usize == 0);
+        // Constrain bounds to the closest range that would fit the mapping.
+        if map.len() > 0 {
+            let mut closest: Option<usize> = None;
+            let mut closest_size = 0;
+            let mut prev = bounds.start;
+            for entry in unsafe { map.iter() } {
+                if let Some(closest) = closest
+                    && prev.abs_diff(hint) > closest.abs_diff(hint)
+                {
+                    break;
+                }
+                let start = entry.range.start.max(bounds.start);
+                if start >= prev + size + 2 * Self::MAP_MARGIN {
+                    closest = Some(prev);
+                    closest_size = start - prev;
+                }
+                prev = entry.range.end.max(bounds.start);
+            }
+            if closest.is_none() || prev.abs_diff(hint) <= closest.unwrap().abs_diff(hint) {
+                if bounds.end >= prev + size {
+                    closest = Some(prev);
+                    closest_size = bounds.end - prev;
+                }
+            }
+
+            let closest = closest.ok_or(Errno::ENOMEM)?;
+            bounds.start = bounds.start.max(closest);
+            bounds.end = bounds.end.min(closest + closest_size);
+        }
+
+        if bounds.len() < size + 2 * Self::MAP_MARGIN {
+            return Err(Errno::ENOMEM);
+        } else if hint < bounds.start + Self::MAP_MARGIN {
+            hint = bounds.start + Self::MAP_MARGIN;
+        } else if hint.saturating_add(size) > bounds.end - Self::MAP_MARGIN {
+            hint = bounds.end - size - Self::MAP_MARGIN;
+        }
+
+        let entry = Box::try_new(MapEntry {
+            node: InvasiveListNode::new(),
+            range: hint..hint + size,
+            inner: Spinlock::new(MapEntryInner {
+                prot_flags,
+                map_flags,
+                amap: None,
+                mapping,
+            }),
+        })?;
+        unsafe {
+            Self::insert_mapping(map, entry);
+        }
+
+        Ok(hint)
     }
 
     /// Create a new mapping that must exist somewhere within `bounds` and try to place it at `hint`.
@@ -328,33 +492,111 @@ impl VmSpaceInner {
     /// TODO: MemObject parameter.
     pub unsafe fn map(
         &self,
-        size: VPN,
-        hint: VPN,
-        bounds: Range<VPN>,
-        map: u32,
-        prot: u8,
+        size: usize,
+        hint: usize,
+        bounds: Range<usize>,
+        map_flags: u32,
+        prot_flags: u8,
+        mapping: Option<Mapping>,
     ) -> EResult<usize> {
-        todo!()
+        let has_mapping = mapping.is_some();
+        assert!(hint % PAGE_SIZE as usize == 0);
+        let size = size.div_ceil(PAGE_SIZE as usize) * PAGE_SIZE as usize;
+        unsafe {
+            let mut map = self.map.lock();
+            let addr = if map_flags & FIXED != 0 {
+                assert!(hint % PAGE_SIZE as usize == 0);
+                Self::map_fixed(&mut map, size, hint, map_flags, prot_flags, mapping)?;
+                hint
+            } else {
+                Self::map_dynamic(&mut map, size, hint, bounds, map_flags, prot_flags, mapping)?
+            };
+            let _map = map.demote();
+            if map_flags & POPULATE != 0 {
+                let access = if !has_mapping {
+                    prot::WRITE
+                } else {
+                    prot::READ
+                };
+                for addr in (addr..addr + size).step_by(PAGE_SIZE as usize) {
+                    self.fault(addr, access).expect("Prefault failed");
+                }
+            }
+            Ok(addr)
+        }
     }
 
     /// Change the protection flags for pages within `bounds`.
     /// No changes are made on failure.
     /// Preserves the outer portion of mappings on the border of `bounds`.
-    pub unsafe fn protect(&self, bounds: Range<VPN>, prot: u8) -> EResult<()> {
+    pub unsafe fn protect(&self, bounds: Range<usize>, prot_flags: u8) -> EResult<()> {
         todo!()
     }
 
     /// Unmap all pages within `bounds`.
     /// No changes are made on failure.
     /// Preserves the outer portion of mappings on the border of `bounds`.
-    pub unsafe fn unmap(&self, bounds: Range<VPN>) -> EResult<()> {
+    pub unsafe fn unmap(&self, bounds: Range<usize>) -> EResult<()> {
         todo!()
+    }
+
+    /// Implementation of [`Self::fault`] if the entry is found.
+    fn fault_impl(pmap: &PhysMap, vaddr: usize, access: u8, entry: &MapEntry) -> EResult<()> {
+        let page_vaddr = vaddr - vaddr % PAGE_SIZE as usize;
+        let v2p = pmap.virt2phys(page_vaddr);
+        let flags = if v2p.valid {
+            prot::from_mmu_flags(v2p.flags)
+        } else {
+            0
+        };
+        if flags >= access {
+            // TLB must be outdated; flush it and retry.
+            mmu::vmem_fence(Some(page_vaddr), None);
+            return Ok(());
+        }
+
+        // Get the page from either the cache or the memory object.
+        let mut guard = entry.inner.lock();
+        let mut allow_writing = false;
+        let existing = guard.get_page(page_vaddr - entry.range.start, Some(&mut allow_writing));
+        let paddr;
+        if existing.is_none() || access == prot::WRITE && guard.map_flags & SHARED != 0 {
+            // SAFETY: We know the existing page to be owned by the same range, so it is readable.
+            paddr = unsafe {
+                guard.alloc_page(
+                    page_vaddr - entry.range.start,
+                    access == prot::WRITE,
+                    Some(&mut allow_writing),
+                )?
+            };
+        } else {
+            paddr = existing.unwrap();
+        }
+
+        // SAFETY: The page mapped here is provided by the range and we need to trust it is correct.
+        unsafe {
+            let mut prot_flags = guard.prot_flags;
+            if !allow_writing && guard.map_flags & SHARED == 0 {
+                prot_flags &= !prot::WRITE;
+            }
+            pmap.map(page_vaddr, paddr, prot::into_mmu_flags(prot_flags))?;
+        }
+
+        Ok(())
     }
 
     /// Handle a page fault at address `vaddr`.
     /// If this returns [`Ok`], the access should be retried.
     pub fn fault(&self, vaddr: usize, access: u8) -> EResult<()> {
-        todo!()
+        let map = self.map.lock_shared();
+
+        for entry in unsafe { map.iter() } {
+            if entry.range.contains(&vaddr) {
+                return Self::fault_impl(&self.pmap, vaddr, access, entry);
+            }
+        }
+
+        Err(Errno::EFAULT)
     }
 
     /// Clear the entire address-space.
@@ -381,27 +623,47 @@ impl VmSpace {
     /// Create a new address-space for user memory.
     pub fn new() -> EResult<Self> {
         let pmap = PhysMap::new()?;
+        unsafe {
+            PhysMap::broadcast_higher_half(&kernel_mm().0.pmap, &pmap);
+        }
         Ok(Self(VmSpaceInner::new(pmap)))
     }
 
-    /// The virtual page number bounds within which user virtual address-space maps work.
-    pub fn bounds() -> Range<VPN> {
-        // Not including the last page before the non-canonical addresses because on x86 it could allow userspace to cause a kernel page fault.
-        0..canon_half_pages() - 1
+    /// The range within which the kernel will allow new non-fixed mmaps to be created for userspace.
+    pub fn bounds() -> Range<usize> {
+        canon_half_size() / 2..canon_half_size()
     }
 
     /// Create a new mapping that must exist somewhere within `bounds` and try to place it at `hint`.
     /// If the `FIXED` flag is set in `map`, then overwrite any existing mappings in the way.
     /// Will never touch ranges of memory outside of `bounds`.
     /// TODO: MemObject parameter.
-    pub fn map(&self, size: VPN, hint: VPN, map: u32, prot: u8) -> EResult<usize> {
+    pub fn map(
+        &self,
+        size: usize,
+        hint: usize,
+        map_flags: u32,
+        prot_flags: u8,
+        mapping: Option<Mapping>,
+    ) -> EResult<usize> {
+        // Assert page-aligned hints.
+        if hint % PAGE_SIZE as usize != 0 {
+            return Err(Errno::EINVAL);
+        }
+        // Assert the virtual addresses are in the lower half.
+        if map_flags & FIXED != 0
+            && (hint == 0 || hint.saturating_add(size) >= canon_half_size() - PAGE_SIZE as usize)
+        {
+            return Err(Errno::EINVAL);
+        }
         unsafe {
             self.0.map(
                 size,
                 hint,
                 Self::bounds(),
-                map,
-                prot & !prot::IO & !prot::NC,
+                map_flags,
+                prot_flags & !prot::IO & !prot::NC,
+                mapping,
             )
         }
     }
@@ -409,9 +671,9 @@ impl VmSpace {
     /// Change the protection flags for pages within `bounds`.
     /// No changes are made on failure.
     /// Preserves the outer portion of mappings on the border of `bounds`.
-    pub fn protect(&self, bounds: Range<usize>, prot: u8) -> EResult<()> {
+    pub fn protect(&self, bounds: Range<usize>, prot_flags: u8) -> EResult<()> {
         assert!(Self::bounds().start <= bounds.start && Self::bounds().end >= bounds.end);
-        unsafe { self.0.protect(bounds, prot) }
+        unsafe { self.0.protect(bounds, prot_flags) }
     }
 
     /// Unmap all pages within `bounds`.
@@ -452,32 +714,57 @@ impl VmSpace {
 }
 
 /// Virtual address-space map for user memory.
-pub struct KernelVmSpace(VmSpaceInner);
+pub struct KernelVmSpace(pub(super) VmSpaceInner);
 
 impl KernelVmSpace {
-    /// The virtual page number bounds within which user virtual address-space maps work.
-    pub fn bounds() -> Range<VPN> {
+    pub(super) fn new() -> Self {
+        let pmap = PhysMap::new().expect("Failed to allocate kernel PhysMap");
+        unsafe {
+            pmap.populate_higher_half()
+                .expect("Failed to allocate kernel PhysMap");
+        }
+        Self(VmSpaceInner::new(pmap))
+    }
+
+    /// The bounds within which the kernel makes its own non-fixed mappings.
+    pub fn bounds() -> Range<usize> {
         // The upper quarter of the higher half is used for miscellaneous mappings.
-        higher_half_page() + canon_half_pages() / 4..higher_half_page() + canon_half_pages()
+        higher_half_vaddr() + canon_half_size() / 4..(PAGE_SIZE as usize).wrapping_neg()
     }
 
     /// Create a new mapping that must exist somewhere within `bounds` and try to place it at `hint`.
     /// If the `FIXED` flag is set in `map`, then overwrite any existing mappings in the way.
     /// Will never touch ranges of memory outside of `bounds`.
     /// TODO: MemObject parameter.
-    pub unsafe fn map(&self, size: VPN, hint: VPN, mut map: u32, prot: u8) -> EResult<usize> {
-        if map & LAZY_KERNEL == 0 {
-            map |= POPULATE;
+    pub unsafe fn map(
+        &self,
+        size: usize,
+        hint: usize,
+        mut map_flags: u32,
+        prot_flags: u8,
+        mapping: Option<Mapping>,
+    ) -> EResult<usize> {
+        assert!(hint % PAGE_SIZE as usize == 0);
+        if map_flags & FIXED != 0 {
+            assert!(hint >= higher_half_vaddr());
         }
-        unsafe { self.0.map(size, hint, Self::bounds(), map, prot) }
+        if map_flags & LAZY_KERNEL == 0 {
+            map_flags |= POPULATE;
+            map_flags &= !PRIVATE;
+            map_flags |= SHARED;
+        }
+        unsafe {
+            self.0
+                .map(size, hint, Self::bounds(), map_flags, prot_flags, mapping)
+        }
     }
 
     /// Change the protection flags for pages within `bounds`.
     /// No changes are made on failure.
     /// Preserves the outer portion of mappings on the border of `bounds`.
-    pub unsafe fn protect(&self, bounds: Range<usize>, prot: u8) -> EResult<()> {
+    pub unsafe fn protect(&self, bounds: Range<usize>, prot_flags: u8) -> EResult<()> {
         assert!(Self::bounds().start <= bounds.start && Self::bounds().end >= bounds.end);
-        unsafe { self.0.protect(bounds, prot) }
+        unsafe { self.0.protect(bounds, prot_flags) }
     }
 
     /// Unmap all pages within `bounds`.

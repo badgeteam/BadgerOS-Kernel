@@ -4,12 +4,14 @@
 
 use core::ops::{Deref, DerefMut};
 
+use alloc::sync::Arc;
+
 use crate::{
     bindings::error::EResult,
     config::{self, PAGE_SIZE},
     mem::{
         self,
-        vmm::{self, VPN, kernel_mm},
+        vmm::{self, kernel_mm, map::Mapping, memobject::RawMemory},
     },
 };
 
@@ -31,12 +33,18 @@ impl<T: Sized> PhysBox<T> {
             let aligned_pages = mem::pmm::order_to_pages(order);
             let ptr = PhysPtr::new(order, PageUsage::KernelAnon)?;
 
-            let flags = vmm::prot::READ
+            let prot = vmm::prot::READ
                 | vmm::prot::WRITE + io as u8 * vmm::prot::IO + nc as u8 * vmm::prot::NC;
 
-            let vpn: VPN = todo!("This needs a memory object to implement");
+            let object = Arc::try_new(RawMemory::new(ptr.paddr(), PAGE_SIZE as usize))?;
 
-            let vaddr = (vpn * PAGE_SIZE as usize) as *mut T;
+            let vaddr = kernel_mm().map(
+                aligned_pages,
+                0,
+                0,
+                prot,
+                Some(Mapping { offset: 0, object }),
+            )? as *mut T;
             core::ptr::write_bytes(vaddr as *mut u8, 0, aligned_pages);
 
             Ok(Self { ptr, vaddr })
@@ -45,7 +53,7 @@ impl<T: Sized> PhysBox<T> {
 
     /// Get the underlying physical address.
     pub fn paddr(&self) -> usize {
-        self.ptr.ppn() * config::PAGE_SIZE as usize
+        self.ptr.paddr()
     }
 }
 
@@ -67,11 +75,11 @@ impl<T: Sized> Drop for PhysBox<T> {
     fn drop(&mut self) {
         unsafe {
             let order = mem::pmm::size_to_order(size_of::<T>());
-            let aligned_pages = mem::pmm::order_to_pages(order);
-            let vpn = self.vaddr as usize / config::PAGE_SIZE as usize;
+            let aligned_size = mem::pmm::order_to_size(order);
+            let vaddr = self.vaddr as usize;
 
             kernel_mm()
-                .unmap(vpn..vpn + aligned_pages)
+                .unmap(vaddr..vaddr + aligned_size)
                 .expect("PhysBox unmap failed");
         }
     }

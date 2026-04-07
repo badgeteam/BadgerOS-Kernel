@@ -2,43 +2,55 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use crate::{
-    bindings::error::EResult,
-    mem::{
-        pmm::PPN,
-        vmm::{PAGE_OF_ZEROES, VPN},
-    },
-};
+use crate::{bindings::error::EResult, mem::pmm::PAddrr};
 
 /// An object that can be mapped into a [`super::VMSpace`].
 pub trait MemObject {
-    /// Get the size in pages of the object.
-    fn len(&self) -> VPN;
+    /// Get the size in bytes of the object.
+    /// Must be page-aligned.
+    fn len(&self) -> usize;
 
     /// Whether to enable reference-counting for the pages from [`Self::get`].
     fn use_refcount(&self) -> bool;
 
-    /// Get a page from the object.
-    fn get(&self, page: VPN) -> EResult<PPN>;
+    /// Try to get an existing page from the object.
+    /// May spuriously return [`None`] even if the page is available.
+    fn get(&self, offset: usize) -> Option<PAddrr>;
+
+    /// Allocate a new page from the object.
+    fn alloc(&self, offset: usize) -> EResult<PAddrr>;
 
     /// Mark a page as being dirty.
-    fn mark_dirty(&self, page: VPN);
+    fn mark_dirty(&self, offset: usize);
 }
 
-pub struct ZeroFill;
+pub struct RawMemory {
+    paddr: PAddrr,
+    len: usize,
+}
 
-impl MemObject for ZeroFill {
-    fn len(&self) -> VPN {
-        VPN::MAX
+impl RawMemory {
+    pub const unsafe fn new(paddr: PAddrr, len: usize) -> Self {
+        Self { paddr, len }
+    }
+}
+
+impl MemObject for RawMemory {
+    fn len(&self) -> usize {
+        self.len
     }
 
     fn use_refcount(&self) -> bool {
         false
     }
 
-    fn get(&self, _page: VPN) -> EResult<PPN> {
-        unsafe { Ok(PAGE_OF_ZEROES) }
+    fn get(&self, offset: usize) -> Option<PAddrr> {
+        Some(self.paddr + offset)
     }
 
-    fn mark_dirty(&self, _page: VPN) {}
+    fn alloc(&self, offset: usize) -> EResult<PAddrr> {
+        Ok(self.paddr + offset)
+    }
+
+    fn mark_dirty(&self, _offset: usize) {}
 }

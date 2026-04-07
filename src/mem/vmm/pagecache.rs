@@ -12,7 +12,7 @@ use crate::{
     bindings::error::EResult,
     config::PAGE_SIZE,
     kernel::sync::{spinlock::Spinlock, waitlist::Waitlist},
-    mem::{pmm::PPN, vmm::VPN},
+    mem::pmm::PAddrr,
     util::rtree::RadixTree,
 };
 
@@ -46,30 +46,30 @@ struct Entry {
 
 impl EntryStatus {
     /// Physical page number allocated (may be 0 if unallocated).
-    pub fn ppn(&self) -> PPN {
-        let ppn_and_flags: PPN = bytemuck::cast(self.0);
-        ppn_and_flags & (PPN::MAX >> 4)
+    pub fn ppn(&self) -> usize {
+        let ppn_and_flags: usize = bytemuck::cast(self.0);
+        ppn_and_flags & (usize::MAX >> 4)
     }
 
     /// Physical page number allocated (may be 0 if unallocated).
-    pub fn set_ppn(&mut self, ppn: PPN) {
-        let mut ppn_and_flags: PPN = bytemuck::cast(self.0);
-        ppn_and_flags &= !(PPN::MAX >> 4);
+    pub fn set_ppn(&mut self, ppn: usize) {
+        let mut ppn_and_flags: usize = bytemuck::cast(self.0);
+        ppn_and_flags &= !(usize::MAX >> 4);
         ppn_and_flags |= ppn;
         self.0 = bytemuck::cast(ppn_and_flags);
     }
 
     /// Status for this entry.
     pub fn flags(&self) -> u8 {
-        let ppn_and_flags: PPN = bytemuck::cast(self.0);
-        (ppn_and_flags >> (PPN::BITS - 4)) as u8
+        let ppn_and_flags: usize = bytemuck::cast(self.0);
+        (ppn_and_flags >> (usize::BITS - 4)) as u8
     }
 
     /// Status for this entry.
     pub fn set_flags(&mut self, flags: u8) {
-        let mut ppn_and_flags: PPN = bytemuck::cast(self.0);
-        ppn_and_flags &= PPN::MAX >> 4;
-        ppn_and_flags |= (flags as PPN) << (PPN::BITS - 4);
+        let mut ppn_and_flags: usize = bytemuck::cast(self.0);
+        ppn_and_flags &= usize::MAX >> 4;
+        ppn_and_flags |= (flags as usize) << (usize::BITS - 4);
         self.0 = bytemuck::cast(ppn_and_flags);
     }
 }
@@ -102,13 +102,13 @@ impl PageCache {
 
     /// Index calculation helper.
     #[inline(always)]
-    fn index(&self, page: u64) -> (u64, VPN) {
+    fn index(&self, page: u64) -> (u64, usize) {
         let page_size_exp = PAGE_SIZE.ilog2() as u8;
         if page_size_exp > self.block_size_exp {
             (1, 0)
         } else {
             let page_per_block = 1 << (self.block_size_exp - page_size_exp);
-            (page * page_per_block, (page % page_per_block) as VPN)
+            (page * page_per_block, (page % page_per_block) as usize)
         }
     }
 
@@ -169,8 +169,8 @@ impl PageCache {
     }
 
     /// Get a page from the cache and increase its refcount.
-    pub fn get(&self, pager: &dyn Pager, page: u64) -> EResult<PPN> {
-        let (index, offset) = self.index(page);
+    pub fn get(&self, pager: &dyn Pager, page: u64) -> EResult<PAddrr> {
+        let (index, page_offset) = self.index(page);
 
         let _noirq = IrqGuard::new();
         let entry = self.alloc_entry(index)?;
@@ -178,13 +178,13 @@ impl PageCache {
         unsafe {
             let status = (&*entry).status.lock_shared();
             if status.flags() & flags::RESIDENT != 0 {
-                return Ok(status.ppn() + offset);
+                return Ok((status.ppn() + page_offset) * PAGE_SIZE as usize);
             }
             drop(status);
 
             let mut status = (&*entry).status.lock();
             self.read_from_disk(pager, index, &mut status)?;
-            Ok(status.ppn() + offset)
+            Ok((status.ppn() + page_offset) * PAGE_SIZE as usize)
         }
     }
 
@@ -216,9 +216,10 @@ pub trait Pager {
 
     /// Read data in multiples of the page size of this pager.
     /// The data read if a concurrent write is happening is undefined.
-    unsafe fn read_pages(&self, page: u64, count: usize, paddr: usize) -> EResult<()>;
+    unsafe fn read_pages(&self, page_offset: u64, page_count: usize, paddr: PAddrr) -> EResult<()>;
 
     /// Write data in multiples of the page size of this pager.
     /// The data written if multiple concurrent writes happen is undefined.
-    unsafe fn write_pages(&self, page: u64, count: usize, paddr: usize) -> EResult<()>;
+    unsafe fn write_pages(&self, page_offset: u64, page_count: usize, paddr: PAddrr)
+    -> EResult<()>;
 }

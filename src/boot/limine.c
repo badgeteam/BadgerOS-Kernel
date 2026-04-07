@@ -149,8 +149,9 @@ void bootp_early_init() {
         );
         if (entry->type == LIMINE_MEMMAP_USABLE) {
             usable_len += entry->length;
-        } else if (entry->type == LIMINE_MEMMAP_BOOTLOADER_RECLAIMABLE ||
-                   entry->type == LIMINE_MEMMAP_ACPI_RECLAIMABLE) {
+        } else if (
+            entry->type == LIMINE_MEMMAP_BOOTLOADER_RECLAIMABLE || entry->type == LIMINE_MEMMAP_ACPI_RECLAIMABLE
+        ) {
             reclaim_len += entry->length;
         }
 #ifdef __riscv
@@ -203,25 +204,20 @@ void bootp_early_init() {
         early_pool->base,
         early_pool->base + early_pool->length - 1
     );
-    pmm_init(
-        (usable_start + CONFIG_PAGE_SIZE - 1) / CONFIG_PAGE_SIZE,
-        usable_end / CONFIG_PAGE_SIZE,
-        (early_pool->base + CONFIG_PAGE_SIZE - 1) / CONFIG_PAGE_SIZE,
-        (early_pool->base + early_pool->length) / CONFIG_PAGE_SIZE
-    );
+    pmm_init(usable_start, usable_end, early_pool->base, early_pool->base + early_pool->length);
 
     // Add the smaller contiguous usable regions to PMM.
     for (size_t i = 0; i < mem->entry_count; i++) {
         struct limine_memmap_entry const *ent = mem->entries[i];
 
-        ppn_t start = (ent->base + CONFIG_PAGE_SIZE - 1) / CONFIG_PAGE_SIZE;
-        ppn_t end   = (ent->base + ent->length) / CONFIG_PAGE_SIZE;
+        paddr_t start = ent->base;
+        paddr_t end   = ent->base + ent->length;
 
         if (ent->type == LIMINE_MEMMAP_USABLE && i != biggest_pool_index) {
             pmm_mark_free(start, end);
         } else if (ent->type == LIMINE_MEMMAP_KERNEL_AND_MODULES) {
-            for (ppn_t ppn = start; ppn < end; ppn++) {
-                pmm_page_struct(ppn)->flags = PAGE_USAGE_KERNEL_SEGMENT << PGFLAGS_USAGE_EXP;
+            for (paddr_t paddr = start; paddr < end; paddr += CONFIG_PAGE_SIZE) {
+                pmm_page_struct(paddr)->usage = PAGE_USAGE_KERNEL_SEGMENT;
             }
         }
     }
@@ -318,10 +314,7 @@ void bootp_reclaim_mem() {
 
     // Reclaim all reclaimable memory.
     for (size_t i = 0; i < reclaimable_len; i++) {
-        pmm_mark_free(
-            (reclaimable[i].base + CONFIG_PAGE_SIZE - 1) / CONFIG_PAGE_SIZE,
-            (reclaimable[i].base + reclaimable[i].length) / CONFIG_PAGE_SIZE
-        );
+        pmm_mark_free(reclaimable[i].base, reclaimable[i].base + reclaimable[i].length);
     }
     free(reclaimable);
 }

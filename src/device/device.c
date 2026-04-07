@@ -93,11 +93,11 @@ static bool device_init(device_union_t *device) {
             aligned_addr.size             += aligned_addr.vaddr % CONFIG_PAGE_SIZE;
             aligned_addr.paddr            -= aligned_addr.vaddr % CONFIG_PAGE_SIZE;
             aligned_addr.vaddr            -= aligned_addr.vaddr % CONFIG_PAGE_SIZE;
-            size_t vpn;
+            size_t vaddr;
             if (vmm_map_k(
-                    &vpn,
-                    (addr->size - 1) / CONFIG_PAGE_SIZE + 1,
-                    addr->paddr / CONFIG_PAGE_SIZE,
+                    &vaddr,
+                    ((addr->size - 1) / CONFIG_PAGE_SIZE + 1) * CONFIG_PAGE_SIZE,
+                    addr->paddr / CONFIG_PAGE_SIZE * CONFIG_PAGE_SIZE,
                     VMM_FLAG_RW | VMM_FLAG_IO
                 ) < 0) {
                 for (i--; i != SIZE_MAX; i--) {
@@ -111,13 +111,13 @@ static bool device_init(device_union_t *device) {
                         if (size % CONFIG_PAGE_SIZE) {
                             size += CONFIG_PAGE_SIZE - size % CONFIG_PAGE_SIZE;
                         }
-                        vmm_unmap_k(vaddr / CONFIG_PAGE_SIZE, size / CONFIG_PAGE_SIZE);
+                        vmm_unmap_k(vaddr, size);
                         addr->vaddr = 0;
                     }
                 }
                 return false;
             }
-            addr->vaddr = vpn * CONFIG_PAGE_SIZE + addr->paddr % CONFIG_PAGE_SIZE;
+            addr->vaddr = vaddr + addr->paddr % CONFIG_PAGE_SIZE;
         }
     }
 

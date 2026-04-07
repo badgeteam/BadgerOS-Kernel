@@ -133,11 +133,11 @@ void *uacpi_kernel_map(uacpi_phys_addr paddr, uacpi_size len) {
     if (len % CONFIG_PAGE_SIZE) {
         len += CONFIG_PAGE_SIZE - len % CONFIG_PAGE_SIZE;
     }
-    vpn_t vpn;
-    if (vmm_map_k(&vpn, len / CONFIG_PAGE_SIZE, paddr / CONFIG_PAGE_SIZE, VMM_FLAG_RW | VMM_FLAG_IO) < 0) {
+    size_t vaddr;
+    if (vmm_map_k(&vaddr, len / CONFIG_PAGE_SIZE, paddr / CONFIG_PAGE_SIZE, VMM_FLAG_RW | VMM_FLAG_IO) < 0) {
         return NULL;
     }
-    return (void *)(vpn * CONFIG_PAGE_SIZE + off);
+    return (void *)(vaddr + off);
 }
 void uacpi_kernel_unmap(void *addr, uacpi_size len) {
     size_t vaddr  = (size_t)addr;
@@ -146,7 +146,7 @@ void uacpi_kernel_unmap(void *addr, uacpi_size len) {
     if (len % CONFIG_PAGE_SIZE) {
         len += CONFIG_PAGE_SIZE - len % CONFIG_PAGE_SIZE;
     }
-    vmm_unmap_k(vaddr / CONFIG_PAGE_SIZE, len / CONFIG_PAGE_SIZE);
+    vmm_unmap_k(vaddr, len);
 }
 
 /*
