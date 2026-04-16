@@ -23,6 +23,7 @@ use crate::{
     boot::init::INIT_BLOCK_THREADS,
     kernel::sched::{Thread, thread_sleep},
     logk,
+    mem::vmm::kernel_mm,
 };
 
 /// Match an AHCI controller.
@@ -95,7 +96,17 @@ impl AhciDriver {
 
         // Map BAR no. 5.
         let bar_info = unsafe { parent.bar_info(addr) };
+        logkf!(
+            LogLevel::Debug,
+            "Mapping AHCI controller BAR {:#x?}",
+            &bar_info[5]
+        );
         let bar_mapping = unsafe { parent.bar_map(bar_info[5]) }?;
+        logkf!(
+            LogLevel::Debug,
+            "BAR mapped at {:#x?}",
+            bar_mapping.as_ptr() as usize
+        );
         let mmio = unsafe { &*(bar_mapping.as_ptr() as *const reg::Host) };
         let ports_mmio =
             unsafe { &*(bar_mapping.as_ptr().wrapping_add(0x100) as *const [reg::Port; 32]) };

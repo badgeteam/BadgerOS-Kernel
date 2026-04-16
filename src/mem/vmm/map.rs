@@ -2,7 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::ops::Range;
+use core::{fmt::Debug, ops::Range};
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
@@ -19,7 +19,7 @@ use crate::{
     util::list::{InvasiveList, InvasiveListNode},
 };
 
-use super::{memobject::MemObject, physmap::canon_half_size, *};
+use super::{memobject::MemObject, physmap::canon_half_size, vmfence::VmFenceSet, *};
 
 /// Mapping is shared (written back to memory object and not CoW'ed on fork).
 pub const SHARED: u32 = 0x01;
@@ -36,7 +36,7 @@ pub const POPULATE: u32 = 0x8000;
 pub const LAZY_KERNEL: u32 = 0x8000_0000;
 
 /// Specification for how to map a memory object.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Mapping {
     /// Page-aligned byte offset within the memory object.
     pub offset: usize,
@@ -45,11 +45,12 @@ pub struct Mapping {
 }
 
 /// A region of anonymous memory.
+#[derive(Debug)]
 struct Anon {
     paddr: PAddrr,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct AnonMap {
     /// Page-aligned byte offset the parent [`MapEntry`].
     offset: usize,
@@ -171,6 +172,16 @@ struct MapEntryInner {
     mapping: Option<Mapping>,
 }
 
+impl Debug for MapEntryInner {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("MapEntryInner")
+            .field("prot_flags", &self.prot_flags)
+            .field("map_flags", &self.map_flags)
+            .field("mapping", &self.mapping)
+            .finish()
+    }
+}
+
 impl MapEntryInner {
     /// Split this entry into two starting at `offset` within this mapping.
     fn split(&self, offset: usize) -> EResult<(Self, Self)> {
@@ -231,7 +242,7 @@ impl MapEntryInner {
     unsafe fn alloc_page(
         &mut self,
         offset: usize,
-        mut for_writing: bool,
+        for_writing: bool,
         allow_writing: Option<&mut bool>,
     ) -> EResult<PAddrr> {
         debug_assert!(offset % PAGE_SIZE as usize == 0);
@@ -333,7 +344,12 @@ impl VmSpaceInner {
     }
 
     /// Removes entries within `bounds`.
-    unsafe fn remove_mappings(map: &mut InvasiveList<MapEntry>, bounds: Range<usize>) {
+    unsafe fn remove_mappings(
+        fences: &mut VmFenceSet,
+        pmap: &PhysMap,
+        map: &mut InvasiveList<MapEntry>,
+        bounds: Range<usize>,
+    ) {
         unsafe {
             debug_assert!(bounds.start % PAGE_SIZE as usize == 0);
             debug_assert!(bounds.end % PAGE_SIZE as usize == 0);
@@ -343,12 +359,17 @@ impl VmSpaceInner {
                 if (*entry).range.start >= bounds.end {
                     break;
                 } else if bounds.contains(&(*entry).range.start) {
+                    // Lock here to ensure no other thread is still e.g. performing fault() on it.
+                    drop((*entry).inner.lock());
+                    pmap.unmap_multiple((*entry).range.start, (*entry).range.len());
                     map.remove(entry);
                     drop(Box::from_raw(entry));
                 }
                 cur = next;
             }
         }
+        vmfence::shootdown(fences);
+        fences.clear();
     }
 
     /// Insert a new mapping.
@@ -361,32 +382,30 @@ impl VmSpaceInner {
                 return;
             }
 
+            let mut prev = 0;
             let mut cur = map.front();
-            if let Some(entry) = cur
-                && (*entry).range.start >= insert.range.end
-            {
-                map.push_front(Box::into_raw(insert)).unwrap();
-                return;
-            }
-
             while let Some(entry) = cur {
                 let next = map.next(entry);
                 if let Some(next) = next {
                     debug_assert!((*next).range.start >= (*entry).range.end);
                 }
-                if (*entry).range.end <= insert.range.start {
-                    map.insert_after(entry, Box::into_raw(insert));
+                if prev <= insert.range.start && (*entry).range.start >= insert.range.end {
+                    debug_assert!(insert.range.end <= (*entry).range.start);
+                    map.insert_before(entry, Box::into_raw(insert));
                     return;
                 }
+                prev = (*entry).range.end;
                 cur = next;
             }
 
-            unreachable!("Mapping has no space to be inserted into");
+            map.push_back(Box::into_raw(insert)).unwrap();
         }
     }
 
     /// Implementation of [`Self::map`] with the [`FIXED`] flag.
     unsafe fn map_fixed(
+        fences: &mut VmFenceSet,
+        pmap: &PhysMap,
         map: &mut InvasiveList<MapEntry>,
         size: usize,
         addr: usize,
@@ -410,7 +429,7 @@ impl VmSpaceInner {
             }),
         })?;
         unsafe {
-            Self::remove_mappings(map, addr..addr + size);
+            Self::remove_mappings(fences, pmap, map, addr..addr + size);
             Self::insert_mapping(map, entry);
         }
 
@@ -503,10 +522,20 @@ impl VmSpaceInner {
         assert!(hint % PAGE_SIZE as usize == 0);
         let size = size.div_ceil(PAGE_SIZE as usize) * PAGE_SIZE as usize;
         unsafe {
+            let mut fences = VmFenceSet::new();
             let mut map = self.map.lock();
             let addr = if map_flags & FIXED != 0 {
                 assert!(hint % PAGE_SIZE as usize == 0);
-                Self::map_fixed(&mut map, size, hint, map_flags, prot_flags, mapping)?;
+                Self::map_fixed(
+                    &mut fences,
+                    &self.pmap,
+                    &mut map,
+                    size,
+                    hint,
+                    map_flags,
+                    prot_flags,
+                    mapping,
+                )?;
                 hint
             } else {
                 Self::map_dynamic(&mut map, size, hint, bounds, map_flags, prot_flags, mapping)?
@@ -519,9 +548,11 @@ impl VmSpaceInner {
                     prot::READ
                 };
                 for addr in (addr..addr + size).step_by(PAGE_SIZE as usize) {
-                    self.fault(addr, access).expect("Prefault failed");
+                    self.fault(&mut fences, addr, access)
+                        .expect("Prefault failed");
                 }
             }
+            vmfence::shootdown(&fences);
             Ok(addr)
         }
     }
@@ -530,6 +561,16 @@ impl VmSpaceInner {
     /// No changes are made on failure.
     /// Preserves the outer portion of mappings on the border of `bounds`.
     pub unsafe fn protect(&self, bounds: Range<usize>, prot_flags: u8) -> EResult<()> {
+        debug_assert!(bounds.start % PAGE_SIZE as usize == 0);
+        debug_assert!(bounds.end % PAGE_SIZE as usize == 0);
+        let mut map = self.map.lock();
+        Self::split(bounds.start, &mut map)?;
+        Self::split(bounds.end, &mut map)?;
+
+        let mut fences = VmFenceSet::new();
+
+        // TODO: Go over entries, change their prot flags, protect them on the pmap. Then, do TLB shootdown.
+
         todo!()
     }
 
@@ -537,11 +578,29 @@ impl VmSpaceInner {
     /// No changes are made on failure.
     /// Preserves the outer portion of mappings on the border of `bounds`.
     pub unsafe fn unmap(&self, bounds: Range<usize>) -> EResult<()> {
-        todo!()
+        debug_assert!(bounds.start % PAGE_SIZE as usize == 0);
+        debug_assert!(bounds.end % PAGE_SIZE as usize == 0);
+        let mut map = self.map.lock();
+        Self::split(bounds.start, &mut map)?;
+        Self::split(bounds.end, &mut map)?;
+
+        let mut fences = VmFenceSet::new();
+        unsafe {
+            Self::remove_mappings(&mut fences, &self.pmap, &mut map, bounds);
+        }
+        vmfence::shootdown(&fences);
+
+        Ok(())
     }
 
     /// Implementation of [`Self::fault`] if the entry is found.
-    fn fault_impl(pmap: &PhysMap, vaddr: usize, access: u8, entry: &MapEntry) -> EResult<()> {
+    fn fault_impl(
+        fences: &mut VmFenceSet,
+        pmap: &PhysMap,
+        vaddr: usize,
+        access: u8,
+        entry: &MapEntry,
+    ) -> EResult<()> {
         let page_vaddr = vaddr - vaddr % PAGE_SIZE as usize;
         let v2p = pmap.virt2phys(page_vaddr);
         let flags = if v2p.valid {
@@ -553,6 +612,17 @@ impl VmSpaceInner {
             // TLB must be outdated; flush it and retry.
             mmu::vmem_fence(Some(page_vaddr), None);
             return Ok(());
+        }
+
+        if v2p.valid {
+            // SAFETY: The PhysMap is disposable, so discarding from it temporarily is legal.
+            unsafe {
+                pmap.unmap(page_vaddr);
+            }
+            // Since we're going to change the mapping, we must ensure that no stale copy remains in any TLBs.
+            fences.add(Some(page_vaddr), None);
+            vmfence::shootdown(fences);
+            fences.clear();
         }
 
         // Get the page from either the cache or the memory object.
@@ -587,12 +657,12 @@ impl VmSpaceInner {
 
     /// Handle a page fault at address `vaddr`.
     /// If this returns [`Ok`], the access should be retried.
-    pub fn fault(&self, vaddr: usize, access: u8) -> EResult<()> {
+    pub fn fault(&self, fences: &mut VmFenceSet, vaddr: usize, access: u8) -> EResult<()> {
         let map = self.map.lock_shared();
 
         for entry in unsafe { map.iter() } {
             if entry.range.contains(&vaddr) {
-                return Self::fault_impl(&self.pmap, vaddr, access, entry);
+                return Self::fault_impl(fences, &self.pmap, vaddr, access, entry);
             }
         }
 
@@ -613,6 +683,21 @@ impl Drop for VmSpaceInner {
                 drop(Box::from_raw(entry));
             }
         }
+    }
+}
+
+impl Debug for VmSpaceInner {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let map = self.map.lock_shared();
+        let mut pretty = f.debug_map();
+
+        unsafe {
+            for ent in map.iter() {
+                pretty.entry(&ent.range, ent.inner.lock_shared().deref());
+            }
+        }
+
+        pretty.finish()
     }
 }
 
@@ -687,7 +772,9 @@ impl VmSpace {
     /// Handle a page fault at address `vaddr`.
     /// If this returns [`Ok`], the access should be retried.
     pub fn fault(&self, vaddr: usize, access: u8) -> EResult<()> {
-        self.0.fault(vaddr, access)
+        let mut fences = VmFenceSet::new();
+        self.0.fault(&mut fences, vaddr, access)?;
+        Ok(())
     }
 
     /// Clone this virtual-address space as needed for the `fork` system call.
@@ -710,6 +797,12 @@ impl VmSpace {
     /// Do a virtual to physical address lookup.
     pub fn virt2phys(&self, vaddr: usize) -> Virt2Phys {
         self.0.pmap.virt2phys(vaddr)
+    }
+}
+
+impl Debug for VmSpace {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0.fmt(f)
     }
 }
 
@@ -778,7 +871,9 @@ impl KernelVmSpace {
     /// Handle a page fault at address `vaddr`.
     /// If this returns [`Ok`], the access should be retried.
     pub fn fault(&self, vaddr: usize, access: u8) -> EResult<()> {
-        self.0.fault(vaddr, access)
+        let mut fences = VmFenceSet::new();
+        self.0.fault(&mut fences, vaddr, access)?;
+        Ok(())
     }
 
     /// Enable the underlying physical map on this CPU.
@@ -791,5 +886,11 @@ impl KernelVmSpace {
     /// Do a virtual to physical address lookup.
     pub fn virt2phys(&self, vaddr: usize) -> Virt2Phys {
         self.0.pmap.virt2phys(vaddr)
+    }
+}
+
+impl Debug for KernelVmSpace {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0.fmt(f)
     }
 }

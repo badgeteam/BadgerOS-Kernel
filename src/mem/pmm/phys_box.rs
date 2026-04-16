@@ -8,7 +8,7 @@ use alloc::sync::Arc;
 
 use crate::{
     bindings::error::EResult,
-    config::{self, PAGE_SIZE},
+    config::PAGE_SIZE,
     mem::{
         self,
         vmm::{self, kernel_mm, map::Mapping, memobject::RawMemory},
@@ -28,17 +28,20 @@ unsafe impl<T: Sized + Sync> Sync for PhysBox<T> {}
 impl<T: Sized> PhysBox<T> {
     /// Try to allocate some page-aligned physical memory and map it.
     pub unsafe fn try_new(io: bool, nc: bool) -> EResult<Self> {
+        let order = mem::pmm::size_to_order(size_of::<T>());
+        let aligned_pages = mem::pmm::order_to_pages(order);
+        let ptr = PhysPtr::new(order, PageUsage::KernelAnon)?;
+
+        let prot = vmm::prot::READ
+            | vmm::prot::WRITE + io as u8 * vmm::prot::IO + nc as u8 * vmm::prot::NC;
+
+        let vaddr;
         unsafe {
-            let order = mem::pmm::size_to_order(size_of::<T>());
-            let aligned_pages = mem::pmm::order_to_pages(order);
-            let ptr = PhysPtr::new(order, PageUsage::KernelAnon)?;
-
-            let prot = vmm::prot::READ
-                | vmm::prot::WRITE + io as u8 * vmm::prot::IO + nc as u8 * vmm::prot::NC;
-
-            let object = Arc::try_new(RawMemory::new(ptr.paddr(), PAGE_SIZE as usize))?;
-
-            let vaddr = kernel_mm().map(
+            let object = Arc::try_new(RawMemory::new(
+                ptr.paddr(),
+                aligned_pages * PAGE_SIZE as usize,
+            ))?;
+            vaddr = kernel_mm().map(
                 aligned_pages,
                 0,
                 0,
@@ -46,9 +49,9 @@ impl<T: Sized> PhysBox<T> {
                 Some(Mapping { offset: 0, object }),
             )? as *mut T;
             core::ptr::write_bytes(vaddr as *mut u8, 0, aligned_pages);
-
-            Ok(Self { ptr, vaddr })
         }
+
+        Ok(Self { ptr, vaddr })
     }
 
     /// Get the underlying physical address.

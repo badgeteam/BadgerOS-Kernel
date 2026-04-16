@@ -145,8 +145,11 @@ impl PhysMap {
     }
 
     /// Delete one page-sized mapping.
-    pub unsafe fn unmap(&self, vaddr: usize) -> EResult<()> {
-        unsafe { self.map_raw_impl(vaddr, None, 0) }
+    pub unsafe fn unmap(&self, vaddr: usize) {
+        unsafe {
+            self.map_raw_impl(vaddr, None, 0)
+                .expect("PhysMap::unmap failed")
+        }
     }
 
     unsafe fn map_raw_impl(&self, vaddr: usize, new_pte: Option<PTE>, level: u8) -> EResult<()> {
@@ -225,6 +228,37 @@ impl PhysMap {
         Ok(())
     }
 
+    /// Delete multiple page-sized mappings.
+    pub unsafe fn unmap_multiple(&self, mut vaddr: usize, mut size: usize) {
+        debug_assert!(size % PAGE_SIZE as usize == 0);
+        unsafe {
+            while size > 0 {
+                self.unmap(vaddr);
+                vaddr += PAGE_SIZE as usize;
+                size -= PAGE_SIZE as usize
+            }
+        }
+    }
+
+    /// Change protection flags for all mappings within the given range.
+    /// Will only decrease access permission, never increase it.
+    pub unsafe fn protect(&self, mut vaddr: usize, mut size: usize, max_prot: u32) {
+        debug_assert!(size % PAGE_SIZE as usize == 0);
+        unsafe {
+            while size > 0 {
+                let mut pte = self.walk(vaddr);
+                let newfl = pte.flags & (max_prot | !flags::RWX);
+                if newfl != pte.flags {
+                    pte.flags = newfl;
+                    self.map_raw_impl(vaddr, Some(pte), pte.level)
+                        .expect("PhysMap::protect failed");
+                }
+                vaddr += PAGE_SIZE as usize;
+                size -= PAGE_SIZE as usize
+            }
+        }
+    }
+
     /// Walk down the page table and read the target vaddr's PTE.
     #[inline(always)]
     pub fn walk(&self, vaddr: usize) -> PTE {
@@ -270,7 +304,7 @@ impl PhysMap {
             };
         }
 
-        let pte: PTE = self.walk(vaddr / PAGE_SIZE as usize);
+        let pte: PTE = self.walk(vaddr);
 
         let size = (PAGE_SIZE as usize) << (cpu::mmu::BITS_PER_LEVEL * pte.level as u32);
         let page_vaddr = vaddr & !(size - 1);

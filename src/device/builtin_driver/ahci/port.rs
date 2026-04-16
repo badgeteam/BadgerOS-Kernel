@@ -1,4 +1,4 @@
-use core::mem::offset_of;
+use core::{mem::offset_of, ops::Deref};
 
 use super::{ctrl::AhciDriver, hms, reg};
 use alloc::boxed::Box;
@@ -24,7 +24,10 @@ use crate::{
     device::builtin_driver::ahci::{AHCI_DRIVER, ata, fis},
     kernel::{sched::thread_sleep, sync::mutex::Mutex},
     logk,
-    mem::{pmm::phys_box::PhysBox, vmm},
+    mem::{
+        pmm::phys_box::PhysBox,
+        vmm::{self, kernel_mm},
+    },
 };
 
 register_structs! {
@@ -102,12 +105,25 @@ impl SataDriver {
         assert!(parent_dev.driver() == &raw const AHCI_DRIVER);
         let parent: &'static mut AhciDriver =
             unsafe { &mut *core::ptr::from_raw_parts_mut((*parent_dev.base_ptr()).cookie, ()) };
-        let mmio = unsafe {
-            &parent.ports_mmio[device.info().addrs()[0].__bindgen_anon_1.ahci.port as usize]
-        };
+        let port = unsafe { device.info().addrs()[0].__bindgen_anon_1.ahci.port };
+        let mmio = &parent.ports_mmio[port as usize];
 
         // Allocate memory for this port.
         let hms = unsafe { PhysBox::<PortHMS>::try_new(false, true) }?;
+
+        logkf!(
+            LogLevel::Debug,
+            "Mapped port {} HMS at pma {:x} vma {:x}",
+            port,
+            hms.paddr(),
+            hms.deref() as *const _ as usize
+        );
+
+        logkf!(
+            LogLevel::Debug,
+            "Kernel memmap after mapping: {:#x?}",
+            kernel_mm()
+        );
 
         // Allocate the BOX.
         let mut this = Box::try_new(Self {
@@ -248,6 +264,7 @@ impl SataDriver {
             let mut prdt = 0usize;
             while offset < data.len() {
                 let v2p = vmm::kernel_mm().virt2phys(data.as_ptr() as usize + offset);
+                debug_assert!(v2p.valid);
                 let len = v2p.size + v2p.page_paddr - v2p.paddr;
                 let len = len.min(data.len() - offset);
 

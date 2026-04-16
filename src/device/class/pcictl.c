@@ -272,7 +272,7 @@ void *device_pcictl_bar_map(device_pcictl_t *device, pci_bar_info_t bar_info) {
 
     // Create MMU mapping.
     size_t vaddr;
-    if (vmm_map_k(&vaddr, (bar_info.len - 1) / CONFIG_PAGE_SIZE + 1, cpu_paddr / CONFIG_PAGE_SIZE, flags) < 0) {
+    if (vmm_map_k(&vaddr, bar_info.len, cpu_paddr, flags) < 0) {
         return NULL;
     }
 

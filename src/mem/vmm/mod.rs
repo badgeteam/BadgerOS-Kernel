@@ -17,6 +17,7 @@ pub mod map;
 pub mod memobject;
 pub mod pagecache;
 pub mod physmap;
+pub mod vmfence;
 
 /// Mapping protection flags.
 pub mod prot {
