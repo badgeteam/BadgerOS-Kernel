@@ -11,7 +11,7 @@ pub mod op_maj {
     pub const OP_IMM:    u32 = 0b00_100;
     pub const AUIPC:     u32 = 0b00_101;
     pub const OP_IMM_32: u32 = 0b00_110;
-    pub const STORE:     u32 = 0b00_000;
+    pub const STORE:     u32 = 0b01_000;
     pub const STORE_FP:  u32 = 0b01_001;
     pub const CUSTOM1:   u32 = 0b01_010;
     pub const AMO:       u32 = 0b01_011;
@@ -25,7 +25,7 @@ pub mod op_maj {
     pub const OP_FP:     u32 = 0b10_100;
     pub const OP_V:      u32 = 0b10_101;
     pub const CUSTOM2:   u32 = 0b10_110;
-    pub const BRANCH:    u32 = 0b10_000;
+    pub const BRANCH:    u32 = 0b11_000;
     pub const JALR:      u32 = 0b11_001;
     pub const RESERVED:  u32 = 0b11_010;
     pub const JAL:       u32 = 0b11_011;
