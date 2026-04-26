@@ -17,11 +17,13 @@ use crate::{
         self,
         mmu::{BITS_PER_LEVEL, INVALID_PTE, PackedPTE},
     },
-    mem::pmm,
+    mem::pmm::{self, page_struct_base},
 };
 
 pub static mut ASID_BITS: u32 = 0;
 pub static mut PAGING_LEVELS: u32 = 0;
+
+pub const PTE_PER_PAGE: usize = 1 << BITS_PER_LEVEL;
 
 pub mod flags {
     pub use crate::cpu::mmu::flags::*;
@@ -88,7 +90,7 @@ impl PhysMap {
     /// Pre-populate the higher half of the root page table.
     /// Used in the creation of the kernel page table.
     pub(super) unsafe fn populate_higher_half(&self) -> EResult<()> {
-        for i in 1 << (BITS_PER_LEVEL - 1)..1 << BITS_PER_LEVEL {
+        for i in PTE_PER_PAGE / 2..PTE_PER_PAGE {
             let paddr = alloc_pgtable_page()?;
             unsafe {
                 xchg_pte(
@@ -112,7 +114,7 @@ impl PhysMap {
     /// Broadcast the higher half from one pmap to another.
     /// Used in the creation of user page tables.
     pub(super) unsafe fn broadcast_higher_half(from: &Self, to: &Self) {
-        for i in 1 << (BITS_PER_LEVEL - 1)..1 << BITS_PER_LEVEL {
+        for i in PTE_PER_PAGE / 2..PTE_PER_PAGE {
             unsafe {
                 let raw = read_pte(from.root, i);
                 xchg_pte(to.root, i, raw);
@@ -324,11 +326,44 @@ impl PhysMap {
             cpu::mmu::vmem_fence(None, None);
         }
     }
+
+    /// Implementation of [`Self::drop`].
+    unsafe fn drop_impl(pagetable: PAddrr, entries: Range<usize>, level: u8) {
+        unsafe {
+            for i in entries {
+                let pte = PTE::unpack(read_pte(pagetable, i), level);
+                if !pte.valid {
+                    continue;
+                }
+                if pte.leaf {
+                    if pte.flags & flags::REFCOUNT != 0 {
+                        let meta = page_struct_base(pte.ppn * PAGE_SIZE as usize).0;
+                        let rc = (*meta).refcount.fetch_sub(1, Ordering::Relaxed);
+                        if rc == 0 {
+                            logkf!(
+                                LogLevel::Warning,
+                                "Refcount underflow for physical page at 0x{:x}",
+                                pte.ppn * PAGE_SIZE as usize
+                            );
+                        }
+                    }
+                } else {
+                    assert!(level > 0, "Non-leaf PTE at page table root");
+                    Self::drop_impl(pte.ppn * PAGE_SIZE as usize, 0..PTE_PER_PAGE, level - 1);
+                }
+            }
+            pmm::page_free(pagetable, 0);
+        }
+    }
 }
 
 impl Drop for PhysMap {
     fn drop(&mut self) {
-        todo!()
+        unsafe {
+            // The kernel page table is not allowed to be dropped, which is checked elsewhere.
+            // Do only the lower half; this is where user pages are, and the higher half has kernel pages mirrored to it.
+            Self::drop_impl(self.root, 0..PTE_PER_PAGE / 2, PAGING_LEVELS as u8 - 1);
+        }
     }
 }
 
@@ -396,22 +431,22 @@ fn get_vpn_index(vaddr: usize, level: u8) -> usize {
 
 /// Read a PTE without any fencing or flushing.
 #[inline(always)]
-unsafe fn read_pte(pgtable_ppn: PAddrr, index: usize) -> PackedPTE {
-    let pte_vaddr = unsafe { HHDM_OFFSET } + pgtable_ppn + index * size_of::<PackedPTE>();
+unsafe fn read_pte(pagetable: PAddrr, index: usize) -> PackedPTE {
+    let pte_vaddr = unsafe { HHDM_OFFSET } + pagetable + index * size_of::<PackedPTE>();
     unsafe { (*(pte_vaddr as *mut Atomic<PackedPTE>)).load(Ordering::Acquire) }
 }
 
 /// Write a PTE without any fencing or flushing.
 #[inline(always)]
-unsafe fn xchg_pte(pgtable_ppn: PAddrr, index: usize, pte: PackedPTE) -> PackedPTE {
-    let pte_vaddr = unsafe { HHDM_OFFSET } + pgtable_ppn + index * size_of::<PackedPTE>();
+unsafe fn xchg_pte(pagetable: PAddrr, index: usize, pte: PackedPTE) -> PackedPTE {
+    let pte_vaddr = unsafe { HHDM_OFFSET } + pagetable + index * size_of::<PackedPTE>();
     unsafe { (*(pte_vaddr as *mut Atomic<PackedPTE>)).swap(pte, Ordering::AcqRel) }
 }
 
 /// Compare-exchange a PTE.
 #[inline(always)]
-unsafe fn cmpxchg_pte(pgtable_ppn: PAddrr, index: usize, old: PackedPTE, new: PackedPTE) -> bool {
-    let pte_vaddr = unsafe { HHDM_OFFSET } + pgtable_ppn + index * size_of::<PackedPTE>();
+unsafe fn cmpxchg_pte(pagetable: PAddrr, index: usize, old: PackedPTE, new: PackedPTE) -> bool {
+    let pte_vaddr = unsafe { HHDM_OFFSET } + pagetable + index * size_of::<PackedPTE>();
     unsafe {
         (*(pte_vaddr as *mut Atomic<PackedPTE>))
             .compare_exchange_weak(old, new, Ordering::AcqRel, Ordering::Relaxed)

@@ -577,9 +577,34 @@ impl VmSpaceInner {
 
         let mut fences = VmFenceSet::new();
 
-        // TODO: Go over entries, change their prot flags, protect them on the pmap. Then, do TLB shootdown.
+        unsafe {
+            debug_assert!(bounds.start % PAGE_SIZE as usize == 0);
+            debug_assert!(bounds.end % PAGE_SIZE as usize == 0);
+            let mut cur = map.front();
+            while let Some(entry) = cur {
+                let next = map.next(entry);
+                if (*entry).range.start >= bounds.end {
+                    break;
+                } else if bounds.contains(&(*entry).range.start) {
+                    let mut guard = (*entry).inner.lock();
+                    guard.prot_flags = prot_flags;
+                    self.pmap.protect(
+                        (*entry).range.start,
+                        (*entry).range.len(),
+                        prot::into_mmu_flags(prot_flags),
+                    );
+                    // Schedule VM fences for all affected pages.
+                    for vaddr in (*entry).range.clone() {
+                        fences.add(Some(vaddr), None);
+                    }
+                }
+                cur = next;
+            }
+        }
+        // Do TLB shootdown to protect against stale TLB entries with higher mapping permission flags.
+        vmfence::shootdown(&fences);
 
-        todo!()
+        Ok(())
     }
 
     /// Unmap all pages within `bounds`.
@@ -900,5 +925,11 @@ impl KernelVmSpace {
 impl Debug for KernelVmSpace {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.0.fmt(f)
+    }
+}
+
+impl Drop for KernelVmSpace {
+    fn drop(&mut self) {
+        panic!("Attempt to drop a KernelVmSpace");
     }
 }
