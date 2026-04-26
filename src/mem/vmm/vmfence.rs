@@ -39,7 +39,7 @@ impl VmFenceSet {
     /// Add a single additional fence.
     pub fn add(&mut self, vaddr: Option<usize>, _asid: Option<usize>) {
         if let Some(vaddr) = vaddr
-            && self.len != BIG_FENCE_THRESHOLD - 1
+            && self.len < BIG_FENCE_THRESHOLD
         {
             self.fences[self.len] = vaddr;
             self.len += 1;

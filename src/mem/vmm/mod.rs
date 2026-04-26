@@ -8,7 +8,12 @@ use alloc::sync::Arc;
 use map::{KernelVmSpace, Mapping};
 use memobject::RawMemory;
 
-use crate::{bindings::log::LogLevel, config::PAGE_SIZE, cpu::mmu, mem::pmm::PAddrr};
+use crate::{
+    bindings::log::LogLevel,
+    config::PAGE_SIZE,
+    cpu::{self, mmu, usercopy::fallible_store_u8},
+    mem::pmm::PAddrr,
+};
 
 use super::pmm::phys_box::PhysBox;
 
@@ -215,5 +220,27 @@ pub unsafe fn init() {
         // Page of zeroes.
         PAGE_OF_ZEROES =
             MaybeUninit::new(PhysBox::try_new(false, false).expect("Failed to map page of zeroes"));
+    }
+}
+
+vmm_ktest! { MAP_BASIC,
+    unsafe {
+        let size  = 0x8000;
+        let vaddr = kernel_mm().map(size, 0, map::SHARED, prot::READ | prot::WRITE, None)?;
+
+        // Some random accesses must succeed.
+        let ptr = &mut *core::ptr::slice_from_raw_parts_mut(vaddr as *mut u8, size);
+        for i in (0..size).step_by(PAGE_SIZE as usize) {
+            let fault = fallible_store_u8(&raw mut ptr[i], 21);
+            ktest_assert!(fault.is_ok());
+        }
+
+        kernel_mm().unmap(vaddr..vaddr+size)?;
+
+        // Assert now that trying to access again traps.
+        for i in (0..size).step_by(PAGE_SIZE as usize) {
+            let fault = fallible_store_u8(&raw mut ptr[i], 21);
+            ktest_assert!(fault.is_err());
+        }
     }
 }

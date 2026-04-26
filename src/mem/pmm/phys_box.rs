@@ -9,8 +9,9 @@ use alloc::sync::Arc;
 use crate::{
     bindings::error::EResult,
     config::PAGE_SIZE,
+    cpu,
     mem::{
-        self,
+        pmm,
         vmm::{self, kernel_mm, map::Mapping, memobject::RawMemory},
     },
 };
@@ -28,8 +29,8 @@ unsafe impl<T: Sized + Sync> Sync for PhysBox<T> {}
 impl<T: Sized> PhysBox<T> {
     /// Try to allocate some page-aligned physical memory and map it.
     pub unsafe fn try_new(io: bool, nc: bool) -> EResult<Self> {
-        let order = mem::pmm::size_to_order(size_of::<T>());
-        let aligned_pages = mem::pmm::order_to_pages(order);
+        let order = pmm::size_to_order(size_of::<T>());
+        let aligned_pages = pmm::order_to_pages(order);
         let ptr = PhysPtr::new(order, PageUsage::KernelAnon)?;
 
         let prot = vmm::prot::READ
@@ -42,7 +43,7 @@ impl<T: Sized> PhysBox<T> {
                 aligned_pages * PAGE_SIZE as usize,
             ))?;
             vaddr = kernel_mm().map(
-                aligned_pages,
+                aligned_pages * PAGE_SIZE as usize,
                 0,
                 0,
                 prot,
@@ -77,13 +78,32 @@ impl<T: Sized> DerefMut for PhysBox<T> {
 impl<T: Sized> Drop for PhysBox<T> {
     fn drop(&mut self) {
         unsafe {
-            let order = mem::pmm::size_to_order(size_of::<T>());
-            let aligned_size = mem::pmm::order_to_size(order);
+            let order = pmm::size_to_order(size_of::<T>());
+            let aligned_size = pmm::order_to_size(order);
             let vaddr = self.vaddr as usize;
 
             kernel_mm()
                 .unmap(vaddr..vaddr + aligned_size)
                 .expect("PhysBox unmap failed");
         }
+    }
+}
+
+vmm_ktest! { PHYS_BOX,
+    const SIZE: usize = 0x2000;
+    let mut mem = unsafe { PhysBox::<[u8; SIZE]>::try_new(false, false)? };
+
+    let start_vma = &mem[0] as *const _ as usize;
+    let start_pma = mem.paddr();
+    for i in (0..SIZE).step_by(PAGE_SIZE as usize) {
+        // Assert physically contiguous.
+        let v2p = kernel_mm().virt2phys(start_vma + i);
+        ktest_assert!(v2p.valid);
+        ktest_assert!(v2p.flags & cpu::mmu::flags::W != 0);
+        ktest_expect!(v2p.page_vaddr, start_vma + i);
+        ktest_expect!(v2p.page_paddr, start_pma + i);
+
+        // Test writability.
+        mem[i] = 9;
     }
 }

@@ -8,6 +8,7 @@ use crate::{
 };
 
 /// A single-byte fallible store.
+#[inline(always)]
 pub unsafe fn fallible_store_u8(addr: *mut u8, value: u8) -> AccessResult<()> {
     let faulted = unsafe {
         noexc_asm! {
@@ -20,6 +21,7 @@ pub unsafe fn fallible_store_u8(addr: *mut u8, value: u8) -> AccessResult<()> {
 }
 
 /// A single-byte fallible load.
+#[inline(always)]
 pub unsafe fn fallible_load_u8(addr: *const u8) -> AccessResult<u8> {
     let res: u8;
     let faulted = unsafe {

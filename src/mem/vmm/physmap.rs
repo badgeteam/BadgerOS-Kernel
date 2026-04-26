@@ -217,12 +217,9 @@ impl PhysMap {
         }
 
         // Write new PTE.
-        if let Some(new_pte) = new_pte {
-            let index = get_vpn_index(vaddr, new_pte.level);
-            unsafe {
-                let order = new_pte.level;
-                PTE::unpack(xchg_pte(pgtable_paddr, index, new_pte.pack()), order);
-            }
+        let index = get_vpn_index(vaddr, level);
+        unsafe {
+            xchg_pte(pgtable_paddr, index, new_pte.map(PTE::pack).unwrap_or(0));
         }
 
         Ok(())

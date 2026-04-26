@@ -87,18 +87,18 @@ impl PTE {
     }
 }
 
+/// Maximum possible value of ASID.
 #[cfg(target_arch = "riscv32")]
-/// Maximum possible value of ASID.
 pub const ASID_MAX: u32 = 0x1ff;
-#[cfg(target_arch = "riscv64")]
 /// Maximum possible value of ASID.
+#[cfg(target_arch = "riscv64")]
 pub const ASID_MAX: u32 = 0xffff;
 
+/// Number of virtual address bits per page table level.
 #[cfg(target_arch = "riscv32")]
-/// Number of virtual address bits per page table level.
 pub const BITS_PER_LEVEL: u32 = 10;
-#[cfg(target_arch = "riscv64")]
 /// Number of virtual address bits per page table level.
+#[cfg(target_arch = "riscv64")]
 pub const BITS_PER_LEVEL: u32 = 9;
 
 /// Heuristic for maximum number of pages to individually invalidate.
@@ -140,8 +140,8 @@ pub unsafe fn init(root_paddr: PAddrr) {
     }
 }
 
-#[inline(always)]
 /// Switch page table and address space ID.
+#[inline(always)]
 pub unsafe fn set_page_table(root_paddr: PAddrr, asid: u32) {
     let root_ppn = root_paddr / PAGE_SIZE as usize;
     #[cfg(target_arch = "riscv32")]
@@ -152,8 +152,8 @@ pub unsafe fn set_page_table(root_paddr: PAddrr, asid: u32) {
     unsafe { asm!("csrw satp, {new_val}", new_val = in(reg) new_val) };
 }
 
-#[inline(always)]
 /// Read the current ASID out.
+#[inline(always)]
 fn read_asid() -> u32 {
     let val: usize;
     unsafe { asm!("csrr {val}, satp", val = out(reg) val) };
@@ -164,8 +164,8 @@ fn read_asid() -> u32 {
     res as u32
 }
 
-#[inline(always)]
 /// Perform a fence of virtual memory.
+#[inline(always)]
 pub fn vmem_fence(vaddr: Option<usize>, asid: Option<usize>) {
     unsafe {
         match (vaddr, asid) {
@@ -179,20 +179,20 @@ pub fn vmem_fence(vaddr: Option<usize>, asid: Option<usize>) {
     }
 }
 
-#[inline(always)]
 /// Enable kernel access to user memory.
+#[inline(always)]
 pub unsafe fn enable_sum() {
     unsafe { asm!("csrs sstatus, {mask}", mask = in(reg) 1 << 18) };
 }
 
-#[inline(always)]
 /// Disable kernel access to user memory.
+#[inline(always)]
 pub unsafe fn disable_sum() {
     unsafe { asm!("csrc sstatus, {mask}", mask = in(reg) 1 << 18) };
 }
 
-#[inline(always)]
 /// Determine whether kernel access to user memory is allowed.
+#[inline(always)]
 pub fn check_sum() -> bool {
     let mask: usize;
     unsafe { asm!("csrr {mask}, sstatus", mask=out(reg)mask) };

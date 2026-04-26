@@ -350,6 +350,7 @@ impl VmSpaceInner {
         map: &mut InvasiveList<MapEntry>,
         bounds: Range<usize>,
     ) {
+        let mut deferred_free = Vec::new();
         unsafe {
             debug_assert!(bounds.start % PAGE_SIZE as usize == 0);
             debug_assert!(bounds.end % PAGE_SIZE as usize == 0);
@@ -363,12 +364,19 @@ impl VmSpaceInner {
                     drop((*entry).inner.lock());
                     pmap.unmap_multiple((*entry).range.start, (*entry).range.len());
                     map.remove(entry);
-                    drop(Box::from_raw(entry));
+                    // Schedule VM fences for all affected pages.
+                    for vaddr in (*entry).range.clone() {
+                        fences.add(Some(vaddr), None);
+                    }
+                    // Can't free the entry until VM fence is done; this vector defers it to the end of the function.
+                    deferred_free.push(Box::from_raw(entry));
                 }
                 cur = next;
             }
         }
+        // Do TLB shootdown just before `deferred_free` gets dropped at the end.
         vmfence::shootdown(fences);
+        // Fences performed, no reason to do double work later.
         fences.clear();
     }
 

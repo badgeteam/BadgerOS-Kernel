@@ -23,7 +23,6 @@ use crate::{
     boot::init::INIT_BLOCK_THREADS,
     kernel::sched::{Thread, thread_sleep},
     logk,
-    mem::vmm::kernel_mm,
 };
 
 /// Match an AHCI controller.
