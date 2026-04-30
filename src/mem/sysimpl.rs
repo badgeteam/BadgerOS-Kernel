@@ -50,3 +50,21 @@ pub unsafe extern "C" fn syscall_mem_unmap(address: *mut c_void, size: usize) ->
         Err(err) => -(err as i32),
     }
 }
+
+/// Change the protection flags on a range of memory.
+/// May fail if the process does not have write access to mapped objects.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn syscall_mem_protect(
+    address: *mut c_void,
+    size: usize,
+    prot: u32,
+) -> c_int {
+    let proc = process::current().unwrap();
+    match proc
+        .memmap()
+        .protect(address as usize..address as usize + size, prot as u8)
+    {
+        Ok(()) => 0,
+        Err(err) => -(err as i32),
+    }
+}

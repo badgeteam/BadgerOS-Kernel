@@ -9,7 +9,7 @@ use crate::{
     bindings::error::{EResult, Errno},
     config::PAGE_SIZE,
     filesystem::{self, File, oflags},
-    mem::vmm::{self, map::VmSpace},
+    mem::vmm::{self, map::VmSpace, prot},
     process::usercopy::UserSliceMut,
 };
 
@@ -75,11 +75,12 @@ fn map_helper(
     load_offset: usize,
 ) -> EResult<()> {
     let vaddr = phdr.vaddr as usize + load_offset;
+    let aligned_vaddr = vaddr / PAGE_SIZE as usize * PAGE_SIZE as usize;
     let vaddr_end = vaddr + phdr.mem_size as usize;
 
     memmap.map(
-        vaddr / PAGE_SIZE as usize,
-        (vaddr_end - vaddr).div_ceil(PAGE_SIZE as usize),
+        vaddr_end - aligned_vaddr,
+        aligned_vaddr,
         vmm::map::FIXED | vmm::map::PRIVATE,
         vmm::prot::READ | vmm::prot::WRITE | vmm::prot::EXEC,
         None,
@@ -90,22 +91,14 @@ fn map_helper(
     file.seek_strong(phdr.offset, Errno::ENOEXEC)?;
     file.read(uslice.subslice_mut(0..phdr.file_size as usize))?;
 
-    // let mut prot = vmm::flags::R | vmm::flags::U;
-    // if phdr.flags & elf64::PF_W != 0 {
-    //     prot |= vmm::flags::W;
-    // }
-    // if phdr.flags & elf64::PF_X != 0 {
-    //     prot |= vmm::flags::X;
-    // }
-
-    // unsafe {
-    //     memmap.protect(
-    //         vaddr / PAGE_SIZE as usize,
-    //         (vaddr_end - vaddr) / PAGE_SIZE as usize,
-    //         prot,
-    //     )?;
-    // }
-    // cpu::mmu::vmem_fence(None, None);
+    let mut prot = prot::READ;
+    if phdr.flags & elf64::PF_W != 0 {
+        prot |= prot::WRITE;
+    }
+    if phdr.flags & elf64::PF_X != 0 {
+        prot |= prot::EXEC;
+    }
+    memmap.protect(aligned_vaddr..vaddr_end, prot)?;
 
     Ok(())
 }

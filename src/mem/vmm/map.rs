@@ -14,12 +14,12 @@ use crate::{
     kernel::sync::spinlock::Spinlock,
     mem::{
         pmm::{self, PAddrr},
-        vmm::physmap::{PhysMap, Virt2Phys, higher_half_vaddr},
+        vmm::physmap::{PhysMap, Virt2Phys, higher_half_vaddr, is_canon_user_range},
     },
     util::list::{InvasiveList, InvasiveListNode},
 };
 
-use super::{memobject::MemObject, physmap::canon_half_size, vmfence::VmFenceSet, *};
+use super::{memobject::MemObject, physmap::canon_half_size, prot::WRITE, vmfence::VmFenceSet, *};
 
 /// Mapping is shared (written back to memory object and not CoW'ed on fork).
 pub const SHARED: u32 = 0x01;
@@ -161,6 +161,7 @@ struct MapEntry {
 impl_has_list_node!(MapEntry, node);
 
 /// One contiguous range of mapped memory with the same protection and mapping flags.
+#[derive(Clone)]
 struct MapEntryInner {
     /// Region protection flags.
     prot_flags: u8,
@@ -263,10 +264,10 @@ impl MapEntryInner {
             paddr = zeroes_paddr();
         }
 
-        if !for_writing || self.map_flags & SHARED == 0 {
+        if !for_writing || ((self.map_flags & SHARED) == 0 && self.mapping.is_some()) {
             // Page can be immediately mapped given for the given access type.
             if let Some(allow_writing) = allow_writing {
-                *allow_writing = self.map_flags & SHARED == 0;
+                *allow_writing = (self.map_flags & SHARED) == 0;
             }
             return Ok(paddr);
         }
@@ -516,7 +517,6 @@ impl VmSpaceInner {
     /// Create a new mapping that must exist somewhere within `bounds` and try to place it at `hint`.
     /// If the `FIXED` flag is set in `map`, then overwrite any existing mappings in the way.
     /// Will never touch ranges of memory outside of `bounds`.
-    /// TODO: MemObject parameter.
     pub unsafe fn map(
         &self,
         size: usize,
@@ -641,7 +641,7 @@ impl VmSpaceInner {
         } else {
             0
         };
-        if flags >= access {
+        if flags & access == access {
             // TLB must be outdated; flush it and retry.
             mmu::vmem_fence(Some(page_vaddr), None);
             return Ok(());
@@ -658,12 +658,17 @@ impl VmSpaceInner {
             fences.clear();
         }
 
-        // Get the page from either the cache or the memory object.
         let mut guard = entry.inner.lock();
+        if (guard.prot_flags & access) == 0 {
+            // No permission.
+            return Err(Errno::EFAULT);
+        }
+
+        // Get the page from either the cache or the memory object.
         let mut allow_writing = false;
         let existing = guard.get_page(page_vaddr - entry.range.start, Some(&mut allow_writing));
         let paddr;
-        if existing.is_none() || access == prot::WRITE && guard.map_flags & SHARED != 0 {
+        if existing.is_none() || access == prot::WRITE && !allow_writing {
             // SAFETY: We know the existing page to be owned by the same range, so it is readable.
             paddr = unsafe {
                 guard.alloc_page(
@@ -682,7 +687,13 @@ impl VmSpaceInner {
             if !allow_writing && guard.map_flags & SHARED == 0 {
                 prot_flags &= !prot::WRITE;
             }
-            pmap.map(page_vaddr, paddr, prot::into_mmu_flags(prot_flags))?;
+            let mut mmu_flags = prot::into_mmu_flags(prot_flags);
+            if vaddr as isize > 0 {
+                mmu_flags |= physmap::flags::U;
+            } else {
+                mmu_flags |= physmap::flags::G;
+            }
+            pmap.map(page_vaddr, paddr, mmu_flags)?;
         }
 
         Ok(())
@@ -702,9 +713,71 @@ impl VmSpaceInner {
         Err(Errno::EFAULT)
     }
 
+    /// Clone this virtual-address space as needed for the `fork` system call.
+    pub fn fork(&self) -> EResult<Self> {
+        let map = self.map.lock();
+        let mut fences = VmFenceSet::new();
+        let mut new_map = InvasiveList::new();
+
+        unsafe {
+            for entry in map.iter() {
+                let inner = (*entry).inner.lock();
+                let new_inner = inner.clone();
+
+                if (inner.map_flags & PRIVATE) != 0 && (inner.prot_flags & WRITE) != 0 {
+                    // Writable private mappings need to be CoW'ed.
+                    self.pmap.protect(
+                        entry.range.start,
+                        entry.range.len(),
+                        prot::into_mmu_flags(prot::READ | prot::EXEC),
+                    );
+                    for vaddr in entry.range.clone() {
+                        fences.add(Some(vaddr), None);
+                    }
+                }
+
+                let new_entry = MapEntry {
+                    node: InvasiveListNode::new(),
+                    range: entry.range.clone(),
+                    inner: Spinlock::new(new_inner),
+                };
+                let _ = new_map.push_back(Box::into_raw(Box::try_new(new_entry)?));
+            }
+        }
+
+        vmfence::shootdown(&fences);
+
+        let pmap = PhysMap::new()?;
+        unsafe { pmap.populate_higher_half()? };
+        Ok(Self {
+            pmap,
+            map: Spinlock::new(new_map),
+        })
+    }
+
     /// Clear the entire address-space.
     pub fn clear(&self) {
-        todo!()
+        unsafe {
+            let mut map = self.map.lock();
+            let mut tmp = InvasiveList::new();
+            core::mem::swap(&mut tmp, &mut map);
+            let mut fences = VmFenceSet::new();
+
+            for entry in tmp.iter() {
+                self.pmap
+                    .unmap_multiple((*entry).range.start, (*entry).range.len());
+                // Schedule VM fences for all affected pages.
+                for vaddr in (*entry).range.clone() {
+                    fences.add(Some(vaddr), None);
+                }
+            }
+            vmfence::shootdown(&fences);
+
+            // Drop all the removed mappings.
+            while let Some(entry) = tmp.pop_front() {
+                drop(Box::from_raw(entry));
+            }
+        }
     }
 }
 
@@ -755,7 +828,6 @@ impl VmSpace {
     /// Create a new mapping that must exist somewhere within `bounds` and try to place it at `hint`.
     /// If the `FIXED` flag is set in `map`, then overwrite any existing mappings in the way.
     /// Will never touch ranges of memory outside of `bounds`.
-    /// TODO: MemObject parameter.
     pub fn map(
         &self,
         size: usize,
@@ -789,8 +861,14 @@ impl VmSpace {
     /// Change the protection flags for pages within `bounds`.
     /// No changes are made on failure.
     /// Preserves the outer portion of mappings on the border of `bounds`.
-    pub fn protect(&self, bounds: Range<usize>, prot_flags: u8) -> EResult<()> {
-        assert!(Self::bounds().start <= bounds.start && Self::bounds().end >= bounds.end);
+    pub fn protect(&self, mut bounds: Range<usize>, prot_flags: u8) -> EResult<()> {
+        if !is_canon_user_range(bounds.clone()) {
+            return Err(Errno::EINVAL);
+        }
+        if bounds.start % PAGE_SIZE as usize != 0 {
+            return Err(Errno::EINVAL);
+        }
+        bounds.end = bounds.end.div_ceil(PAGE_SIZE as usize) * PAGE_SIZE as usize;
         unsafe { self.0.protect(bounds, prot_flags) }
     }
 
@@ -798,7 +876,9 @@ impl VmSpace {
     /// No changes are made on failure.
     /// Preserves the outer portion of mappings on the border of `bounds`.
     pub fn unmap(&self, bounds: Range<usize>) -> EResult<()> {
-        assert!(Self::bounds().start <= bounds.start && Self::bounds().end >= bounds.end);
+        if !is_canon_user_range(bounds.clone()) {
+            return Err(Errno::EINVAL);
+        }
         unsafe { self.0.unmap(bounds) }
     }
 
@@ -812,7 +892,7 @@ impl VmSpace {
 
     /// Clone this virtual-address space as needed for the `fork` system call.
     pub fn fork(&self) -> EResult<Self> {
-        todo!()
+        Ok(Self(self.0.fork()?))
     }
 
     /// Clear the entire address-space.
@@ -861,7 +941,6 @@ impl KernelVmSpace {
     /// Create a new mapping that must exist somewhere within `bounds` and try to place it at `hint`.
     /// If the `FIXED` flag is set in `map`, then overwrite any existing mappings in the way.
     /// Will never touch ranges of memory outside of `bounds`.
-    /// TODO: MemObject parameter.
     pub unsafe fn map(
         &self,
         size: usize,

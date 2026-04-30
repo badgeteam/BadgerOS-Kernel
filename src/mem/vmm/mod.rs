@@ -11,7 +11,7 @@ use memobject::RawMemory;
 use crate::{
     bindings::log::LogLevel,
     config::PAGE_SIZE,
-    cpu::{self, mmu, usercopy::fallible_store_u8},
+    cpu::{mmu, usercopy::fallible_store_u8},
     mem::pmm::PAddrr,
 };
 

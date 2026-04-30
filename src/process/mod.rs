@@ -37,7 +37,7 @@ use crate::{
         log::LogLevel,
         raw::timestamp_us_t,
     },
-    config::{PAGE_SIZE, STACK_SIZE},
+    config::STACK_SIZE,
     cpu::{thread::GpRegfile, usermode::call_usermode},
     device::builtin_driver::null_instance,
     filesystem::{self, File, SeekMode, device::CharDevFile, mode, oflags},
@@ -306,8 +306,15 @@ impl Process {
         let mut processes = PROCESSES.unintr_lock();
 
         let mut regs2 = regs.clone();
+        let child2 = child.clone();
         let thread = Thread::new(
             move || {
+                // Apply the newly-forked memory map.
+                unsafe {
+                    (*Thread::current()).runtime().memmap = child2.memmap();
+                    child2.memmap().enable();
+                }
+
                 // Clone the calling thread and start it.
                 regs2.set_retval(0);
                 call_usermode(&regs2);
@@ -518,27 +525,26 @@ impl Process {
         name: Option<String>,
     ) -> EResult<i64> {
         let tid = self.tid_counter.fetch_add(1, Ordering::Relaxed);
-        let stack_pages = (STACK_SIZE / PAGE_SIZE) as usize;
         // TODO: Safe and owning API for memory objects?
         let u_stack = self.memmap().map(
-            stack_pages,
+            STACK_SIZE as usize,
             0,
             vmm::map::PRIVATE,
-            vmm::prot::READ | vmm::prot::EXEC,
+            vmm::prot::READ | vmm::prot::WRITE,
             None,
         )?;
         let proc_self = self.clone();
         let thread = Thread::new(
             move || {
-                // Set up things on the stack.
-                let u_stack_top = ((u_stack + stack_pages) * PAGE_SIZE as usize) as *mut ();
-                let (pc, sp) = setup(u_stack_top);
-
                 // Enable the process' memory map.
                 unsafe {
                     (&*Thread::current()).runtime().memmap = proc_self.memmap();
                     proc_self.memmap().enable();
                 }
+
+                // Set up things on the stack.
+                let u_stack_top = (u_stack + STACK_SIZE as usize) as *mut ();
+                let (pc, sp) = setup(u_stack_top);
 
                 // Call user mode.
                 let mut regs = GpRegfile::default();
@@ -547,13 +553,15 @@ impl Process {
                 call_usermode(&regs);
 
                 // Clean up the stack.
-                proc_self.memmap().unmap(u_stack..u_stack + stack_pages);
+                let _ = proc_self
+                    .memmap()
+                    .unmap(u_stack..u_stack + STACK_SIZE as usize);
             },
             Some(self.clone()),
             name,
         );
         if thread.is_err() {
-            self.memmap().unmap(u_stack..u_stack + stack_pages);
+            let _ = self.memmap().unmap(u_stack..u_stack + STACK_SIZE as usize);
         }
         self.threads.unintr_lock().threads.insert(tid, thread?);
         Ok(tid)

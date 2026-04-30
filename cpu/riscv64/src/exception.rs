@@ -215,7 +215,7 @@ unsafe fn riscv_exception_handler_impl(regs: &mut GpRegfile, sregs: &mut SpRegfi
         } else if (!sregs.is_kernel_mode() || is_sum)
             && vmm::physmap::is_canon_user_addr(sregs.stval)
         {
-            let mm = unsafe { &*(&*thread).runtime().memmap };
+            let mm = unsafe { &*(*thread).runtime().memmap };
             if mm.fault(sregs.stval, access).is_ok() {
                 return;
             }

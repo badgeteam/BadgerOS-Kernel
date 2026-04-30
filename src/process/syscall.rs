@@ -148,8 +148,7 @@ pub fn dispatch(regs: &mut GpRegfile, sregs: &mut SpRegfile, args: [usize; 6], s
                 regs.set_retval(syscall_mem_unmap(args[0] as _, args[1] as _) as _)
             }
             SYSCALL_MEM_PROTECT => {
-                logkf!(LogLevel::Warning, "TODO: protect syscall");
-                regs.set_retval(0);
+                regs.set_retval(syscall_mem_protect(args[0] as _, args[1] as _, args[2] as _) as _)
             }
             SYSCALL_TEMP_WRITE => syscall_temp_write(args[0] as _, args[1] as _),
             SYSCALL_TIME_GETTIME => {
