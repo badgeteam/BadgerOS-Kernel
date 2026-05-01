@@ -5,7 +5,7 @@
 use core::{
     cell::UnsafeCell,
     ffi::c_int,
-    ptr::addr_eq,
+    ptr::{addr_eq, null},
     sync::atomic::{AtomicI64, AtomicU32, Ordering},
     usize,
 };
@@ -363,7 +363,20 @@ impl Process {
         self.prefill_stdio_fds().unwrap();
 
         // Set to kernel memmap again since this thread will exit before returning from syscall anyway.
+        // It is also needed since we can't rely on the memory map while swapping later, nor are we still in the threads list.
+        unsafe {
+            let thread = Thread::current();
+            (*thread).runtime().memmap = null();
+        }
         vmm::kernel_mm().enable();
+
+        // Install the new address space, clearing and dropping the old one.
+        {
+            self.memmap().clear();
+            let old = unsafe { core::ptr::replace(self.memmap.get(), new_mm) };
+            drop(old);
+        }
+
         let proc2 = self.clone();
         self.create_thread(
             move |stack_top| {
