@@ -17,7 +17,7 @@ use crate::{
     },
     bindings::{
         device::{
-            BaseDriver, Device, DeviceInfoView, HasBaseDevice,
+            BaseDevice, BaseDriver, Device, DeviceInfoView, HasBaseDevice,
             class::{char::CharDriver, tty::TTYDriver},
         },
         error::{EResult, Errno},
@@ -242,6 +242,12 @@ impl BaseDriver for Ns16550aDriver {
         // Cannot be done earlier because interrupts may not be touched during driver init.
         let _guard = IrqGuard::new();
         self.check_fifos();
+        unsafe { self.device.cascase_enable_irq_out(0).unwrap() };
+    }
+
+    fn interrupt_parent_got_driver(&self, _irq_parent: BaseDevice) {
+        // The interrupt parent (PLIC) now has a driver; enable our interrupt in it.
+        let _guard = IrqGuard::new();
         unsafe { self.device.cascase_enable_irq_out(0).unwrap() };
     }
 

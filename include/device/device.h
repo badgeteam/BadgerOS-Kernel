@@ -127,6 +127,8 @@ struct driver {
     void (*child_lost_driver)(device_t *device, device_t *child_device);
     // [optional] Called before a direct child device is removed with `device_remove`.
     void (*child_removed)(device_t *device, device_t *child_device);
+    // [optional] Called after an interrupt parent of this device gets a driver.
+    void (*interrupt_parent_got_driver)(device_t *device, device_t *irq_parent);
     // Device interrupt handler; also responsible for any potential forwarding of interrupts.
     // Only called from an interrupt context.
     // Returns true if this handled an interrupt request.

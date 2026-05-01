@@ -221,6 +221,19 @@ static errno_bool_t device_add_to_driver(device_t *device, driver_t const *drive
                 mutex_unlock(&device->driver_mtx);
             }
 
+            // Notify irq children that their interrupt parent (this device) got a driver.
+            map_foreach(ent, &device->irq_children) {
+                dlist_t *list = ent->value;
+                dlist_foreach_node(irqconn_t, conn, list) {
+                    device_t *child = conn->device;
+                    mutex_lock_shared(&child->driver_mtx);
+                    if (child->driver && child->driver->interrupt_parent_got_driver) {
+                        child->driver->interrupt_parent_got_driver(child, device);
+                    }
+                    mutex_unlock_shared(&child->driver_mtx);
+                }
+            }
+
             return 2;
         } else {
             logkf(LOG_ERROR, "driver->add failed: %{cs} (%{cs})", errno_get_name(-res), errno_get_desc(-res));

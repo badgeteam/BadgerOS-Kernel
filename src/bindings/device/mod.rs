@@ -589,6 +589,8 @@ pub trait BaseDriver: Sync {
     fn child_lost_driver(&self, _child: BaseDevice) {}
     /// [optional] Called before a direct child device is removed with [`Device::remove`].
     fn child_removed(&self, _child: BaseDevice) {}
+    /// [optional] Called after an interrupt parent of this device gets a driver.
+    fn interrupt_parent_got_driver(&self, _irq_parent: BaseDevice) {}
     /// Device interrupt handler; also responsible for any potential forwarding of interrupts.
     /// Only called from an interrupt context.
     /// Returns true if this handled an interrupt request.
@@ -705,6 +707,14 @@ macro_rules! abstract_driver_struct {
                     ptr.child_removed(child)
                 }
                 Some(child_removed_wrapper)
+            },
+            interrupt_parent_got_driver: {
+                unsafe extern "C" fn interrupt_parent_got_driver_wrapper(device: *mut device_t, irq_parent: *mut device_t) {
+                    let ptr = unsafe{&mut *((*device).cookie as *mut $type)};
+                    let irq_parent = unsafe {BaseDevice::from_raw_ref(irq_parent)};
+                    ptr.interrupt_parent_got_driver(irq_parent)
+                }
+                Some(interrupt_parent_got_driver_wrapper)
             },
             interrupt: {
                 unsafe extern "C" fn interrupt_wrapper(device: *mut device_t, irqno: irqno_t) -> bool {

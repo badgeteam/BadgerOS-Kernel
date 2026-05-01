@@ -111,20 +111,6 @@ impl SataDriver {
         // Allocate memory for this port.
         let hms = unsafe { PhysBox::<PortHMS>::try_new(false, true) }?;
 
-        logkf!(
-            LogLevel::Debug,
-            "Mapped port {} HMS at pma {:x} vma {:x}",
-            port,
-            hms.paddr(),
-            hms.deref() as *const _ as usize
-        );
-
-        logkf!(
-            LogLevel::Debug,
-            "Kernel memmap after mapping: {:#x?}",
-            kernel_mm()
-        );
-
         // Allocate the BOX.
         let mut this = Box::try_new(Self {
             device,
