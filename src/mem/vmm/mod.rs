@@ -6,7 +6,7 @@ use core::{mem::MaybeUninit, ops::Deref};
 
 use alloc::sync::Arc;
 use map::{KernelVmSpace, Mapping};
-use memobject::RawMemory;
+use memobject::{MappablePage, RawMemory};
 
 use crate::{
     bindings::log::LogLevel,
@@ -94,6 +94,11 @@ pub fn zeroes() -> &'static [u8] {
 /// Get the physical address of the page full of zeroes.
 pub fn zeroes_paddr() -> PAddrr {
     unsafe { (&*&raw const PAGE_OF_ZEROES).assume_init_ref().paddr() }
+}
+
+/// Get a mappable page for the page full of zeroes.
+pub fn zeroes_page() -> MappablePage {
+    unsafe { MappablePage::new(zeroes_paddr(), false, false) }
 }
 
 unsafe extern "C" {

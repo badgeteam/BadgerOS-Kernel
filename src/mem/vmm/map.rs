@@ -87,22 +87,20 @@ impl AnonMap {
     }
 
     /// Get the page currently mapped at `offset`.
-    fn get_page(&self, offset: usize, allow_writing: Option<&mut bool>) -> Option<PAddrr> {
+    fn get_page(&self, offset: usize) -> Option<MappablePage> {
         debug_assert!(offset % PAGE_SIZE as usize == 0);
         let page_index = offset.checked_sub(self.offset)? / PAGE_SIZE as usize;
         if page_index >= self.pages.len() {
             return None;
         }
         let arc_ref = self.pages[page_index as usize].as_ref()?;
-        if let Some(allow_writing) = allow_writing {
-            *allow_writing = Arc::is_unique(arc_ref);
-        }
-        Some(arc_ref.paddr)
+        let writable = Arc::is_unique(arc_ref);
+        Some(unsafe { MappablePage::new(arc_ref.paddr, false, writable) })
     }
 
     /// Get or allocate the page at `offset`.
     /// If a new page is allocated, the existing data in the page at `orig` is copied.
-    unsafe fn alloc_page(&mut self, offset: usize, orig: Option<PAddrr>) -> EResult<PAddrr> {
+    unsafe fn alloc_page(&mut self, offset: usize, orig: Option<PAddrr>) -> EResult<MappablePage> {
         debug_assert!(offset % PAGE_SIZE as usize == 0);
 
         if self.pages.len() == 0 {
@@ -147,7 +145,7 @@ impl AnonMap {
 
         self.pages[(offset - self.offset) / PAGE_SIZE as usize] = Some(anon);
 
-        Ok(new_page)
+        Ok(unsafe { MappablePage::new(new_page, false, true) })
     }
 }
 
@@ -216,58 +214,60 @@ impl MapEntryInner {
 
     /// Get the page currently mapped at `offset`.
     /// Must only be called if there is no page currently mapped for `offset`.
-    fn get_page(&self, offset: usize, allow_writing: &mut bool) -> Option<PAddrr> {
+    fn get_page(&self, offset: usize) -> Option<MappablePage> {
         debug_assert!(offset % PAGE_SIZE as usize == 0);
         if let Some(amap) = &self.amap
-            && let Some(page) = amap.get_page(offset, Some(allow_writing))
+            && let Some(mut page) = amap.get_page(offset)
         {
             // Only writable if this is the sole owner; otherwise CoW is still pending.
-            *allow_writing &= Arc::strong_count(amap) == 1;
+            if !Arc::is_unique(amap) {
+                page.clear_writable();
+            }
 
             return Some(page);
         }
 
         if let Some(mapping) = &self.mapping {
-            *allow_writing = self.map_flags & SHARED == 0;
-
-            mapping.object.get(offset + mapping.offset)
+            let mut page = mapping.object.get(offset + mapping.offset)?;
+            if self.map_flags & SHARED == 0 {
+                // Private mappings; can't directly write to the memory object.
+                page.clear_writable();
+            }
+            Some(page)
         } else {
-            *allow_writing = false;
-
-            Some(zeroes_paddr())
+            Some(zeroes_page())
         }
     }
 
     /// Get or allocate the page at `offset`.
-    unsafe fn alloc_page(
-        &mut self,
-        offset: usize,
-        for_writing: bool,
-        allow_writing: &mut bool,
-    ) -> EResult<PAddrr> {
+    unsafe fn alloc_page(&mut self, offset: usize, for_writing: bool) -> EResult<MappablePage> {
         debug_assert!(offset % PAGE_SIZE as usize == 0);
 
         let orig;
-        if let Some(page) = try { self.amap.as_ref()?.get_page(offset, Some(allow_writing))? } {
+        if let Some(mut page) = try { self.amap.as_ref()?.get_page(offset)? } {
             // An anon already exists for this page. Must also check AnonMap uniqueness,
-            // not just Arc<Anon> uniqueness — a shared AnonMap means CoW is still pending.
-            *allow_writing &= Arc::strong_count(self.amap.as_ref().unwrap()) == 1;
-            orig = Some(page);
-            if !for_writing || *allow_writing {
+            // not just Arc<Anon> uniqueness; a shared AnonMap means CoW is still pending.
+            if !Arc::is_unique(self.amap.as_ref().unwrap()) {
+                page.clear_writable();
+            }
+            if !for_writing || page.writable() {
                 return Ok(page);
             }
+            orig = Some(page);
         } else {
             // Page is not cached, get it from the memory object.
-            let paddr;
+            let mut paddr;
             if let Some(mapping) = &self.mapping {
                 paddr = mapping.object.alloc(offset + mapping.offset)?;
             } else {
-                paddr = zeroes_paddr();
+                paddr = zeroes_page();
             }
 
             if !for_writing || ((self.map_flags & SHARED) == 0 && self.mapping.is_some()) {
                 // Page can be immediately mapped given for the given access type.
-                *allow_writing = (self.map_flags & SHARED) == 0;
+                if (self.map_flags & SHARED) == 0 {
+                    paddr.clear_writable();
+                }
                 return Ok(paddr);
             }
 
@@ -275,55 +275,6 @@ impl MapEntryInner {
             // However, we don't do this for the page of zeroes so we know to memset instead of memcpy later.
             orig = self.mapping.is_some().then_some(paddr);
         }
-
-        /*
-        // Capture amap state before any mutation; drops the shared borrow immediately.
-        let mut anon_allow_writing = false;
-        let amap_info = self.amap.as_ref().map(|a| {
-            (
-                a.get_page(offset, Some(&mut anon_allow_writing)),
-                Arc::strong_count(a),
-            )
-        });
-        if let Some((Some(page), count)) = amap_info {
-            if count == 1 {
-                // Sole owner: page is already private to this mapping.
-                *allow_writing = true;
-                return Ok(page);
-            }
-            if !for_writing {
-                // Read on shared amap: map read-only so a write triggers CoW later.
-                *allow_writing = false;
-                return Ok(page);
-            }
-            // Write on shared amap: CoW — clone the amap and allocate a private copy.
-            let cloned = (**self.amap.as_ref().unwrap()).clone();
-            *self.amap.as_mut().unwrap() = Arc::try_new(cloned)?;
-            let amap = Arc::get_mut(self.amap.as_mut().unwrap()).unwrap();
-            amap.pages[(offset - amap.offset) / PAGE_SIZE as usize] = None;
-            *allow_writing = true;
-            // SAFETY: `page` is a valid physical address from our own amap.
-            return unsafe { amap.alloc_page(offset, Some(page)) };
-        }
-
-        // Page is not cached, get it from the memory object.
-        let paddr;
-        if let Some(mapping) = &self.mapping {
-            paddr = mapping.object.alloc(offset + mapping.offset)?;
-        } else {
-            paddr = zeroes_paddr();
-        }
-
-        if !for_writing || ((self.map_flags & SHARED) == 0 && self.mapping.is_some()) {
-            // Page can be immediately mapped given for the given access type.
-            *allow_writing = (self.map_flags & SHARED) == 0;
-            return Ok(paddr);
-        }
-
-        // Page can't be immediately mapped; instead, it shall be copied to a new anon.
-        // However, we don't do this for the page of zeroes so we know to memset instead of memcpy later.
-        let orig = self.mapping.is_some().then_some(paddr);
-        */
 
         // Ensure we have a mutable reference to an AnonMap.
         if let Some(amap) = &mut self.amap {
@@ -341,7 +292,7 @@ impl MapEntryInner {
         let amap = Arc::get_mut(self.amap.as_mut().unwrap()).unwrap();
 
         // SAFETY: `orig` here comes from the memory object, which promises it is valid physical memory.
-        unsafe { amap.alloc_page(offset, orig) }
+        unsafe { amap.alloc_page(offset, orig.as_ref().map(MappablePage::paddr)) }
     }
 }
 
@@ -714,26 +665,20 @@ impl VmSpaceInner {
         }
 
         // Get the page from either the cache or the memory object.
-        let mut allow_writing = false;
-        let existing = guard.get_page(page_vaddr - entry.range.start, &mut allow_writing);
-        let paddr;
-        if existing.is_none() || access == prot::WRITE && !allow_writing {
+        let existing = guard.get_page(page_vaddr - entry.range.start);
+        let page;
+        if existing.is_none() || (access == prot::WRITE && !existing.as_ref().unwrap().writable()) {
             // SAFETY: We know the existing page to be owned by the same range, so it is readable.
-            paddr = unsafe {
-                guard.alloc_page(
-                    page_vaddr - entry.range.start,
-                    access == prot::WRITE,
-                    &mut allow_writing,
-                )?
-            };
+            page =
+                unsafe { guard.alloc_page(page_vaddr - entry.range.start, access == prot::WRITE)? };
         } else {
-            paddr = existing.unwrap();
+            page = existing.unwrap();
         }
 
         // SAFETY: The page mapped here is provided by the range and we need to trust it is correct.
         unsafe {
             let mut prot_flags = guard.prot_flags;
-            if !allow_writing && guard.map_flags & SHARED == 0 {
+            if !page.writable() && guard.map_flags & SHARED == 0 {
                 prot_flags &= !prot::WRITE;
             }
             let mut mmu_flags = prot::into_mmu_flags(prot_flags);
@@ -742,7 +687,10 @@ impl VmSpaceInner {
             } else {
                 mmu_flags |= physmap::flags::G;
             }
-            pmap.map(page_vaddr, paddr, mmu_flags)?;
+            if page.refcounted() {
+                mmu_flags |= physmap::flags::REFCOUNT;
+            }
+            pmap.map(page_vaddr, page.paddr(), mmu_flags)?;
         }
 
         Ok(())
