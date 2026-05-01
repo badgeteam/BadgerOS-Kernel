@@ -5,7 +5,7 @@
 use core::{fmt::Debug, num::NonZeroUsize, sync::atomic::Ordering};
 
 use crate::{
-    bindings::error::EResult,
+    bindings::{error::EResult, log::LogLevel},
     config::PAGE_SIZE,
     mem::pmm::{self, PAddrr},
 };
@@ -52,7 +52,14 @@ impl Drop for MappablePage {
         if self.refcounted() {
             unsafe {
                 let meta = pmm::page_struct_base(self.paddr());
-                (*meta.0).refcount.fetch_sub(1, Ordering::Relaxed);
+                let rc = (*meta.0).refcount.fetch_sub(1, Ordering::Relaxed);
+                if rc == 0 {
+                    logkf!(
+                        LogLevel::Warning,
+                        "Refcount underflow for physical page at 0x{:x}",
+                        self.paddr() * PAGE_SIZE as usize
+                    );
+                }
             }
         }
     }

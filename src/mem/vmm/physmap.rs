@@ -221,7 +221,22 @@ impl PhysMap {
         // Write new PTE.
         let index = get_vpn_index(vaddr, level);
         unsafe {
-            xchg_pte(pgtable_paddr, index, new_pte.map(PTE::pack).unwrap_or(0));
+            let old = PTE::unpack(
+                xchg_pte(pgtable_paddr, index, new_pte.map(PTE::pack).unwrap_or(0)),
+                level,
+            );
+            if old.flags & flags::REFCOUNT != 0 {
+                // Asked to decrease refcount upon unmap.
+                let meta = page_struct_base(old.ppn * PAGE_SIZE as usize).0;
+                let rc = (*meta).refcount.fetch_sub(1, Ordering::Relaxed);
+                if rc == 0 {
+                    logkf!(
+                        LogLevel::Warning,
+                        "Refcount underflow for physical page at 0x{:x}",
+                        old.ppn * PAGE_SIZE as usize
+                    );
+                }
+            }
         }
 
         Ok(())
