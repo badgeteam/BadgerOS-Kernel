@@ -126,7 +126,7 @@ impl Fifo {
 
         loop {
             send_cap =
-                (rx.wrapping_sub(rx).wrapping_add(cap).wrapping_sub(1) % cap).min(wdata.len());
+                (rx.wrapping_sub(tx).wrapping_add(cap).wrapping_sub(1) % cap).min(wdata.len());
             if let Err(x) = self.write_resv.compare_exchange(
                 tx,
                 tx.wrapping_add(send_cap) % cap,
@@ -248,6 +248,9 @@ impl BlockingFifo {
                 let wamt = self.fifo.write(wdata);
                 self.read_waitlist.notify_all();
 
+                if wsize > 0 && wamt.is_err() {
+                    break;
+                }
                 let wamt = wamt?;
                 wdata = wdata.subslice(wamt..wdata.len());
                 wsize += wamt;

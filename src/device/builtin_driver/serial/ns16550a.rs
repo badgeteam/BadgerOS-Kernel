@@ -191,18 +191,8 @@ impl Ns16550aDriver {
             attr: Spinlock::new(Default::default()),
         })?)
     }
-}
 
-impl BaseDriver for Ns16550aDriver {
-    fn post_add(&self) {
-        // Start this interrupt-driven driver properly.
-        // Cannot be done earlier because interrupts may not be touched during driver init.
-        let _guard = IrqGuard::new();
-        self.interrupt(0);
-        unsafe { self.device.cascase_enable_irq_out(0).unwrap() };
-    }
-
-    fn interrupt(&self, _irq: irqno_t) -> bool {
+    fn check_fifos(&self) {
         let regs = self.regs.lock();
         let attr = self.attr.lock();
 
@@ -243,7 +233,20 @@ impl BaseDriver for Ns16550aDriver {
         } else {
             regs.ier.set(IER_RX_AVL);
         }
+    }
+}
 
+impl BaseDriver for Ns16550aDriver {
+    fn post_add(&self) {
+        // Start this interrupt-driven driver properly.
+        // Cannot be done earlier because interrupts may not be touched during driver init.
+        let _guard = IrqGuard::new();
+        self.check_fifos();
+        unsafe { self.device.cascase_enable_irq_out(0).unwrap() };
+    }
+
+    fn interrupt(&self, _irq: irqno_t) -> bool {
+        self.check_fifos();
         true
     }
 }
@@ -254,12 +257,12 @@ impl CharDriver for Ns16550aDriver {
     }
 
     fn write(&self, wdata: UserSlice<'_, u8>, nonblock: bool) -> EResult<usize> {
-        let wcount = self.txfifo.write(wdata, nonblock);
+        let res = self.txfifo.write(wdata, nonblock);
 
         let _guard = IrqGuard::new();
-        self.interrupt(0);
+        self.check_fifos();
 
-        Ok(wcount?)
+        res
     }
 }
 
