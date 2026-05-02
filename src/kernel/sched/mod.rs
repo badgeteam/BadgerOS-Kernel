@@ -180,7 +180,7 @@ impl Thread {
             let code: *mut dyn FnOnce() =
                 core::ptr::from_raw_parts_mut(ptr, core::mem::transmute(meta));
             fence(Ordering::Acquire);
-            drop(RawSpinlockGuard::from_raw(&(&*sched).queue.inner));
+            drop(RawSpinlockGuard::from_raw(&(&*sched).queue.inner()));
             irq::enable();
             Box::from_raw(code)();
             (*Thread::current()).die();
@@ -549,7 +549,7 @@ impl Scheduler {
             // The queue cannot be transmitted through this so we will manually unlock it afterward.
             core::mem::forget(queue);
             let prev = context_switch(self, new_stack, old_stack_out);
-            drop(RawSpinlockGuard::from_raw(&(&*prev).queue.inner))
+            drop(RawSpinlockGuard::from_raw(&(&*prev).queue.inner()))
         }
     }
 

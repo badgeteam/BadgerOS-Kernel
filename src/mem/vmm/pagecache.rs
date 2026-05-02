@@ -2,76 +2,33 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::{
-    cell::UnsafeCell,
-    sync::atomic::{AtomicU32, Ordering},
-};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::{
     badgelib::irq::IrqGuard,
-    bindings::error::EResult,
+    bindings::{
+        error::{EResult, Errno},
+        raw::timestamp_us_t,
+    },
     config::PAGE_SIZE,
     kernel::sync::{spinlock::Spinlock, waitlist::Waitlist},
-    mem::pmm::PAddrr,
+    mem::pmm::{self, PAddrr},
     util::rtree::RadixTree,
 };
 
 mod flags {
     /// Entry contains differences from the backing store.
-    pub const DIRTY: u8 = 1 << 0;
+    pub const DIRTY: u32 = 1 << 0;
     /// Entry is being written to disk.
-    pub const WRITING: u8 = 1 << 1;
+    pub const WRITING: u32 = 1 << 1;
     /// Entry is being read from disk.
-    pub const READING: u8 = 1 << 2;
-    /// Entry is resident (can be read and written).
-    pub const RESIDENT: u8 = 1 << 3;
+    pub const READING: u32 = 1 << 2;
 }
-
-/// Physical page number allocated (may be 0 if unallocated).
-/// Status for this entry.
-///
-/// Sharing these limits physical addresses to 60 bits (16 TiB physical address space).
-/// This trade-off is considered acceptable, given that no current hardware exceeds this limit.
-/// Packing these together allows a `Spinlock<Entry>` to be a power-of-2 size.
-#[derive(Default)]
-struct EntryStatus([u32; 2]);
 
 /// Metadata about a block/page in a [`PageCache`].
 struct Entry {
-    /// See [`EntryStatus`].
-    status: Spinlock<EntryStatus>,
-    /// Number of active references; entries cannot be evicted if there are references.
-    refcount: AtomicU32,
-}
-
-impl EntryStatus {
-    /// Physical page number allocated (may be 0 if unallocated).
-    pub fn ppn(&self) -> usize {
-        let ppn_and_flags: usize = bytemuck::cast(self.0);
-        ppn_and_flags & (usize::MAX >> 4)
-    }
-
-    /// Physical page number allocated (may be 0 if unallocated).
-    pub fn set_ppn(&mut self, ppn: usize) {
-        let mut ppn_and_flags: usize = bytemuck::cast(self.0);
-        ppn_and_flags &= !(usize::MAX >> 4);
-        ppn_and_flags |= ppn;
-        self.0 = bytemuck::cast(ppn_and_flags);
-    }
-
-    /// Status for this entry.
-    pub fn flags(&self) -> u8 {
-        let ppn_and_flags: usize = bytemuck::cast(self.0);
-        (ppn_and_flags >> (usize::BITS - 4)) as u8
-    }
-
-    /// Status for this entry.
-    pub fn set_flags(&mut self, flags: u8) {
-        let mut ppn_and_flags: usize = bytemuck::cast(self.0);
-        ppn_and_flags &= usize::MAX >> 4;
-        ppn_and_flags |= (flags as usize) << (usize::BITS - 4);
-        self.0 = bytemuck::cast(ppn_and_flags);
-    }
+    paddr: PAddrr,
+    flags: AtomicU32,
 }
 
 /// Generic page cache implementation that translates between system page size and cached block size.
@@ -80,9 +37,7 @@ pub struct PageCache {
     block_size_exp: u8,
     /// Log-base 2 number of pages an entry is.
     entry_size_exp: u8,
-    /// Note: To allow entries to be created/destroyed during disk access, an [`Entry`] can be accessed via raw pointers.
-    /// To protect this, [`Entry::refcount`] must be equal to zero for it to be removed.
-    pages: Spinlock<RadixTree<u64, UnsafeCell<Entry>>>,
+    pages: Spinlock<RadixTree<u64, Entry>>,
     /// Waitlist for disk reads.
     read_waitlist: Waitlist,
     /// Waitlist for disk writes.
@@ -102,104 +57,138 @@ impl PageCache {
 
     /// Index calculation helper.
     #[inline(always)]
-    fn index(&self, page: u64) -> (u64, usize) {
+    fn index(&self, offset: u64) -> (u64, usize) {
+        assert!(offset % PAGE_SIZE as u64 == 0);
+        let page = offset / PAGE_SIZE as u64;
         let page_size_exp = PAGE_SIZE.ilog2() as u8;
         if page_size_exp > self.block_size_exp {
             (1, 0)
         } else {
             let page_per_block = 1 << (self.block_size_exp - page_size_exp);
-            (page * page_per_block, (page % page_per_block) as usize)
-        }
-    }
-
-    /// Get or create the entry for a given page.
-    fn alloc_entry<'a>(&'a self, index: u64) -> EResult<*mut Entry> {
-        let guard = self.pages.lock_shared();
-
-        if let Some(entry) = guard.get(index) {
-            unsafe {
-                entry
-                    .as_ref_unchecked()
-                    .refcount
-                    .fetch_add(1, Ordering::Relaxed);
-                return Ok(entry.get());
-            }
-        }
-
-        drop(guard);
-        let mut guard = self.pages.lock();
-        if guard.get(index).is_none() {
-            guard.insert(
-                index,
-                UnsafeCell::new(Entry {
-                    status: Spinlock::new(Default::default()),
-                    refcount: AtomicU32::new(0),
-                }),
-            )?;
-        }
-
-        let entry = guard.get(index).unwrap();
-        unsafe {
-            entry
-                .as_ref_unchecked()
-                .refcount
-                .fetch_add(1, Ordering::Relaxed);
-            return Ok(entry.get());
+            (
+                page * page_per_block,
+                (page % page_per_block) as usize * PAGE_SIZE as usize,
+            )
         }
     }
 
     /// Read data into an entry from disk.
-    unsafe fn read_from_disk(
-        &self,
-        pager: &dyn Pager,
-        index: u64,
-        status: &mut EntryStatus,
-    ) -> EResult<()> {
+    unsafe fn read_from_disk(&self, pager: &dyn Pager, index: u64, paddr: PAddrr) -> EResult<()> {
         todo!()
     }
 
     /// Write data from an entry to disk.
-    unsafe fn write_to_disk(
-        &self,
-        pager: &dyn Pager,
-        index: u64,
-        status: &mut EntryStatus,
-    ) -> EResult<()> {
+    unsafe fn write_to_disk(&self, pager: &dyn Pager, index: u64, paddr: PAddrr) -> EResult<()> {
         todo!()
+    }
+
+    /// Try to get an existing entry.
+    fn get_existing(&self, addr: u64) -> EResult<Option<PAddrr>> {
+        let (index, offset) = self.index(addr);
+
+        let _noirq = IrqGuard::new();
+        let mut pages = self.pages.lock_shared();
+        let mut ent = match pages.get(index) {
+            Some(x) => x,
+            None => return Ok(None),
+        };
+
+        while (ent.flags.load(Ordering::Relaxed) & flags::READING) != 0 {
+            drop(pages);
+
+            self.read_waitlist.block(timestamp_us_t::MAX, || {
+                self.pages
+                    .lock_shared()
+                    .get(index)
+                    .map(|x| x.flags.load(Ordering::Relaxed) & flags::READING != 0)
+                    .unwrap_or(false)
+            })?;
+
+            pages = self.pages.lock_shared();
+            ent = match pages.get(index) {
+                Some(x) => x,
+                None => return Ok(None),
+            };
+        }
+
+        // Page can now be mapped.
+        unsafe {
+            let meta = pmm::page_struct(ent.paddr);
+            (*meta).refcount.fetch_add(1, Ordering::Relaxed);
+        }
+
+        Ok(Some(ent.paddr + offset))
     }
 
     /// Get a page from the cache and increase its refcount.
-    pub fn get(&self, pager: &dyn Pager, page: u64) -> EResult<PAddrr> {
-        let (index, page_offset) = self.index(page);
+    pub fn get(&self, pager: &dyn Pager, addr: u64) -> EResult<PAddrr> {
+        let (index, offset) = self.index(addr);
 
-        let _noirq = IrqGuard::new();
-        let entry = self.alloc_entry(index)?;
-
-        unsafe {
-            let status = (&*entry).status.lock_shared();
-            if status.flags() & flags::RESIDENT != 0 {
-                return Ok((status.ppn() + page_offset) * PAGE_SIZE as usize);
+        loop {
+            if let Some(x) = self.get_existing(addr)? {
+                return Ok(x);
             }
-            drop(status);
 
-            let mut status = (&*entry).status.lock();
-            self.read_from_disk(pager, index, &mut status)?;
-            Ok((status.ppn() + page_offset) * PAGE_SIZE as usize)
+            let mut pages = self.pages.lock();
+            if pages.get(index).is_some() {
+                // Another thread has already allocated this entry.
+                drop(pages);
+                continue;
+            }
+
+            // Allocate a new entry.
+            unsafe {
+                let paddr = pmm::page_alloc(self.entry_size_exp, pmm::PageUsage::Cache)?;
+
+                // Insert new entry marked as being read in.
+                let noirq = IrqGuard::new();
+                let entry = Entry {
+                    paddr,
+                    flags: AtomicU32::new(flags::READING),
+                };
+                let res = pages.insert(index, entry);
+                drop(pages);
+                drop(noirq);
+                if res.is_err() {
+                    // Insert FAILED, free the memory.
+                    pmm::page_free(paddr, self.entry_size_exp);
+                    return Err(Errno::ENOMEM);
+                }
+
+                // Actually read in the data.
+                if let Err(x) = self.read_from_disk(pager, index, paddr) {
+                    // Read FAILED, remove the pending entry again.
+                    self.pages.lock().remove(index);
+                    pmm::page_free(paddr, self.entry_size_exp);
+                    return Err(x);
+                }
+
+                // Read SUCCESS, mark entry as writable.
+                let meta = pmm::page_struct(paddr);
+                (*meta).refcount.fetch_add(1, Ordering::Relaxed);
+                let noirq = IrqGuard::new();
+                self.pages
+                    .lock_shared()
+                    .get(index)
+                    .expect("PageCache pending read deleted by another thread")
+                    .flags
+                    .store(0, Ordering::Relaxed);
+                drop(noirq);
+
+                return Ok(paddr + offset);
+            }
         }
     }
 
-    /// Release a reference to a page, decreasing its refcount.
-    pub fn put(&self, pager: &dyn Pager, page: u64) {
-        todo!()
-    }
-
     /// Mark a page as being dirty.
-    pub fn mark_dirty(&self, pager: &dyn Pager, page: u64) {
-        todo!()
+    pub fn mark_dirty(&self, pager: &dyn Pager, addr: u64) {
+        let (index, _) = self.index(addr);
+
+        let pages = self.pages.lock_shared();
     }
 
     /// Synchronize a page to disk.
-    pub fn sync(&self, pager: &dyn Pager, page: u64, flush: bool) -> EResult<()> {
+    pub fn sync(&self, pager: &dyn Pager, addr: u64, flush: bool) -> EResult<()> {
         todo!()
     }
 
@@ -216,10 +205,9 @@ pub trait Pager {
 
     /// Read data in multiples of the page size of this pager.
     /// The data read if a concurrent write is happening is undefined.
-    unsafe fn read_pages(&self, page_offset: u64, page_count: usize, paddr: PAddrr) -> EResult<()>;
+    unsafe fn read_pages(&self, offset: u64, count: usize, paddr: PAddrr) -> EResult<()>;
 
     /// Write data in multiples of the page size of this pager.
     /// The data written if multiple concurrent writes happen is undefined.
-    unsafe fn write_pages(&self, page_offset: u64, page_count: usize, paddr: PAddrr)
-    -> EResult<()>;
+    unsafe fn write_pages(&self, offset: u64, count: usize, paddr: PAddrr) -> EResult<()>;
 }

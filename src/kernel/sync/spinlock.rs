@@ -112,7 +112,7 @@ impl<'a> Drop for SharedRawSpinlockGuard<'a> {
 
 /// Simple synchronization primitive which spins in a loop until successfully acquiring the lock.
 pub struct Spinlock<T> {
-    pub inner: RawSpinlock,
+    inner: RawSpinlock,
     data: UnsafeCell<T>,
 }
 unsafe impl<T> Send for Spinlock<T> {}
@@ -144,6 +144,10 @@ impl<T> Spinlock<T> {
 
     pub fn is_locked(&self) -> bool {
         self.inner.is_locked()
+    }
+
+    pub fn inner(&self) -> &RawSpinlock {
+        &self.inner
     }
 }
 
