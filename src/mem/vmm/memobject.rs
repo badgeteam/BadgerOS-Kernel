@@ -65,7 +65,8 @@ impl Drop for MappablePage {
     }
 }
 
-/// An object that can be mapped into a [`super::VMSpace`].
+/// An object that can be mapped into a [`super::map::VmSpace`].
+/// TODO: Support for truncation while already mapped.
 pub trait MemObject: Debug {
     /// Get the size in bytes of the object.
     /// Must be page-aligned.

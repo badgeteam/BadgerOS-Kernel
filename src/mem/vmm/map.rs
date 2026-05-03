@@ -29,6 +29,9 @@ pub const PRIVATE: u32 = 0x02;
 pub const FIXED: u32 = 0x10;
 /// Anonymous mapping (doesn't have an associated file descriptor).
 pub const ANONYMOUS: u32 = 0x20;
+/// Deny writes (as done by exec).
+/// Handled by the system call, not by this module.
+pub const DENYWRITE: u32 = 0x40;
 /// Mapping must be populated immediately.
 pub const POPULATE: u32 = 0x8000;
 /// Kernel mapping need not be populated immediately; has no effect on user mappings.
@@ -529,6 +532,18 @@ impl VmSpaceInner {
         let has_mapping = mapping.is_some();
         assert!(hint % PAGE_SIZE as usize == 0);
         let size = size.div_ceil(PAGE_SIZE as usize) * PAGE_SIZE as usize;
+
+        if size == 0 {
+            return Err(Errno::EINVAL);
+        }
+        if let Some(mapping) = &mapping {
+            let mapping_size = (mapping.object.len() - mapping.offset).div_ceil(PAGE_SIZE as usize)
+                * PAGE_SIZE as usize;
+            if size > mapping_size {
+                return Err(Errno::ENXIO);
+            }
+        }
+
         unsafe {
             let mut fences = VmFenceSet::new();
             let mut map = self.map.lock();

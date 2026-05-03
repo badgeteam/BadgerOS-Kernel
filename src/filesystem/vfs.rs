@@ -259,6 +259,8 @@ pub struct VNode {
     pub(super) type_: NodeType,
     /// Shared FIFO data.
     pub(super) fifo: Option<Arc<FifoShared>>,
+    /// Deny writes counter set by the executable loader.
+    pub denywrite: AtomicU32,
 }
 
 impl VNode {
@@ -507,6 +509,7 @@ impl Vfs {
             flags: AtomicU32::new(0),
             type_: dirent.type_,
             fifo,
+            denywrite: AtomicU32::new(0),
         })?;
 
         // Insert the new vnode.

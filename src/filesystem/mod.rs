@@ -759,6 +759,7 @@ fn o_creat_helper(to_create: Arc<DentCache>, exclusive: bool) -> EResult<Arc<VNo
         flags: AtomicU32::new(0),
         type_: NodeType::Regular,
         fifo: None,
+        denywrite: AtomicU32::new(0),
     })?;
     *dentcache.vnode.unintr_lock() = Some(Arc::downgrade(&new_vnode));
 
@@ -1102,6 +1103,7 @@ pub fn make_file(at: Option<&dyn File>, path: &[u8], spec: MakeFileSpec) -> ERes
         flags: AtomicU32::new(0),
         type_,
         fifo,
+        denywrite: AtomicU32::new(0),
     })?;
     *dentcache.vnode.unintr_lock() = Some(Arc::downgrade(&new_vnode));
 
@@ -1460,6 +1462,7 @@ fn create_vfs(
         flags: AtomicU32::new(0),
         type_: NodeType::Directory,
         fifo: None,
+        denywrite: AtomicU32::new(0),
     });
     vfs.vnodes
         .unintr_lock()
