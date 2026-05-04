@@ -21,7 +21,7 @@ use crate::{
     util::rtree::RadixTree,
 };
 
-use super::HHDM_OFFSET;
+use super::{HHDM_OFFSET, memobject::MappablePage};
 
 mod flags {
     /// Entry contains differences from the backing store.
@@ -123,7 +123,7 @@ impl PageCache {
     }
 
     /// Try to get an existing entry.
-    fn get_existing(&self, addr: u64) -> EResult<Option<PAddrr>> {
+    fn get_existing(&self, addr: u64) -> EResult<Option<MappablePage>> {
         let (index, offset) = self.index(addr);
 
         let _noirq = IrqGuard::new();
@@ -157,11 +157,14 @@ impl PageCache {
             (*meta).refcount.fetch_add(1, Ordering::Relaxed);
         }
 
-        Ok(Some(ent.paddr + offset))
+        // SAFETY: We own this physical address through the cache entries.
+        Ok(Some(unsafe {
+            MappablePage::new(ent.paddr + offset, true, true)
+        }))
     }
 
     /// Get a page from the cache and increase its refcount.
-    pub fn get(&self, pager: &dyn Pager, addr: u64) -> EResult<PAddrr> {
+    pub fn get(&self, pager: &dyn Pager, addr: u64) -> EResult<MappablePage> {
         let (index, offset) = self.index(addr);
 
         loop {
@@ -215,7 +218,8 @@ impl PageCache {
                     .store(0, Ordering::Relaxed);
                 drop(noirq);
 
-                return Ok(paddr + offset);
+                // SAFETY: We own this physical address through the cache entries.
+                return Ok(MappablePage::new(paddr + offset, true, true));
             }
         }
     }
