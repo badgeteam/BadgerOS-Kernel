@@ -331,7 +331,47 @@ impl PageCache {
 
     /// Flush clean, unreferenced cache entries.
     pub fn flush(&self) {
-        logkf!(LogLevel::Warning, "TODO: PageCache::flush");
+        // Collect eviction candidates and remove them from the tree under the exclusive
+        // lock.  Holding exclusive prevents get_existing from incrementing a refcount
+        // between our check and the removal, which would free a live page.
+        let mut to_free: Vec<(PAddrr, u8)> = Vec::new();
+        {
+            let _noirq = IrqGuard::new();
+            let mut pages = self.pages.lock();
+
+            let mut to_remove = Vec::new();
+            for (index, entry) in pages.iter() {
+                if entry.flags.load(Ordering::Relaxed)
+                    & (flags::DIRTY | flags::WRITING | flags::READING)
+                    != 0
+                {
+                    continue;
+                }
+                // SAFETY: paddr is valid for the lifetime of the cache entry.
+                let refcount = unsafe {
+                    (*pmm::page_struct(entry.paddr))
+                        .refcount
+                        .load(Ordering::Relaxed)
+                };
+                if refcount == 0 {
+                    // Best-effort: skip on OOM rather than panic inside a lock.
+                    if to_remove.try_reserve(1).is_err() || to_free.try_reserve(1).is_err() {
+                        break;
+                    }
+                    to_remove.push(index);
+                    to_free.push((entry.paddr, self.entry_pages_exp));
+                }
+            }
+
+            for index in to_remove {
+                pages.remove(index);
+            }
+        }
+
+        for (paddr, order) in to_free {
+            // SAFETY: entry has been removed from the cache with refcount confirmed 0.
+            unsafe { pmm::page_free(paddr, order) };
+        }
     }
 }
 
@@ -394,4 +434,231 @@ pub trait Pager {
         block_count: usize,
         paddr: PAddrr,
     ) -> EResult<()>;
+}
+
+#[cfg(feature = "ktest")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TestPagerOp {
+    Read {
+        start_block: u64,
+        block_count: usize,
+    },
+    Write {
+        start_block: u64,
+        block_count: usize,
+    },
+}
+
+#[cfg(feature = "ktest")]
+struct TestPager {
+    block_size_exp: u8,
+    data: RefCell<Vec<u8>>,
+    log: RefCell<Vec<TestPagerOp>>,
+}
+
+#[cfg(feature = "ktest")]
+impl TestPager {
+    fn new(block_size_exp: u8, size: usize) -> EResult<Self> {
+        let mut data = Vec::try_with_capacity(size)?;
+        data.resize(size, 0);
+        Ok(Self {
+            block_size_exp,
+            data: RefCell::new(data),
+            log: RefCell::new(Vec::new()),
+        })
+    }
+
+    fn size(&self) -> u64 {
+        self.data.borrow().len() as u64
+    }
+
+    fn reads(&self) -> usize {
+        self.log
+            .borrow()
+            .iter()
+            .filter(|op| matches!(op, TestPagerOp::Read { .. }))
+            .count()
+    }
+
+    fn writes(&self) -> usize {
+        self.log
+            .borrow()
+            .iter()
+            .filter(|op| matches!(op, TestPagerOp::Write { .. }))
+            .count()
+    }
+}
+
+#[cfg(feature = "ktest")]
+impl Pager for TestPager {
+    fn block_size_exp(&self) -> u8 {
+        self.block_size_exp
+    }
+
+    unsafe fn read_blocks(
+        &self,
+        start_block: u64,
+        block_count: usize,
+        paddr: PAddrr,
+    ) -> EResult<()> {
+        let op = TestPagerOp::Read {
+            start_block,
+            block_count,
+        };
+        self.log.borrow_mut().push(op);
+
+        let block_size = 1usize << self.block_size_exp;
+        let src_start = start_block as usize * block_size;
+        let data = self.data.borrow();
+        let src = &data[src_start..src_start + block_count * block_size];
+        unsafe {
+            let dst = core::slice::from_raw_parts_mut(
+                (paddr + HHDM_OFFSET) as *mut u8,
+                block_count * block_size,
+            );
+            dst.copy_from_slice(src);
+        }
+        Ok(())
+    }
+
+    unsafe fn write_blocks(
+        &self,
+        start_block: u64,
+        block_count: usize,
+        paddr: PAddrr,
+    ) -> EResult<()> {
+        let op = TestPagerOp::Write {
+            start_block,
+            block_count,
+        };
+        self.log.borrow_mut().push(op);
+
+        let block_size = 1usize << self.block_size_exp;
+        let dst_start = start_block as usize * block_size;
+        let src = unsafe {
+            core::slice::from_raw_parts(
+                (paddr + HHDM_OFFSET) as *const u8,
+                block_count * block_size,
+            )
+        };
+        let mut data = self.data.borrow_mut();
+        data[dst_start..dst_start + block_count * block_size].copy_from_slice(src);
+        Ok(())
+    }
+}
+
+vmm_ktest! { PAGECACHE_READ,
+    // Verify that data from the backing store is correctly read into the cache.
+    let pager = TestPager::new(PAGE_SIZE.ilog2() as u8, PAGE_SIZE as usize * 4)?;
+    pager.data.borrow_mut()[0] = 0xAB;
+    pager.data.borrow_mut()[PAGE_SIZE as usize] = 0xCD;
+    let cache = PageCache::new(pager.block_size_exp, pager.size());
+
+    let page0 = cache.get(&pager, 0)?;
+    let val0 = unsafe { *((page0.paddr() + HHDM_OFFSET) as *const u8) };
+    ktest_expect!(val0, 0xABu8);
+
+    let page1 = cache.get(&pager, PAGE_SIZE as u64)?;
+    let val1 = unsafe { *((page1.paddr() + HHDM_OFFSET) as *const u8) };
+    ktest_expect!(val1, 0xCDu8);
+}
+
+vmm_ktest! { PAGECACHE_DIRTY_WRITEBACK,
+    // Verify that a dirty page is flushed to the backing store on sync.
+    let pager = TestPager::new(PAGE_SIZE.ilog2() as u8, PAGE_SIZE as usize * 4)?;
+    let cache = PageCache::new(pager.block_size_exp, pager.size());
+
+    let page = cache.get(&pager, 0)?;
+    unsafe { *((page.paddr() + HHDM_OFFSET) as *mut u8) = 0xBE; }
+    cache.mark_dirty(&pager, 0);
+
+    cache.sync_all(&pager)?;
+
+    ktest_expect!(pager.data.borrow()[0], 0xBEu8);
+}
+
+vmm_ktest! { PAGECACHE_NO_REDUNDANT_READ,
+    // Verify that a cached page is not re-read from disk when already present.
+    let pager = TestPager::new(PAGE_SIZE.ilog2() as u8, PAGE_SIZE as usize * 4)?;
+    let cache = PageCache::new(pager.block_size_exp, pager.size());
+
+    let page = cache.get(&pager, 0)?;
+    drop(page);
+    ktest_expect!(pager.reads(), 1usize);
+
+    let page = cache.get(&pager, 0)?;
+    drop(page);
+    ktest_expect!(pager.reads(), 1usize);
+}
+
+vmm_ktest! { PAGECACHE_NO_REDUNDANT_WRITE,
+    // Verify that a clean page is not written to disk on a subsequent sync.
+    let pager = TestPager::new(PAGE_SIZE.ilog2() as u8, PAGE_SIZE as usize * 4)?;
+    let cache = PageCache::new(pager.block_size_exp, pager.size());
+
+    let page = cache.get(&pager, 0)?;
+    unsafe { *((page.paddr() + HHDM_OFFSET) as *mut u8) = 0xEF; }
+    cache.mark_dirty(&pager, 0);
+    cache.sync_all(&pager)?;
+    ktest_expect!(pager.writes(), 1usize);
+
+    // Page is now clean; a second sync must not write again.
+    cache.sync_all(&pager)?;
+    ktest_expect!(pager.writes(), 1usize);
+}
+
+vmm_ktest! { PAGECACHE_FLUSH_EVICTS_CLEAN,
+    // A clean, unreferenced page must be evicted by flush and re-read on next access.
+    let pager = TestPager::new(PAGE_SIZE.ilog2() as u8, PAGE_SIZE as usize * 4)?;
+    pager.data.borrow_mut()[0] = 0x11;
+    let cache = PageCache::new(pager.block_size_exp, pager.size());
+
+    let page = cache.get(&pager, 0)?;
+    drop(page);  // refcount -> 0, still clean
+    ktest_expect!(pager.reads(), 1usize);
+
+    cache.flush();
+
+    // Entry is gone; next get must trigger a fresh read.
+    let page = cache.get(&pager, 0)?;
+    ktest_expect!(pager.reads(), 2usize);
+    let val = unsafe { *((page.paddr() + HHDM_OFFSET) as *const u8) };
+    ktest_expect!(val, 0x11u8);
+}
+
+vmm_ktest! { PAGECACHE_FLUSH_RETAINS_DIRTY,
+    // A dirty, unreferenced page must survive flush to avoid data loss.
+    let pager = TestPager::new(PAGE_SIZE.ilog2() as u8, PAGE_SIZE as usize * 4)?;
+    let cache = PageCache::new(pager.block_size_exp, pager.size());
+
+    let page = cache.get(&pager, 0)?;
+    unsafe { *((page.paddr() + HHDM_OFFSET) as *mut u8) = 0x22; }
+    cache.mark_dirty(&pager, 0);
+    drop(page);  // refcount -> 0, but dirty
+
+    cache.flush();
+
+    // Page must still be in cache with its dirty data intact; no new read.
+    let page = cache.get(&pager, 0)?;
+    ktest_expect!(pager.reads(), 1usize);
+    let val = unsafe { *((page.paddr() + HHDM_OFFSET) as *const u8) };
+    ktest_expect!(val, 0x22u8);
+
+    // Now sync so that the PageCache doesn't print the dirty warning.
+    cache.sync_all(&pager)?;
+}
+
+vmm_ktest! { PAGECACHE_FLUSH_RETAINS_REFERENCED,
+    // A page with an outstanding MappablePage (refcount > 0) must not be evicted.
+    let pager = TestPager::new(PAGE_SIZE.ilog2() as u8, PAGE_SIZE as usize * 4)?;
+    pager.data.borrow_mut()[0] = 0x33;
+    let cache = PageCache::new(pager.block_size_exp, pager.size());
+
+    let page = cache.get(&pager, 0)?;  // refcount = 1
+    cache.flush();  // must not evict; refcount != 0
+
+    // Page is still accessible with no additional disk read.
+    ktest_expect!(pager.reads(), 1usize);
+    let val = unsafe { *((page.paddr() + HHDM_OFFSET) as *const u8) };
+    ktest_expect!(val, 0x33u8);
 }

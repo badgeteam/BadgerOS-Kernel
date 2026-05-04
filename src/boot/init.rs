@@ -77,6 +77,8 @@ pub static INIT_BLOCK_THREADS: Mutex<Vec<Arc<Thread>>> = Mutex::new(Vec::new());
 /// Main initialization function of the kernel.
 /// Sets up most things after early boot.
 unsafe fn general_init() {
+    ktests_runlevel(KTestWhen::Sched);
+
     let smp_ok;
     unsafe {
         let mut cur = &raw const __start_kmodules;
@@ -121,6 +123,7 @@ unsafe fn general_init() {
         // Exit the bootloader's services and reclaim all reclaimable memory.
         unsafe { bootp_reclaim_mem() };
     }
+    ktests_runlevel(KTestWhen::RootFs);
 
     logkf!(LogLevel::Info, "Starting init process");
     Process::new_init().expect("Failed to start init process");
