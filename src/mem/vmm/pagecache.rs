@@ -2,7 +2,11 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
+#[cfg(feature = "ktest")]
+use core::cell::RefCell;
 use core::sync::atomic::{AtomicU32, Ordering};
+
+use alloc::vec::Vec;
 
 use crate::{
     badgelib::irq::IrqGuard,
@@ -16,6 +20,8 @@ use crate::{
     mem::pmm::{self, PAddrr},
     util::rtree::RadixTree,
 };
+
+use super::HHDM_OFFSET;
 
 mod flags {
     /// Entry contains differences from the backing store.
@@ -41,7 +47,7 @@ pub struct PageCache {
     /// Log-base 2 number of blocks per entry.
     entry_blocks_exp: u8,
     /// Cached page metadata.
-    inner: Spinlock<RadixTree<u64, Entry>>,
+    pages: Spinlock<RadixTree<u64, Entry>>,
     /// Total object size in bytes.
     len: Mutex<u64>,
     /// Threads waiting for disk reads.
@@ -59,7 +65,7 @@ impl PageCache {
             block_size_exp,
             entry_pages_exp,
             entry_blocks_exp,
-            inner: Spinlock::new(RadixTree::new()),
+            pages: Spinlock::new(RadixTree::new()),
             len: Mutex::new(len),
             read_waitlist: Waitlist::new(),
             write_waitlist: Waitlist::new(),
@@ -78,11 +84,27 @@ impl PageCache {
     /// Read data into an entry from disk.
     unsafe fn read_from_disk(&self, pager: &dyn Pager, index: u64, paddr: PAddrr) -> EResult<()> {
         // Lock length while we're accessing.
-        let len = self.len.unintr_lock_shared();
+        let byte_len = self.len.unintr_lock_shared();
+        let block_len = *byte_len >> self.block_size_exp;
 
         // Determine bounds.
+        let start_block = index << self.entry_blocks_exp;
+        let end_block = (start_block + (1 << self.entry_blocks_exp)).min(block_len);
+
+        unsafe {
+            pager.read_blocks(start_block, (end_block - start_block) as usize, paddr)?;
+        }
 
         // Backfill the remaining bytes with zeroes.
+        let margin = ((block_len << self.block_size_exp) - *byte_len) as usize;
+        if margin > 0 {
+            // SAFETY: `paddr` comes from the cache and is valid for `2^entry_pages_exp` pages.
+            unsafe {
+                let zfill_paddr = paddr + ((PAGE_SIZE as usize) << self.entry_pages_exp) - margin;
+                let zfill_vaddr = zfill_paddr + HHDM_OFFSET;
+                core::ptr::write_bytes(zfill_vaddr as *mut u8, 0, margin);
+            }
+        }
 
         Ok(())
     }
@@ -90,11 +112,14 @@ impl PageCache {
     /// Write data from an entry to disk.
     unsafe fn write_to_disk(&self, pager: &dyn Pager, index: u64, paddr: PAddrr) -> EResult<()> {
         // Lock length while we're accessing.
-        let len = self.len.unintr_lock_shared();
+        let byte_len = self.len.unintr_lock_shared();
+        let block_len = *byte_len >> self.block_size_exp;
 
         // Determine bounds.
+        let start_block = index << self.entry_blocks_exp;
+        let end_block = (start_block + (1 << self.entry_blocks_exp)).min(block_len);
 
-        Ok(())
+        unsafe { pager.write_blocks(start_block, (end_block - start_block) as usize, paddr) }
     }
 
     /// Try to get an existing entry.
@@ -102,7 +127,7 @@ impl PageCache {
         let (index, offset) = self.index(addr);
 
         let _noirq = IrqGuard::new();
-        let mut pages = self.inner.lock_shared();
+        let mut pages = self.pages.lock_shared();
         let mut ent = match pages.get(index) {
             Some(x) => x,
             None => return Ok(None),
@@ -112,14 +137,14 @@ impl PageCache {
             drop(pages);
 
             self.read_waitlist.block(timestamp_us_t::MAX, || {
-                self.inner
+                self.pages
                     .lock_shared()
                     .get(index)
                     .map(|x| x.flags.load(Ordering::Relaxed) & flags::READING != 0)
                     .unwrap_or(false)
             })?;
 
-            pages = self.inner.lock_shared();
+            pages = self.pages.lock_shared();
             ent = match pages.get(index) {
                 Some(x) => x,
                 None => return Ok(None),
@@ -144,7 +169,7 @@ impl PageCache {
                 return Ok(x);
             }
 
-            let mut inner = self.inner.lock();
+            let mut inner = self.pages.lock();
             if inner.get(index).is_some() {
                 // Another thread has already allocated this entry.
                 drop(inner);
@@ -173,7 +198,7 @@ impl PageCache {
                 // Actually read in the data.
                 if let Err(x) = self.read_from_disk(pager, index, paddr) {
                     // Read FAILED, remove the pending entry again.
-                    self.inner.lock().remove(index);
+                    self.pages.lock().remove(index);
                     pmm::page_free(paddr, self.entry_pages_exp);
                     return Err(x);
                 }
@@ -182,7 +207,7 @@ impl PageCache {
                 let meta = pmm::page_struct(paddr);
                 (*meta).refcount.fetch_add(1, Ordering::Relaxed);
                 let noirq = IrqGuard::new();
-                self.inner
+                self.pages
                     .lock_shared()
                     .get(index)
                     .expect("PageCache pending read deleted by another thread")
@@ -199,7 +224,7 @@ impl PageCache {
     pub fn mark_dirty(&self, _pager: &dyn Pager, addr: u64) {
         let (index, _) = self.index(addr);
 
-        let inner = self.inner.lock_shared();
+        let inner = self.pages.lock_shared();
         if let Some(entry) = inner.get(index) {
             let prev = entry.flags.fetch_or(flags::DIRTY, Ordering::Relaxed);
             if prev & flags::READING != 0 {
@@ -212,14 +237,97 @@ impl PageCache {
         }
     }
 
+    /// Common implementation of [`Self::sync`] and [`Self::sync_all`].
+    fn sync_impl(&self, pager: &dyn Pager, to_sync: &[u64]) -> EResult<()> {
+        for &index in to_sync {
+            let pages = self.pages.lock_shared();
+            let entry = match pages.get(index) {
+                Some(x) => x,
+                None => continue,
+            };
+            let paddr = entry.paddr;
+
+            // Filter for dirty entries not being written back already.
+            if entry
+                .flags
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
+                    ((x & (flags::DIRTY | flags::WRITING)) == flags::DIRTY).then_some(0)
+                })
+                .is_err()
+            {
+                continue;
+            }
+
+            // Attempt to write back to disk.
+            drop(pages);
+            let res = unsafe { self.write_to_disk(pager, index, paddr) };
+            let pages = self.pages.lock_shared();
+            let entry = pages
+                .get(index)
+                .expect("PageCache pending write deleted by another thread");
+
+            if res.is_err() {
+                // Failed to write; re-mark dirty.
+                entry.flags.store(flags::DIRTY, Ordering::Relaxed);
+                // We'd rather silently succeed part of a sync returning Err than silently fail part of a sync returning Ok.
+                return res;
+            } else {
+                // This write succeeded.
+                entry.flags.store(0, Ordering::Relaxed);
+            }
+        }
+
+        // All writes succeeded.
+        Ok(())
+    }
+
     /// Synchronize a page to disk.
-    pub fn sync(&self, pager: &dyn Pager, addr: u64, flush: bool) -> EResult<()> {
-        todo!()
+    pub fn sync(&self, pager: &dyn Pager, addr: u64, len: u64) -> EResult<()> {
+        // Lock size while finding which pages to sync.
+        let byte_len = self.len.unintr_lock_shared();
+        let start_index = self.index(addr).0;
+        let end_index = self.index((addr + len.saturating_sub(1)).min(*byte_len)).0;
+
+        // Collect a list of entries to sync.
+        let mut to_sync = Vec::new();
+        let pages = self.pages.lock_shared();
+        for index in start_index..(end_index + 1) {
+            if let Some(entry) = pages.get(index) {
+                if entry.flags.load(Ordering::Relaxed) & flags::DIRTY != 0 {
+                    to_sync.try_reserve(1)?;
+                    to_sync.push(index);
+                }
+            }
+        }
+        drop(pages);
+        drop(byte_len);
+
+        self.sync_impl(pager, &to_sync)
     }
 
     /// Synchronize all pages to disk.
-    pub fn sync_all(&self, pager: &dyn Pager, flush: bool) -> EResult<()> {
-        todo!()
+    pub fn sync_all(&self, pager: &dyn Pager) -> EResult<()> {
+        // Lock size while finding which pages to sync.
+        let byte_len = self.len.unintr_lock_shared();
+
+        // Collect a list of entries to sync.
+        let mut to_sync = Vec::new();
+        let pages = self.pages.lock_shared();
+        for (index, entry) in pages.iter() {
+            if entry.flags.load(Ordering::Relaxed) & flags::DIRTY != 0 {
+                to_sync.try_reserve(1)?;
+                to_sync.push(index);
+            }
+        }
+        drop(pages);
+        drop(byte_len);
+
+        self.sync_impl(pager, &to_sync)
+    }
+
+    /// Flush clean, unreferenced cache entries.
+    pub fn flush(&self) {
+        logkf!(LogLevel::Warning, "TODO: PageCache::flush");
     }
 }
 
@@ -228,7 +336,7 @@ impl Drop for PageCache {
         let mut refs = 0;
         let mut dirty = 0;
 
-        for entry in self.inner.lock().iter() {
+        for entry in self.pages.lock().iter() {
             if entry.1.flags.load(Ordering::Relaxed) & flags::DIRTY != 0 {
                 dirty += 1;
             }
@@ -265,11 +373,21 @@ pub trait Pager {
     /// Log-base 2 number of bytes a block is.
     fn block_size_exp(&self) -> u8;
 
-    /// Read data in multiples of the block size of this blockr.
+    /// Read data in multiples of the block size of this pager.
     /// The data read if a concurrent write is happening is undefined.
-    unsafe fn read_blocks(&self, offset: u64, size: usize, paddr: PAddrr) -> EResult<()>;
+    unsafe fn read_blocks(
+        &self,
+        start_block: u64,
+        block_count: usize,
+        paddr: PAddrr,
+    ) -> EResult<()>;
 
-    /// Write data in multiples of the block size of this blockr.
+    /// Write data in multiples of the block size of this pager.
     /// The data written if multiple concurrent writes happen is undefined.
-    unsafe fn write_blocks(&self, offset: u64, size: usize, paddr: PAddrr) -> EResult<()>;
+    unsafe fn write_blocks(
+        &self,
+        start_block: u64,
+        block_count: usize,
+        paddr: PAddrr,
+    ) -> EResult<()>;
 }

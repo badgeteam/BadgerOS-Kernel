@@ -14,6 +14,7 @@ BadgerOS supports 128-bit GUIDs/UUIDs of the following forms, which it parses li
 - `{xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx}`
 - `(xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx)`
 - `xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`
+
 Where `x` is any of the following ASCII characters representing a hexadecimal encoding: 0-9, a-f and A-F.
 
 ### Parameter: ROOT
