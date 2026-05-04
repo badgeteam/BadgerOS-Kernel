@@ -37,6 +37,7 @@ use super::{
     vfs::{
         VNode, VNodeMtxInner, VNodeOps, Vfs, VfsDriver, VfsOps,
         mflags::{self, MFlags},
+        vnflags,
     },
 };
 
@@ -918,10 +919,23 @@ impl VNodeOps for E2VNode {
         // Inode is now ready to be unlinked.
         self.unlink_impl(&arc_self.vfs, name, Some(unlinked_ops))?;
 
-        // If not currently open and nlink is 0, then delete the inode now.
-        if unlinked_ops.inode.lock_shared()?.nlink == 0 && unlinked_vnode.is_none() {
-            Self::free_inode_blocks(&e2fs, unlinked_ops.inode.lock_shared()?.data_blocks)?;
-            e2fs.free_inode(unlinked_ops.ino)?;
+        // Save nlink here so the borrow of unlinked_guard/tmp_ops via unlinked_ops ends.
+        let nlink = unlinked_ops.inode.lock_shared()?.nlink;
+
+        if nlink == 0 {
+            match unlinked_guard.as_mut() {
+                Some(guard) => {
+                    // VNode is still open; mark it so no further modifications are allowed.
+                    guard.flags |= vnflags::REMOVED;
+                }
+                None => {
+                    let e2vnode = (tmp_ops.as_mut().unwrap().as_mut() as &mut dyn Any)
+                        .downcast_mut::<E2VNode>()
+                        .unwrap();
+                    Self::free_inode_blocks(&e2fs, e2vnode.inode.lock_shared()?.data_blocks)?;
+                    e2fs.free_inode(e2vnode.ino)?;
+                }
+            }
         }
 
         Ok(())

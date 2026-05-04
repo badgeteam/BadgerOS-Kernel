@@ -245,7 +245,6 @@ pub struct VNodeMtxInner {
 }
 
 /// A virtual generalization of inodes. Multiple [`super::File`]s may refer to one vnode.
-/// TODO: A mechanism to mark a VNode as unlinked so it cannot be modified (flag exists but logic doesn't).
 pub struct VNode {
     /// VNode operations and flags.
     pub(super) mtx: Mutex<VNodeMtxInner>,
@@ -253,8 +252,6 @@ pub struct VNode {
     pub(super) ino: u64,
     /// VFS on which this VNode exists.
     pub(super) vfs: Arc<Vfs>,
-    /// VNode flags.
-    pub(super) flags: AtomicU32,
     /// What kind of node this is.
     pub(super) type_: NodeType,
     /// Shared FIFO data.
@@ -506,7 +503,6 @@ impl Vfs {
             }),
             ino,
             vfs: self.clone(),
-            flags: AtomicU32::new(0),
             type_: dirent.type_,
             fifo,
             denywrite: AtomicU32::new(0),

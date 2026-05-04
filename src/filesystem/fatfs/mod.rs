@@ -28,7 +28,7 @@ use super::{
     vfs::{VNode, VNodeOps, Vfs, VfsDriver, VfsOps, mflags::MFlags},
 };
 use super::{NAME_MAX, sysimpl::DentBuffer};
-use core::{fmt::Debug, num::NonZeroU8, sync::atomic::Ordering};
+use core::{fmt::Debug, num::NonZeroU8};
 
 mod cluster;
 mod spec;
@@ -764,14 +764,12 @@ impl VNodeOps for FatVNode {
         }
 
         if let Some(unlinked_vnode) = &unlinked_vnode {
-            // Mark it as not having a dirent on the VNode, if it is currently open.
+            let mut guard = unlinked_vnode.mtx.unintr_lock();
             let fat_vnode = unsafe {
-                &*(unlinked_vnode.mtx.data().ops.as_ref() as *const dyn VNodeOps as *const FatVNode)
+                &*(guard.ops.as_ref() as *const dyn VNodeOps as *const FatVNode)
             };
             *fat_vnode.dirent_disk_off.unintr_lock() = None;
-            unlinked_vnode
-                .flags
-                .fetch_or(vnflags::REMOVED, Ordering::Relaxed);
+            guard.flags |= vnflags::REMOVED;
         }
 
         // Either way, mark the clusters as free in the FAT.
