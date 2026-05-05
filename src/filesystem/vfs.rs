@@ -9,7 +9,7 @@ use core::{
     hint::unlikely,
     ops::Range,
     ptr::{self, NonNull},
-    sync::atomic::{AtomicU32, AtomicU64, Ordering},
+    sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering},
 };
 
 use alloc::{
@@ -30,7 +30,6 @@ use crate::{
         device::BaseDevice,
         error::{EResult, Errno},
     },
-    config::PAGE_SIZE,
     filesystem::fifo::FifoShared,
     kernel::sync::mutex::{Mutex, MutexGuard, SharedMutexGuard},
     mem::{
@@ -163,7 +162,20 @@ impl File for VfsFile {
     }
 
     fn set_flags(&self, newfl: u32) -> EResult<()> {
-        self.flags.unintr_lock().flags = newfl;
+        let mut guard = self.flags.unintr_lock();
+        if guard.flags & oflags::WRITE_ONLY > newfl & oflags::WRITE_ONLY {
+            // Remove the write flag.
+            self.vnode.denywrite.fetch_add(1, Ordering::Relaxed);
+        } else if guard.flags & oflags::WRITE_ONLY < newfl & oflags::WRITE_ONLY {
+            // Add the write flag; check DENYWRITE.
+            self.vnode
+                .denywrite
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
+                    (x <= 0).then_some(x - 1)
+                })
+                .map_err(|_| Errno::ETXTBSY)?;
+        }
+        guard.flags = newfl;
         Ok(())
     }
 
@@ -322,6 +334,16 @@ impl File for VfsFile {
     }
 }
 
+impl Drop for VfsFile {
+    fn drop(&mut self) {
+        if (self.flags.unintr_lock_shared().flags & oflags::WRITE_ONLY) != 0 {
+            // Update DENYWRITE.
+            let old = self.vnode.denywrite.fetch_add(1, Ordering::Relaxed);
+            debug_assert!(old <= -1);
+        }
+    }
+}
+
 #[rustfmt::skip]
 pub mod vnflags {
     /// VNode is removed from the filesystem.
@@ -354,8 +376,8 @@ pub struct VNode {
     pub(super) pagecache: Option<PageCache>,
     /// Set of mappings of this as a memory object.
     pub(super) mappings: Mutex<Vec<(*const VmSpaceInner, *const MapEntry)>>,
-    /// Deny writes counter set by the executable loader.
-    pub denywrite: AtomicU32,
+    /// DENYWRITE mapping counter; if negative, is open for writing, if positive, mapped with DENYWRITE.
+    pub denywrite: AtomicI32,
 }
 
 impl Debug for VNode {
@@ -383,14 +405,31 @@ impl MemObject for VNode {
         self.mtx.unintr_lock_shared().ops.get_size(self)
     }
 
-    fn on_mapped(&self, vmspace: *const VmSpaceInner, range: *const MapEntry) -> EResult<()> {
+    fn on_mapped(
+        &self,
+        denywrite: bool,
+        vmspace: *const VmSpaceInner,
+        range: *const MapEntry,
+    ) -> EResult<()> {
+        if denywrite {
+            // Increase deny writes counter.
+            self.denywrite
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
+                    (x >= 0).then_some(x + 1)
+                })
+                .map_err(|_| Errno::ETXTBSY)?;
+        }
         let mut guard = self.mappings.unintr_lock();
         guard.try_reserve(1)?;
         guard.push((vmspace, range));
         Ok(())
     }
 
-    fn on_unmapped(&self, _vmspace: *const VmSpaceInner, range: *const MapEntry) {
+    fn on_unmapped(&self, denywrite: bool, _vmspace: *const VmSpaceInner, range: *const MapEntry) {
+        if denywrite {
+            let prev = self.denywrite.fetch_sub(1, Ordering::Relaxed);
+            debug_assert!(prev >= 1);
+        }
         let mut guard = self.mappings.unintr_lock();
         // No need to check vmspace since the entry pointers will only exist in one vmspace.
         guard.retain(|e| !core::ptr::addr_eq(e.1, range));
@@ -479,7 +518,17 @@ impl VNode {
 
 impl Drop for VNode {
     fn drop(&mut self) {
-        self.mtx.unintr_lock().ops.close(self);
+        let mut guard = self.mtx.unintr_lock();
+        if let Some(pagecache) = self.pagecache.as_ref() {
+            let pager = VNodePager {
+                vnode: self,
+                ops: &*guard.ops,
+            };
+            if let Err(x) = pagecache.sync_all(&pager) {
+                logkf!(LogLevel::Warning, "Failed to sync {:?}: {}", self, x);
+            }
+        }
+        guard.ops.close(self);
         self.vfs.vnodes.unintr_lock().remove(&self.ino);
     }
 }
@@ -671,7 +720,7 @@ impl Vfs {
             fifo,
             pagecache,
             mappings: Mutex::new(Vec::new()),
-            denywrite: AtomicU32::new(0),
+            denywrite: AtomicI32::new(0),
         })?;
         if dirent.type_ == NodeType::Regular {
             vnode

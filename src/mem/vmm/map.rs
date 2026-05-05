@@ -30,7 +30,6 @@ pub const FIXED: u32 = 0x10;
 /// Anonymous mapping (doesn't have an associated file descriptor).
 pub const ANONYMOUS: u32 = 0x20;
 /// Deny writes (as done by exec).
-/// Handled by the system call, not by this module.
 pub const DENYWRITE: u32 = 0x40;
 /// Mapping must be populated immediately.
 pub const POPULATE: u32 = 0x8000;
@@ -373,8 +372,10 @@ impl VmSpaceInner {
                     for vaddr in (*entry).range.clone() {
                         fences.add(Some(vaddr), None);
                     }
-                    if let Some(m) = &(*entry).inner.lock().mapping {
-                        m.object.on_unmapped(vmspace, entry);
+                    let inner = (*entry).inner.lock();
+                    if let Some(m) = &inner.mapping {
+                        m.object
+                            .on_unmapped(inner.map_flags & DENYWRITE != 0, vmspace, entry);
                     }
                     // Can't free the entry until VM fence is done; this vector defers it to the end of the function.
                     deferred_free.push(Box::from_raw(entry));
@@ -449,9 +450,11 @@ impl VmSpaceInner {
         unsafe {
             Self::remove_mappings(fences, pmap, map, addr..addr + size, vmspace);
             Self::insert_mapping(map, entry);
-            if let Some(m) = &(*entry_ptr).inner.lock().mapping {
+            let inner = (*entry_ptr).inner.lock();
+            if let Some(m) = &inner.mapping {
                 let obj = m.object.clone();
-                if let Err(e) = obj.on_mapped(vmspace, entry_ptr) {
+                if let Err(e) = obj.on_mapped(inner.map_flags & DENYWRITE != 0, vmspace, entry_ptr)
+                {
                     // on_mapped failed after FIXED already cleared the old range; a hole is left.
                     map.remove(entry_ptr as *mut _);
                     drop(Box::from_raw(entry_ptr as *mut MapEntry));
@@ -531,7 +534,7 @@ impl VmSpaceInner {
             Self::insert_mapping(map, entry);
             if let Some(m) = &(*entry_ptr).inner.lock().mapping {
                 let obj = m.object.clone();
-                if let Err(e) = obj.on_mapped(vmspace, entry_ptr) {
+                if let Err(e) = obj.on_mapped(map_flags & DENYWRITE != 0, vmspace, entry_ptr) {
                     map.remove(entry_ptr as *mut _);
                     drop(Box::from_raw(entry_ptr as *mut MapEntry));
                     return Err(e);

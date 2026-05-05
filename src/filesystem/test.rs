@@ -152,6 +152,93 @@ rootfs_ktest! { FILE_MAP_SUBBLOCK,
     }
 }
 
+rootfs_ktest! { FILE_MAP_DENYWRITE,
+    // Make a file and make it two pages long.
+    let fd = open(None, b"/denywrite.bin", oflags::CREATE | oflags::READ_WRITE | oflags::TRUNCATE)?;
+    ktest_expect!(fd.writek(zeroes())?, PAGE_SIZE as usize);
+    ktest_expect!(fd.writek(zeroes())?, PAGE_SIZE as usize);
+    let stat = fd.stat()?;
+    ktest_expect!(stat.size, 2 * PAGE_SIZE as u64);
+
+    let memobject = fd.get_memobject().ok_or(Errno::EACCES)?;
+
+    unsafe {
+        // A mapping with DENYWRITE should fail while the FD is open.
+        ktest_expect!(kernel_mm().map(
+            stat.size as usize,
+            0,
+            map::SHARED | map::LAZY_KERNEL | map::DENYWRITE,
+            prot::READ | prot::WRITE,
+            Some(
+                Mapping {
+                    offset: 0,
+                    object: memobject.clone(),
+                }
+            )
+        ), Err(Errno::ETXTBSY));
+
+        // After closing the FD, it should succeed.
+        drop(fd);
+        let vaddr = kernel_mm().map(
+            stat.size as usize,
+            0,
+            map::SHARED | map::LAZY_KERNEL | map::DENYWRITE,
+            prot::READ | prot::WRITE,
+            Some(
+                Mapping {
+                    offset: 0,
+                    object: memobject.clone()
+                }
+            )
+        )?;
+
+        // The FD should now not open for writing.
+        ktest_expect!(open(None, b"/denywrite.bin", oflags::READ_WRITE).err(), Some(Errno::ETXTBSY));
+        let fd = open(None, b"/denywrite.bin", oflags::READ_ONLY)?;
+        ktest_expect!(fd.set_flags(oflags::READ_WRITE).err(), Some(Errno::ETXTBSY));
+
+        // After unmapping, opening should succeed.
+        kernel_mm().unmap(vaddr..vaddr + stat.size as usize)?;
+        fd.set_flags(oflags::READ_WRITE)?;
+        drop(open(None, b"/denywrite.bin", oflags::READ_WRITE)?);
+
+        // It should not be mappable again.
+        ktest_expect!(kernel_mm().map(
+            stat.size as usize,
+            0,
+            map::SHARED | map::LAZY_KERNEL | map::DENYWRITE,
+            prot::READ | prot::WRITE,
+            Some(
+                Mapping {
+                    offset: 0,
+                    object: memobject.clone(),
+                }
+            )
+        ), Err(Errno::ETXTBSY));
+
+        // Clearing the write access flag one last time.
+        fd.set_flags(oflags::READ_ONLY)?;
+
+        // Mapping should succeed once more.
+        let vaddr = kernel_mm().map(
+            stat.size as usize,
+            0,
+            map::SHARED | map::LAZY_KERNEL | map::DENYWRITE,
+            prot::READ | prot::WRITE,
+            Some(
+                Mapping {
+                    offset: 0,
+                    object: memobject.clone()
+                }
+            )
+        )?;
+        kernel_mm().unmap(vaddr..vaddr + stat.size as usize)?;
+    }
+
+    // Delete the file now that it's unneeded.
+    unlink(None, b"/denywrite.bin", false)?;
+}
+
 rootfs_ktest! { FILE_MAP_RESIZE,
     // Make a file and make it two pages long.
     let fd = open(None, b"/resizetest.bin", oflags::CREATE | oflags::READ_WRITE | oflags::TRUNCATE)?;

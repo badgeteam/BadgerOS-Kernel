@@ -7,7 +7,7 @@ use core::{
     fmt::{Debug, Write},
     ops::Range,
     panic, ptr, str,
-    sync::atomic::{AtomicU32, AtomicU64, Ordering},
+    sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering},
 };
 
 use access::Access;
@@ -766,7 +766,7 @@ fn o_creat_helper(to_create: Arc<DentCache>, exclusive: bool) -> EResult<Arc<VNo
         fifo: None,
         pagecache: Some(PageCache::new(dir_vnode.vfs.block_size_exp, 0)),
         mappings: Mutex::new(Vec::new()),
-        denywrite: AtomicU32::new(0),
+        denywrite: AtomicI32::new(0),
     })?;
     *dentcache.vnode.unintr_lock() = Some(Arc::downgrade(&new_vnode));
 
@@ -888,6 +888,15 @@ pub fn open(at: Option<&dyn File>, path: &[u8], mut oflags: OFlags) -> EResult<A
                 && oflags & oflags::WRITE_ONLY != 0
             {
                 return Err(Errno::EROFS);
+            }
+            if oflags & oflags::WRITE_ONLY != 0 {
+                // Update DENYWRITE.
+                vnode
+                    .denywrite
+                    .try_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
+                        (x <= 0).then_some(x - 1)
+                    })
+                    .map_err(|_| Errno::ETXTBSY)?;
             }
             Ok(Box::<dyn File>::from(Box::try_new(VfsFile {
                 vnode,
@@ -1113,7 +1122,7 @@ pub fn make_file(at: Option<&dyn File>, path: &[u8], spec: MakeFileSpec) -> ERes
         fifo,
         pagecache,
         mappings: Mutex::new(Vec::new()),
-        denywrite: AtomicU32::new(0),
+        denywrite: AtomicI32::new(0),
     })?;
     *dentcache.vnode.unintr_lock() = Some(Arc::downgrade(&new_vnode));
 
@@ -1475,7 +1484,7 @@ fn create_vfs(
         fifo: None,
         pagecache: None,
         mappings: Mutex::new(Vec::new()),
-        denywrite: AtomicU32::new(0),
+        denywrite: AtomicI32::new(0),
     });
     vfs.vnodes
         .unintr_lock()

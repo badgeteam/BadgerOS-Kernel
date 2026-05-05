@@ -81,12 +81,23 @@ pub trait MemObject: Debug {
 
     /// Called when a new mapping entry is made with this memory object.
     /// The [`VmSpaceInner`] promises that [`MemObject::on_unmapped`] is called before the pointers become invalid.
-    fn on_mapped(&self, _vmspace: *const VmSpaceInner, _range: *const MapEntry) -> EResult<()> {
+    fn on_mapped(
+        &self,
+        _denywrite: bool,
+        _vmspace: *const VmSpaceInner,
+        _range: *const MapEntry,
+    ) -> EResult<()> {
         Ok(())
     }
 
     /// Called when a new mapping entry is made with this memory object.
-    fn on_unmapped(&self, _vmspace: *const VmSpaceInner, _range: *const MapEntry) {}
+    fn on_unmapped(
+        &self,
+        _denywrite: bool,
+        _vmspace: *const VmSpaceInner,
+        _range: *const MapEntry,
+    ) {
+    }
 
     /// Try to get an existing page from the object.
     /// May spuriously return [`None`] even if the page is available.
