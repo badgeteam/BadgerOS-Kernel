@@ -80,13 +80,17 @@ impl PageCache {
         logkf!(LogLevel::Warning, "TODO: PageCache::set_len invalidation");
     }
 
-    /// Index calculation helper.
+    /// Index calculation helper: returns (entry_index, page_within_entry).
+    ///
+    /// For block_size < page_size: multiple blocks share one page; entry_index = offset / page_size.
+    /// For block_size > page_size: multiple pages share one block; page_within_entry > 0 is possible.
+    /// entry_size_exp = block_size_exp + entry_blocks_exp = max(block_size_exp, page_size_exp).
     #[inline(always)]
     fn index(&self, offset: u64) -> (u64, usize) {
         assert!(offset % PAGE_SIZE as u64 == 0);
-        let block = offset >> self.block_size_exp;
-        let page = offset % (1 << self.block_size_exp) / PAGE_SIZE as u64;
-        (block, page as usize)
+        let entry_index = offset >> (self.block_size_exp + self.entry_blocks_exp);
+        let page = ((offset >> PAGE_SIZE.ilog2()) & ((1u64 << self.entry_pages_exp) - 1)) as usize;
+        (entry_index, page)
     }
 
     /// Read data into an entry from disk.
@@ -103,14 +107,22 @@ impl PageCache {
             pager.read_blocks(start_block, (end_block - start_block) as usize, paddr)?;
         }
 
-        // Backfill the remaining bytes with zeroes.
-        let margin = (block_len << self.block_size_exp).saturating_sub(*byte_len) as usize;
-        if margin > 0 {
-            // SAFETY: `paddr` comes from the cache and is valid for `2^entry_pages_exp` pages.
-            unsafe {
-                let zfill_paddr = paddr + ((PAGE_SIZE as usize) << self.entry_pages_exp) - margin;
-                let zfill_vaddr = zfill_paddr + HHDM_OFFSET;
-                core::ptr::write_bytes(zfill_vaddr as *mut u8, 0, margin);
+        // Backfill with zeroes past the file's end — only on the last entry.
+        let entry_end_block = start_block + (1u64 << self.entry_blocks_exp);
+        if block_len <= entry_end_block {
+            let entry_bytes = (PAGE_SIZE as usize) << self.entry_pages_exp;
+            let valid_bytes = (*byte_len as usize)
+                .saturating_sub(start_block as usize * (1usize << self.block_size_exp))
+                .min(entry_bytes);
+            if valid_bytes < entry_bytes {
+                // SAFETY: `paddr` is valid for `2^entry_pages_exp` pages; valid_bytes < entry_bytes.
+                unsafe {
+                    core::ptr::write_bytes(
+                        (paddr + valid_bytes + HHDM_OFFSET) as *mut u8,
+                        0,
+                        entry_bytes - valid_bytes,
+                    );
+                }
             }
         }
 
@@ -167,7 +179,7 @@ impl PageCache {
 
         // SAFETY: We own this physical address through the cache entries.
         Ok(Some(unsafe {
-            MappablePage::new(ent.paddr + offset, true, true)
+            MappablePage::new(ent.paddr + offset * PAGE_SIZE as usize, true, true)
         }))
     }
 
@@ -227,7 +239,11 @@ impl PageCache {
                 drop(noirq);
 
                 // SAFETY: We own this physical address through the cache entries.
-                return Ok(MappablePage::new(paddr + offset, true, true));
+                return Ok(MappablePage::new(
+                    paddr + offset * PAGE_SIZE as usize,
+                    true,
+                    true,
+                ));
             }
         }
     }
@@ -718,4 +734,62 @@ vmm_ktest! { PAGECACHE_FLUSH_RETAINS_REFERENCED,
     ktest_expect!(pager.reads(), 1usize);
     let val = unsafe { *((page.paddr() + HHDM_OFFSET) as *const u8) };
     ktest_expect!(val, 0x33u8);
+}
+
+vmm_ktest! { PAGECACHE_SMALL_BLOCK_CROSS_ENTRY_READ,
+    // block_size (512) < page_size (4096): 8 blocks per entry, each entry is exactly 1 page.
+    // Page 0 lives in entry 0 (blocks 0-7), page 1 lives in entry 1 (blocks 8-15).
+    let pager = TestPager::new(9, PAGE_SIZE as usize * 2)?;
+    pager.data.borrow_mut()[0] = 0xAA;
+    pager.data.borrow_mut()[PAGE_SIZE as usize] = 0xBB;
+    let cache = PageCache::new(9, pager.size());
+
+    let page0 = cache.get(&pager, 0)?;
+    let val0 = unsafe { *((page0.paddr() + HHDM_OFFSET) as *const u8) };
+    ktest_expect!(val0, 0xAAu8);
+
+    // A second entry must be loaded from disk for the second page.
+    let page1 = cache.get(&pager, PAGE_SIZE as u64)?;
+    let val1 = unsafe { *((page1.paddr() + HHDM_OFFSET) as *const u8) };
+    ktest_expect!(val1, 0xBBu8);
+
+    ktest_expect!(pager.reads(), 2usize);
+}
+
+vmm_ktest! { PAGECACHE_LARGE_BLOCK_INTRA_ENTRY_PAGES,
+    // block_size (8192) > page_size (4096): 1 block spans 2 pages, both in the same entry.
+    // Both pages must be satisfied by a single disk read.
+    let block_size_exp = PAGE_SIZE.ilog2() as u8 + 1;
+    let pager = TestPager::new(block_size_exp, PAGE_SIZE as usize * 2)?;
+    pager.data.borrow_mut()[0] = 0xCC;
+    pager.data.borrow_mut()[PAGE_SIZE as usize] = 0xDD;
+    let cache = PageCache::new(block_size_exp, pager.size());
+
+    let page0 = cache.get(&pager, 0)?;
+    let val0 = unsafe { *((page0.paddr() + HHDM_OFFSET) as *const u8) };
+    ktest_expect!(val0, 0xCCu8);
+
+    // Second page is in the same cache entry; must not trigger another disk read.
+    let page1 = cache.get(&pager, PAGE_SIZE as u64)?;
+    let val1 = unsafe { *((page1.paddr() + HHDM_OFFSET) as *const u8) };
+    ktest_expect!(val1, 0xDDu8);
+
+    ktest_expect!(pager.reads(), 1usize);
+}
+
+vmm_ktest! { PAGECACHE_SMALL_BLOCK_DIRTY_WRITEBACK_SECOND_ENTRY,
+    // block_size (512) < page_size (4096): dirty data in entry 1 must be written to the
+    // correct block range (blocks 8-15 = bytes 4096-8191), not entry 0's range.
+    let pager = TestPager::new(9, PAGE_SIZE as usize * 2)?;
+    let cache = PageCache::new(9, pager.size());
+
+    let page1 = cache.get(&pager, PAGE_SIZE as u64)?;
+    unsafe { *((page1.paddr() + HHDM_OFFSET) as *mut u8) = 0xBE; }
+    cache.mark_dirty(&pager, PAGE_SIZE as u64);
+
+    cache.sync_all(&pager)?;
+
+    ktest_expect!(pager.data.borrow()[PAGE_SIZE as usize], 0xBEu8);
+    // Only entry 1 was dirty; exactly one writeback must have occurred.
+    ktest_expect!(pager.writes(), 1usize);
 }

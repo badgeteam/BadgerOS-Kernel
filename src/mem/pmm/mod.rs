@@ -337,7 +337,7 @@ pub fn page_struct_base(paddr: PAddrr) -> (*mut Page, u8) {
         let order = (*meta).order();
         let shift = order + PAGE_SIZE.ilog2() as u8;
         let aligned_paddr = paddr >> shift << shift;
-        (meta.wrapping_sub(paddr.wrapping_sub(aligned_paddr)), order)
+        (meta.wrapping_sub(paddr.wrapping_sub(aligned_paddr) / PAGE_SIZE as usize), order)
     }
 }
 

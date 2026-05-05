@@ -183,7 +183,7 @@ macro_rules! ktest_expect {
         }
     };
     ($lhs: expr, $rhs: expr $(, [ $($ctx: expr),* ])?) => {
-        crate::ktest_expect!($lhs, ==, $rhs $(, $ctx)*);
+        crate::ktest_expect!($lhs, ==, $rhs $(, [ $($ctx),* ])?);
     };
 }
 

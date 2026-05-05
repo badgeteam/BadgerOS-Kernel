@@ -57,6 +57,7 @@ pub mod mount_root;
 pub mod partition;
 pub mod ramfs;
 pub mod sysimpl;
+pub mod test;
 pub mod vfs;
 
 #[repr(u32)]
