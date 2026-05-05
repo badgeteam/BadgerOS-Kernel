@@ -42,7 +42,7 @@ pub const LAZY_KERNEL: u32 = 0x8000_0000;
 #[derive(Clone, Debug)]
 pub struct Mapping {
     /// Page-aligned byte offset within the memory object.
-    pub offset: usize,
+    pub offset: u64,
     /// The memory object to map.
     pub object: Arc<dyn MemObject>,
 }
@@ -98,7 +98,7 @@ impl AnonMap {
         }
         let arc_ref = self.pages[page_index as usize].as_ref()?;
         let writable = Arc::is_unique(arc_ref);
-        Some(unsafe { MappablePage::new(arc_ref.paddr, false, writable) })
+        Some(unsafe { MappablePage::new(arc_ref.paddr, false, writable, false) })
     }
 
     /// Get or allocate the page at `offset`.
@@ -148,7 +148,7 @@ impl AnonMap {
 
         self.pages[(offset - self.offset) / PAGE_SIZE as usize] = Some(anon);
 
-        Ok(unsafe { MappablePage::new(new_page, false, true) })
+        Ok(unsafe { MappablePage::new(new_page, false, true, false) })
     }
 }
 
@@ -231,7 +231,7 @@ impl MapEntryInner {
         }
 
         if let Some(mapping) = &self.mapping {
-            let mut page = mapping.object.get(offset + mapping.offset)?;
+            let mut page = mapping.object.get(offset as u64 + mapping.offset)?;
             if self.map_flags & SHARED == 0 {
                 // Private mappings; can't directly write to the memory object.
                 page.clear_writable();
@@ -261,12 +261,12 @@ impl MapEntryInner {
             // Page is not cached, get it from the memory object.
             let mut paddr;
             if let Some(mapping) = &self.mapping {
-                paddr = mapping.object.alloc(offset + mapping.offset)?;
+                paddr = mapping.object.alloc(offset as u64 + mapping.offset)?;
             } else {
                 paddr = zeroes_page();
             }
 
-            if !for_writing || ((self.map_flags & SHARED) == 0 && self.mapping.is_some()) {
+            if !for_writing || ((self.map_flags & SHARED) != 0 && self.mapping.is_some()) {
                 // Page can be immediately mapped given for the given access type.
                 if (self.map_flags & SHARED) == 0 {
                     paddr.clear_writable();
@@ -537,9 +537,9 @@ impl VmSpaceInner {
             return Err(Errno::EINVAL);
         }
         if let Some(mapping) = &mapping {
-            let mapping_size = (mapping.object.len() - mapping.offset).div_ceil(PAGE_SIZE as usize)
-                * PAGE_SIZE as usize;
-            if size > mapping_size {
+            let mapping_size = (mapping.object.len() - mapping.offset).div_ceil(PAGE_SIZE as u64)
+                * PAGE_SIZE as u64;
+            if size as u64 > mapping_size {
                 return Err(Errno::ENXIO);
             }
         }
@@ -696,7 +696,7 @@ impl VmSpaceInner {
             if !page.writable() && guard.map_flags & SHARED == 0 {
                 prot_flags &= !prot::WRITE;
             }
-            let mut mmu_flags = prot::into_mmu_flags(prot_flags);
+            let mut mmu_flags = prot::into_mmu_flags(prot_flags) | physmap::flags::A;
             if vaddr as isize > 0 {
                 mmu_flags |= physmap::flags::U;
             } else {
@@ -705,7 +705,10 @@ impl VmSpaceInner {
             if page.refcounted() {
                 mmu_flags |= physmap::flags::REFCOUNT;
             }
-            pmap.map(page_vaddr, page.paddr(), mmu_flags)?;
+            if !page.tracks_dirty() {
+                mmu_flags |= physmap::flags::D;
+            }
+            pmap.map(page_vaddr, page.into_paddr(), mmu_flags)?;
         }
 
         Ok(())

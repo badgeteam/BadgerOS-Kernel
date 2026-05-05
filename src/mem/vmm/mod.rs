@@ -2,7 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::{mem::MaybeUninit, ops::Deref};
+use core::{mem::MaybeUninit, ops::Deref, ptr::null};
 
 use alloc::sync::Arc;
 use map::{KernelVmSpace, Mapping};
@@ -12,10 +12,8 @@ use crate::{
     bindings::log::LogLevel,
     config::PAGE_SIZE,
     cpu::{mmu, usercopy::fallible_store_u8},
-    mem::pmm::PAddrr,
+    mem::pmm::{self, PAddrr},
 };
-
-use super::pmm::phys_box::PhysBox;
 
 mod c_api;
 pub mod map;
@@ -62,7 +60,7 @@ pub mod prot {
 
     /// Convert prot flags into MMU flags.
     pub(super) const fn into_mmu_flags(prot_flags: u8) -> u32 {
-        let mut mmu = mmu::flags::A | mmu::flags::D;
+        let mut mmu = 0;
         if prot_flags & READ != 0 {
             mmu |= mmu::flags::R;
         }
@@ -82,23 +80,27 @@ pub mod prot {
     }
 }
 
-/// Page number of a page that is filled with zeroes.
-pub static mut PAGE_OF_ZEROES: MaybeUninit<PhysBox<[u8; PAGE_SIZE as usize]>> =
-    MaybeUninit::uninit();
+/// A page that is filled with zeroes.
+static mut ZEROES: *const u8 = null();
+/// Physical address of a page that is filled with zeroes.
+static mut ZEROES_PADDR: PAddrr = 0;
 
 /// Get the page that is filled with zeroes.
+#[inline(always)]
 pub fn zeroes() -> &'static [u8] {
-    unsafe { (&*&raw const PAGE_OF_ZEROES).assume_init_ref().deref() }
+    unsafe { &*core::ptr::slice_from_raw_parts(ZEROES, PAGE_SIZE as usize) }
 }
 
 /// Get the physical address of the page full of zeroes.
+#[inline(always)]
 pub fn zeroes_paddr() -> PAddrr {
-    unsafe { (&*&raw const PAGE_OF_ZEROES).assume_init_ref().paddr() }
+    unsafe { ZEROES_PADDR }
 }
 
 /// Get a mappable page for the page full of zeroes.
+#[inline(always)]
 pub fn zeroes_page() -> MappablePage {
-    unsafe { MappablePage::new(zeroes_paddr(), false, false) }
+    unsafe { MappablePage::new(zeroes_paddr(), false, false, false) }
 }
 
 unsafe extern "C" {
@@ -218,13 +220,30 @@ pub unsafe fn init() {
             )
             .expect("Failed to create HHDM");
 
+        // Page of zeroes.
+        ZEROES_PADDR = pmm::page_alloc(0, pmm::PageUsage::KernelAnon)
+            .expect("Failed to allocate page of zeroes");
+        (*core::ptr::slice_from_raw_parts_mut(
+            (ZEROES_PADDR + HHDM_OFFSET) as *mut u8,
+            PAGE_SIZE as usize,
+        ))
+        .fill(0);
+        ZEROES = kernel_mm
+            .map(
+                PAGE_SIZE as usize,
+                0,
+                map::SHARED,
+                prot::READ,
+                Some(Mapping {
+                    offset: 0,
+                    object: Arc::new(RawMemory::new(ZEROES_PADDR, PAGE_SIZE as usize)),
+                }),
+            )
+            .expect("Failed to map page of zeroes") as *const u8;
+
         logkf!(LogLevel::Info, "Switching to own page tables");
         mmu::init(kernel_mm.0.pmap.root());
         KERNEL_MM = MaybeUninit::new(kernel_mm);
-
-        // Page of zeroes.
-        PAGE_OF_ZEROES =
-            MaybeUninit::new(PhysBox::try_new(false, false).expect("Failed to map page of zeroes"));
     }
 }
 

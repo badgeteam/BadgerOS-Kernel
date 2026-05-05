@@ -14,12 +14,14 @@ use crate::{
 pub struct MappablePage(NonZeroUsize);
 
 impl MappablePage {
-    pub unsafe fn new(paddr: usize, refcounted: bool, writable: bool) -> Self {
+    pub unsafe fn new(paddr: usize, refcounted: bool, writable: bool, tracks_dirty: bool) -> Self {
         assert!(paddr != 0);
         assert!(paddr % PAGE_SIZE as usize == 0);
         // SAFETY: Already checked for zero with the assert above.
         Self(unsafe {
-            NonZeroUsize::new_unchecked(paddr | refcounted as usize * 2 | writable as usize)
+            NonZeroUsize::new_unchecked(
+                paddr + tracks_dirty as usize * 4 + refcounted as usize * 2 + writable as usize,
+            )
         })
     }
 
@@ -39,6 +41,10 @@ impl MappablePage {
 
     pub const fn refcounted(&self) -> bool {
         (self.0.get() & 2) != 0
+    }
+
+    pub const fn tracks_dirty(&self) -> bool {
+        (self.0.get() & 4) != 0
     }
 
     pub const fn into_paddr(self) -> PAddrr {
@@ -70,17 +76,25 @@ impl Drop for MappablePage {
 pub trait MemObject: Debug {
     /// Get the size in bytes of the object.
     /// Must be page-aligned.
-    fn len(&self) -> usize;
+    fn len(&self) -> u64;
 
     /// Try to get an existing page from the object.
     /// May spuriously return [`None`] even if the page is available.
-    fn get(&self, offset: usize) -> Option<MappablePage>;
+    fn get(&self, offset: u64) -> Option<MappablePage>;
 
     /// Allocate a new page from the object.
-    fn alloc(&self, offset: usize) -> EResult<MappablePage>;
+    fn alloc(&self, offset: u64) -> EResult<MappablePage>;
 
     /// Mark a page as being dirty.
-    fn mark_dirty(&self, offset: usize);
+    fn mark_dirty(&self, offset: u64);
+
+    /// Whether this object tracks dirtyness.
+    fn tracks_dirty(&self) -> bool;
+
+    /// Returns true if any page is currently dirty.
+    fn has_dirty_pages(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug)]
@@ -96,19 +110,23 @@ impl RawMemory {
 }
 
 impl MemObject for RawMemory {
-    fn len(&self) -> usize {
-        self.len
+    fn len(&self) -> u64 {
+        self.len as u64
     }
 
-    fn get(&self, offset: usize) -> Option<MappablePage> {
+    fn get(&self, offset: u64) -> Option<MappablePage> {
         // SAFETY: The creator of this object guaranteed that the memory is valid.
-        Some(unsafe { MappablePage::new(self.paddr + offset, false, true) })
+        Some(unsafe { MappablePage::new(self.paddr + offset as usize, false, true, false) })
     }
 
-    fn alloc(&self, offset: usize) -> EResult<MappablePage> {
+    fn alloc(&self, offset: u64) -> EResult<MappablePage> {
         // SAFETY: The creator of this object guaranteed that the memory is valid.
-        Ok(unsafe { MappablePage::new(self.paddr + offset, false, true) })
+        Ok(unsafe { MappablePage::new(self.paddr + offset as usize, false, true, false) })
     }
 
-    fn mark_dirty(&self, _offset: usize) {}
+    fn mark_dirty(&self, _offset: u64) {}
+
+    fn tracks_dirty(&self) -> bool {
+        false
+    }
 }

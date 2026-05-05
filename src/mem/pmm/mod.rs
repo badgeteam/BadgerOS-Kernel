@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: MIT
 
 use core::{
+    cell::UnsafeCell,
     ops::{Range, Sub},
-    ptr::slice_from_raw_parts_mut,
+    ptr::{NonNull, slice_from_raw_parts_mut},
     sync::atomic::{AtomicU32, AtomicUsize, Ordering},
 };
 
@@ -18,6 +19,8 @@ use crate::{
     config::PAGE_SIZE,
     mem::vmm::{self, HHDM_OFFSET},
 };
+
+use super::vmm::memobject::MemObject;
 
 mod c_api;
 pub mod phys_box;
@@ -35,8 +38,6 @@ pub enum PageUsage {
     PageTable,
     /// Contains cached data.
     Cache,
-    /// Part of a mmap'ed file.
-    Mmap,
     /// Anonymous user memory.
     UserAnon,
     /// Anonymous kernel memory.
@@ -57,8 +58,10 @@ pub struct Page {
     order: u8,
     /// Current page usage.
     usage: PageUsage,
-    // TODO: Pointer to structure that exposes where it's mapped in user virtual memory.
-    // Kernel virtual mappings need not be tracked because they are not swappable.
+    /// The memory object that this is currently part of, if any.
+    pub memobject: UnsafeCell<Option<NonNull<dyn MemObject>>>,
+    /// Offset within the memory object.
+    pub offset: UnsafeCell<u64>,
 }
 
 impl Page {
@@ -67,10 +70,10 @@ impl Page {
         unsafe {
             let vaddr = self as *const Self as usize;
             (vaddr
-                .wrapping_sub(PAGE_STRUCTS_PADDR.wrapping_mul(PAGE_SIZE as usize))
+                .wrapping_sub(PAGE_STRUCTS_PADDR)
                 .wrapping_sub(vmm::HHDM_OFFSET)
                 / size_of::<Page>())
-            .wrapping_sub(PAGE_RANGE.start)
+            .wrapping_add(PAGE_RANGE.start)
                 * PAGE_SIZE as usize
         }
     }
@@ -281,6 +284,7 @@ pub unsafe fn page_alloc(order: u8, usage: PageUsage) -> EResult<PAddrr> {
             (*page_meta).usage = usage;
             (*page_meta).order = order as u8;
             (*page_meta).refcount = AtomicU32::new(0);
+            (*page_meta).memobject.replace(None);
         }
         page_meta = page_meta.wrapping_add(1);
     }
@@ -303,7 +307,7 @@ pub unsafe fn page_alloc(order: u8, usage: PageUsage) -> EResult<PAddrr> {
             KERNEL_PAGES.fetch_add(1 << order, Ordering::Relaxed);
             USED_PAGES.fetch_add(1 << order, Ordering::Relaxed);
         }
-        PageUsage::Mmap | PageUsage::UserAnon => {
+        PageUsage::UserAnon => {
             USED_PAGES.fetch_add(1 << order, Ordering::Relaxed);
         }
     }
@@ -337,7 +341,10 @@ pub fn page_struct_base(paddr: PAddrr) -> (*mut Page, u8) {
         let order = (*meta).order();
         let shift = order + PAGE_SIZE.ilog2() as u8;
         let aligned_paddr = paddr >> shift << shift;
-        (meta.wrapping_sub(paddr.wrapping_sub(aligned_paddr) / PAGE_SIZE as usize), order)
+        (
+            meta.wrapping_sub(paddr.wrapping_sub(aligned_paddr) / PAGE_SIZE as usize),
+            order,
+        )
     }
 }
 
@@ -360,7 +367,7 @@ pub unsafe fn page_free(mut block: PAddrr, mut order: u8) {
             KERNEL_PAGES.fetch_sub(pages_freed, Ordering::Relaxed);
             USED_PAGES.fetch_sub(pages_freed, Ordering::Relaxed);
         }
-        PageUsage::Mmap | PageUsage::UserAnon => {
+        PageUsage::UserAnon => {
             USED_PAGES.fetch_sub(pages_freed, Ordering::Relaxed);
         }
     }

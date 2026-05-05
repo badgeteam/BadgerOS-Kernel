@@ -544,11 +544,11 @@ impl E2VNode {
     }
 
     /// Allocate space for a new directory entry.
-    fn alloc_dirent(&mut self, arc_self: &Arc<VNode>, length: u16) -> EResult<(u64, u16)> {
-        let e2fs = arc_self.vfs.get_ops_as();
+    fn alloc_dirent(&mut self, vnode_self: &VNode, length: u16) -> EResult<(u64, u16)> {
+        let e2fs = vnode_self.vfs.get_ops_as();
 
         let mut res = None;
-        self.iter_dirents(&arc_self.vfs, &mut |dent, offset, _name| try {
+        self.iter_dirents(&vnode_self.vfs, &mut |dent, offset, _name| try {
             let min_record_len = dent.name_len.div_ceil(4) as u16 * 4 + 8;
             if dent.record_len - min_record_len >= length {
                 self.writek_impl(
@@ -570,24 +570,24 @@ impl E2VNode {
         }
 
         let pos = self.size;
-        self.resize(arc_self, pos + (1u64 << e2fs.block_size_exp))?;
+        self.resize(vnode_self, pos + (1u64 << e2fs.block_size_exp))?;
         Ok((pos, 1u16 << e2fs.block_size_exp))
     }
 
     /// Create a new directory entry.
     fn create_dirent(
         &mut self,
-        arc_self: &Arc<VNode>,
+        vnode_self: &VNode,
         ino: NonZeroU32,
         name: &[u8],
         type_: FileType,
     ) -> EResult<u64> {
-        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
+        let e2fs = vnode_self.vfs.get_ops_as::<E2Fs>();
         if name.len() > 255 {
             return Err(Errno::ENAMETOOLONG);
         }
         let record_len = (8 + name.len().div_ceil(4) * 4) as u16;
-        let (offset, record_len) = self.alloc_dirent(arc_self, record_len)?;
+        let (offset, record_len) = self.alloc_dirent(vnode_self, record_len)?;
 
         let dent = LinkedDent {
             ino: ino.into(),
@@ -759,18 +759,18 @@ impl E2VNode {
 }
 
 impl VNodeOps for E2VNode {
-    fn write(&self, arc_self: &Arc<VNode>, offset: u64, wdata: UserSlice<'_, u8>) -> EResult<()> {
-        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
+    fn write(&self, vnode_self: &VNode, offset: u64, wdata: UserSlice<'_, u8>) -> EResult<()> {
+        let e2fs = vnode_self.vfs.get_ops_as::<E2Fs>();
         self.write_impl(&e2fs, offset, wdata)
     }
 
-    fn read(&self, arc_self: &Arc<VNode>, offset: u64, rdata: UserSliceMut<'_, u8>) -> EResult<()> {
-        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
+    fn read(&self, vnode_self: &VNode, offset: u64, rdata: UserSliceMut<'_, u8>) -> EResult<()> {
+        let e2fs = vnode_self.vfs.get_ops_as::<E2Fs>();
         self.read_impl(&e2fs, offset, rdata)
     }
 
-    fn resize(&mut self, arc_self: &Arc<VNode>, new_size: u64) -> EResult<()> {
-        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
+    fn resize(&mut self, vnode_self: &VNode, new_size: u64) -> EResult<()> {
+        let e2fs = vnode_self.vfs.get_ops_as::<E2Fs>();
         let old_size = self.size;
 
         if new_size > old_size {
@@ -815,10 +815,10 @@ impl VNodeOps for E2VNode {
         Ok(())
     }
 
-    fn find_dirent(&self, arc_self: &Arc<VNode>, name: &[u8]) -> EResult<Dirent> {
-        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
+    fn find_dirent(&self, vnode_self: &VNode, name: &[u8]) -> EResult<Dirent> {
+        let e2fs = vnode_self.vfs.get_ops_as::<E2Fs>();
         let mut res = Err(Errno::ENOENT);
-        self.iter_dirents(&arc_self.vfs, &mut |dent, off, dent_name| {
+        self.iter_dirents(&vnode_self.vfs, &mut |dent, off, dent_name| {
             if *name == *dent_name {
                 try {
                     let type_ = e2fs.get_inode_type(dent)?;
@@ -840,12 +840,12 @@ impl VNodeOps for E2VNode {
 
     fn get_dirents(
         &self,
-        arc_self: &Arc<VNode>,
+        vnode_self: &VNode,
         mut offset: u64,
         buffer: &mut DentBuffer<'_>,
     ) -> EResult<u64> {
-        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
-        self.iter_dirents(&arc_self.vfs, &mut |dent, off, name| {
+        let e2fs = vnode_self.vfs.get_ops_as::<E2Fs>();
+        self.iter_dirents(&vnode_self.vfs, &mut |dent, off, name| {
             if off < offset {
                 Ok(true)
             } else {
@@ -868,12 +868,12 @@ impl VNodeOps for E2VNode {
 
     fn unlink(
         &mut self,
-        arc_self: &Arc<VNode>,
+        vnode_self: &VNode,
         name: &[u8],
         mode: UnlinkMode,
         unlinked_vnode: Option<Arc<VNode>>,
     ) -> EResult<()> {
-        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
+        let e2fs = vnode_self.vfs.get_ops_as::<E2Fs>();
 
         // Get E2VNode from unlinked_vnode, or open temporarily if not present.
         // This will be used to decrease the links count later.
@@ -883,7 +883,7 @@ impl VNodeOps for E2VNode {
         };
         let unlinked_ops = unlinked_guard.as_mut().map(|x| &mut x.ops);
         let mut tmp_ops = if unlinked_ops.is_none() {
-            let dent = self.find_dirent(arc_self, name)?;
+            let dent = self.find_dirent(vnode_self, name)?;
             Some(e2fs.open_impl(unsafe { NonZeroU32::new_unchecked(dent.ino as u32) })?)
         } else {
             None
@@ -900,7 +900,7 @@ impl VNodeOps for E2VNode {
                 return Err(Errno::EISDIR);
             }
             // Unlinked directories must be empty.
-            unlinked_ops.iter_dirents(&arc_self.vfs, &mut |_dent, _off, name| {
+            unlinked_ops.iter_dirents(&vnode_self.vfs, &mut |_dent, _off, name| {
                 if *name == *b"." || *name == *b".." {
                     Ok(true)
                 } else {
@@ -909,15 +909,15 @@ impl VNodeOps for E2VNode {
             })?;
 
             // Remove `.` and `..` because `unlink_impl` doesn't do this automatically.
-            unlinked_ops.unlink_impl(&arc_self.vfs, b".", None)?;
-            unlinked_ops.unlink_impl(&arc_self.vfs, b"..", Some(self))?;
+            unlinked_ops.unlink_impl(&vnode_self.vfs, b".", None)?;
+            unlinked_ops.unlink_impl(&vnode_self.vfs, b"..", Some(self))?;
             debug_assert!(unlinked_ops.inode.unintr_lock_shared().nlink == 1);
         } else if mode == UnlinkMode::DirOnly {
             return Err(Errno::ENOTDIR);
         }
 
         // Inode is now ready to be unlinked.
-        self.unlink_impl(&arc_self.vfs, name, Some(unlinked_ops))?;
+        self.unlink_impl(&vnode_self.vfs, name, Some(unlinked_ops))?;
 
         // Save nlink here so the borrow of unlinked_guard/tmp_ops via unlinked_ops ends.
         let nlink = unlinked_ops.inode.lock_shared()?.nlink;
@@ -941,8 +941,8 @@ impl VNodeOps for E2VNode {
         Ok(())
     }
 
-    fn link(&mut self, arc_self: &Arc<VNode>, name: &[u8], vnode: &VNode) -> EResult<()> {
-        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
+    fn link(&mut self, vnode_self: &VNode, name: &[u8], vnode: &VNode) -> EResult<()> {
+        let e2fs = vnode_self.vfs.get_ops_as::<E2Fs>();
 
         // Increase the inode's links count.
         let vnode_ops = vnode.get_ops_as::<E2VNode>();
@@ -955,7 +955,7 @@ impl VNodeOps for E2VNode {
 
         // Create a new dirent for the inode.
         self.create_dirent(
-            arc_self,
+            vnode_self,
             NonZeroU32::new(vnode.ino as u32).unwrap(),
             name,
             vnode.type_.into(),
@@ -965,12 +965,12 @@ impl VNodeOps for E2VNode {
 
     fn make_file(
         &mut self,
-        arc_self: &Arc<VNode>,
+        vnode_self: &VNode,
         name: &[u8],
         spec: MakeFileSpec,
     ) -> EResult<(Dirent, Box<dyn VNodeOps>)> {
         // Allocate an empty inode.
-        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
+        let e2fs = vnode_self.vfs.get_ops_as::<E2Fs>();
         let (ino, inode_offset) = e2fs.alloc_inode(self.group(&e2fs))?;
 
         // Create empty inode.
@@ -1072,7 +1072,7 @@ impl VNodeOps for E2VNode {
             }
 
             // Create the dirent for this new file.
-            dirent_off = self.create_dirent(arc_self, ino, name, spec.node_type().into())?;
+            dirent_off = self.create_dirent(vnode_self, ino, name, spec.node_type().into())?;
         };
         if let Err(x) = res {
             let _ = e2fs.free_inode(ino);
@@ -1102,15 +1102,10 @@ impl VNodeOps for E2VNode {
         Ok((dirent, ops))
     }
 
-    fn rename(
-        &mut self,
-        arc_self: &Arc<VNode>,
-        old_name: &[u8],
-        new_name: &[u8],
-    ) -> EResult<Dirent> {
+    fn rename(&mut self, vnode_self: &VNode, old_name: &[u8], new_name: &[u8]) -> EResult<Dirent> {
         // Find source dirent.
         let mut found = None;
-        self.iter_dirents(&arc_self.vfs, &mut |dent, offset, dent_name| {
+        self.iter_dirents(&vnode_self.vfs, &mut |dent, offset, dent_name| {
             if *old_name == *dent_name {
                 found = Some((*dent, offset));
                 Ok(false)
@@ -1122,7 +1117,7 @@ impl VNodeOps for E2VNode {
 
         // Create new dirent.
         self.create_dirent(
-            arc_self,
+            vnode_self,
             NonZeroU32::new(found.ino).ok_or(Errno::EIO)?,
             new_name,
             found.file_type.try_into()?,
@@ -1130,7 +1125,7 @@ impl VNodeOps for E2VNode {
 
         // Delete old dirent.
         self.delete_dirent(
-            &arc_self.vfs,
+            &vnode_self.vfs,
             old_name,
             Some(NonZeroU32::new(found.ino).unwrap()),
         )?;
@@ -1144,7 +1139,7 @@ impl VNodeOps for E2VNode {
         })
     }
 
-    fn readlink(&self, arc_self: &Arc<VNode>) -> EResult<Box<[u8]>> {
+    fn readlink(&self, vnode_self: &VNode) -> EResult<Box<[u8]>> {
         if self.size > NAME_MAX as u64 {
             return Err(Errno::ENAMETOOLONG);
         }
@@ -1158,13 +1153,13 @@ impl VNodeOps for E2VNode {
             }
             link.copy_from_slice(&block_bytes[..self.size as usize]);
         } else {
-            self.read(arc_self, 0, UserSliceMut::new_kernel_mut(&mut link))?;
+            self.read(vnode_self, 0, UserSliceMut::new_kernel_mut(&mut link))?;
         }
         Ok(link.into())
     }
 
-    fn stat(&self, arc_self: &Arc<VNode>) -> EResult<Stat> {
-        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
+    fn stat(&self, vnode_self: &VNode) -> EResult<Stat> {
+        let e2fs = vnode_self.vfs.get_ops_as::<E2Fs>();
         let inode = self.inode.lock_shared()?;
         Ok(Stat {
             dev: e2fs
@@ -1201,16 +1196,16 @@ impl VNodeOps for E2VNode {
         u32::from(self.ino) as u64
     }
 
-    fn get_size(&self, _arc_self: &Arc<VNode>) -> u64 {
+    fn get_size(&self, _vnode_self: &VNode) -> u64 {
         self.size
     }
 
-    fn get_type(&self, _arc_self: &Arc<VNode>) -> NodeType {
+    fn get_type(&self, _vnode_self: &VNode) -> NodeType {
         self.type_
     }
 
-    fn sync(&self, arc_self: &Arc<VNode>) -> EResult<()> {
-        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
+    fn sync(&self, vnode_self: &VNode) -> EResult<()> {
+        let e2fs = vnode_self.vfs.get_ops_as::<E2Fs>();
         e2fs.media
             .sync(self.inode_offset, size_of::<Inode>() as u64)?;
         self.iter_blocks(&e2fs, 0, self.size, false, &mut |_fileoff, diskoff, len| {
@@ -1631,17 +1626,17 @@ impl VfsOps for E2Fs {
         self.block_size_exp as u8
     }
 
-    fn open_root(&self, _arc_self: &Arc<Vfs>) -> EResult<Box<dyn VNodeOps>> {
+    fn open_root(&self, _vnode_self: &Arc<Vfs>) -> EResult<Box<dyn VNodeOps>> {
         self.open_impl(NonZeroU32::new(ROOT_INO).unwrap())
     }
 
-    fn open(&self, _arc_self: &Arc<Vfs>, dirent: &Dirent) -> EResult<Box<dyn VNodeOps>> {
+    fn open(&self, _vnode_self: &Arc<Vfs>, dirent: &Dirent) -> EResult<Box<dyn VNodeOps>> {
         self.open_impl(NonZeroU32::new(dirent.ino as u32).ok_or(Errno::EIO)?)
     }
 
     fn rename(
         &self,
-        arc_self: &Arc<Vfs>,
+        vnode_self: &Arc<Vfs>,
         _src_dir: &Arc<VNode>,
         src_name: &[u8],
         src_mutexinner: &mut VNodeMtxInner,
@@ -1658,7 +1653,7 @@ impl VfsOps for E2Fs {
 
         // Find source dirent.
         let mut found = None;
-        src_ops.iter_dirents(&arc_self, &mut |dent, offset, dent_name| {
+        src_ops.iter_dirents(&vnode_self, &mut |dent, offset, dent_name| {
             if *src_name == *dent_name {
                 found = Some((*dent, offset));
                 Ok(false)
@@ -1678,7 +1673,7 @@ impl VfsOps for E2Fs {
 
         // Delete old dirent.
         src_ops.delete_dirent(
-            &arc_self,
+            &vnode_self,
             src_name,
             Some(NonZeroU32::new(found.ino).unwrap()),
         )?;

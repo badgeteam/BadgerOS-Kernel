@@ -66,19 +66,19 @@ struct FatVNode {
 
 impl FatVNode {
     /// Write data to the file.
-    pub fn writek(&self, arc_self: &Arc<VNode>, offset: u64, wdata: &[u8]) -> EResult<()> {
-        self.write(arc_self, offset, UserSlice::new_kernel(wdata))
+    pub fn writek(&self, vnode_self: &VNode, offset: u64, wdata: &[u8]) -> EResult<()> {
+        self.write(vnode_self, offset, UserSlice::new_kernel(wdata))
     }
 
     /// Read data from the file.
-    pub fn readk(&self, arc_self: &Arc<VNode>, offset: u64, rdata: &mut [u8]) -> EResult<()> {
-        self.read(arc_self, offset, UserSliceMut::new_kernel_mut(rdata))
+    pub fn readk(&self, vnode_self: &VNode, offset: u64, rdata: &mut [u8]) -> EResult<()> {
+        self.read(vnode_self, offset, UserSliceMut::new_kernel_mut(rdata))
     }
 
     /// Get the on-disk offset of some byte of the file.
     /// Primarily used for dirents.
-    fn disk_offset_of(&self, arc_self: &Arc<VNode>, offset: u32) -> u64 {
-        let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
+    fn disk_offset_of(&self, vnode_self: &VNode, offset: u32) -> u64 {
+        let fatfs = vnode_self.vfs.get_ops_as::<FatFs>();
         match &self.storage {
             FatFileStorage::Root16(x) => x + offset as u64,
             FatFileStorage::Clusters(chain) => {
@@ -93,11 +93,11 @@ impl FatVNode {
     #[inline(always)]
     fn read_lfn(
         &self,
-        arc_self: &Arc<VNode>,
+        vnode_self: &VNode,
         mut offset: u32,
         lfn_out: &mut impl StringLike,
     ) -> EResult<bool> {
-        let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
+        let fatfs = vnode_self.vfs.get_ops_as::<FatFs>();
         if !fatfs.allow_lfn {
             return Ok(false);
         }
@@ -106,7 +106,7 @@ impl FatVNode {
         while offset > 0 {
             offset -= 32;
             let mut dirent = [0u8; 32];
-            self.readk(arc_self, offset as u64, &mut dirent)?;
+            self.readk(vnode_self, offset as u64, &mut dirent)?;
             let mut dirent = LfnEnt::from(dirent);
             if dirent.attr != attr::LONG_NAME {
                 break;
@@ -115,14 +115,14 @@ impl FatVNode {
 
             for &char in dirent.get_name().iter() {
                 if dirent.order & 0x3f != order {
-                    arc_self.vfs.check_eio_failed();
+                    vnode_self.vfs.check_eio_failed();
                     // Invalid LFN; ignore it.
                     return Ok(false);
                 }
                 if char == 0 {
                     if dirent.order & 0x40 != 0x40 {
                         // Invalid LFN; ignore it.
-                        arc_self.vfs.check_eio_failed();
+                        vnode_self.vfs.check_eio_failed();
                         return Ok(false);
                     }
                     break;
@@ -149,19 +149,19 @@ impl FatVNode {
     /// Stops iteration if `dirent_func` return `Err(_)` or `Ok(false)`.
     fn iter_dirents(
         &self,
-        arc_self: &Arc<VNode>,
+        vnode_self: &VNode,
         read_lfn: bool,
         mut offset: u32,
         dirent_func: &mut dyn FnMut(u32, &Dirent, &str, Option<&str>) -> EResult<bool>,
     ) -> EResult<()> {
-        let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
+        let fatfs = vnode_self.vfs.get_ops_as::<FatFs>();
         let mut lfn_buf = StaticString::<NAME_MAX>::new();
 
         // Iterate over raw directory entries, only calling `dirent_func` once for each valid dirent.
         // If the LFN name ends up being too long, then the 8.3 format name is used instead.
         while offset < self.len {
             let mut raw_dirent = [0u8; 32];
-            self.readk(arc_self, offset as u64, &mut raw_dirent)?;
+            self.readk(vnode_self, offset as u64, &mut raw_dirent)?;
             let raw_dirent = Dirent::from(raw_dirent);
             if raw_dirent.name[0] == 0 {
                 // No more allocated dirents.
@@ -175,7 +175,7 @@ impl FatVNode {
                 // Try to read preceding LFN dirents.
                 let use_lfn = if read_lfn {
                     lfn_buf.clear();
-                    self.read_lfn(arc_self, offset, &mut lfn_buf)?
+                    self.read_lfn(vnode_self, offset, &mut lfn_buf)?
                 } else {
                     false
                 };
@@ -191,7 +191,7 @@ impl FatVNode {
                         fatfs.is_valid_short_char(unsafe { char::from_u32_unchecked(x as u32) })
                     })
                 {
-                    arc_self.vfs.check_eio_failed();
+                    vnode_self.vfs.check_eio_failed();
                 } else if !(dirent_func(
                     offset,
                     &dirent,
@@ -236,14 +236,14 @@ impl FatVNode {
     }
 
     /// Delete a dirent (doesn't mark clusters as free).
-    fn delete_dirent(&mut self, arc_self: &Arc<VNode>, dirent_off: u32) -> EResult<()> {
+    fn delete_dirent(&mut self, vnode_self: &VNode, dirent_off: u32) -> EResult<()> {
         debug_assert!(dirent_off % 32 == 0);
         debug_assert!(dirent_off < self.len);
 
         // Check whether this is the last dirent.
         let is_last = if dirent_off + 32 < self.len {
             let mut tmp = [0u8];
-            self.readk(arc_self, dirent_off as u64 + 32, &mut tmp)?;
+            self.readk(vnode_self, dirent_off as u64 + 32, &mut tmp)?;
             tmp[0] == 0
         } else {
             false
@@ -251,7 +251,7 @@ impl FatVNode {
 
         // Mark this dirent as free.
         let erase_val = [if is_last { 0u8 } else { 0xe5u8 }];
-        self.writek(arc_self, dirent_off as u64, &erase_val)?;
+        self.writek(vnode_self, dirent_off as u64, &erase_val)?;
 
         // Mark preceding LFN entries as free.
         let mut lfn_off = dirent_off;
@@ -260,7 +260,7 @@ impl FatVNode {
 
             // Read the previous dirent.
             let mut raw_lfn = [0u8; 32];
-            self.readk(arc_self, lfn_off as u64, &mut raw_lfn)?;
+            self.readk(vnode_self, lfn_off as u64, &mut raw_lfn)?;
             let mut lfn = LfnEnt::from(raw_lfn);
             lfn.from_le();
 
@@ -270,7 +270,7 @@ impl FatVNode {
             }
 
             // If it is an LFN entry, erase it.
-            self.writek(arc_self, lfn_off as u64, &erase_val)?;
+            self.writek(vnode_self, lfn_off as u64, &erase_val)?;
         }
 
         Ok(())
@@ -278,8 +278,8 @@ impl FatVNode {
 
     /// Find a range of free dirents or try to grow to fit.
     /// Returns the offset of the first dirent in the range.
-    fn alloc_dirents(&mut self, arc_self: &Arc<VNode>, count: u32) -> EResult<u32> {
-        let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
+    fn alloc_dirents(&mut self, vnode_self: &VNode, count: u32) -> EResult<u32> {
+        let fatfs = vnode_self.vfs.get_ops_as::<FatFs>();
 
         // Look for an existing gap large enough.
         let cur_cap = self.len / 32;
@@ -287,7 +287,7 @@ impl FatVNode {
         let mut found_count = 0u32;
         for i in 0..cur_cap {
             let mut tmp = [0xffu8];
-            self.readk(arc_self, i as u64 * 32, &mut tmp)?;
+            self.readk(vnode_self, i as u64 * 32, &mut tmp)?;
             if tmp[0] == 0xe5 {
                 found_count += 1;
                 last_free = i;
@@ -316,7 +316,7 @@ impl FatVNode {
         let cluster_size = 1u32 << fatfs.cluster_size_exp;
         let clusters_needed = cluster_size.div_ceil(count - (cur_cap - last_free));
         self.resize(
-            arc_self,
+            vnode_self,
             self.len
                 .checked_add(clusters_needed.div_ceil(cluster_size))
                 .ok_or(Errno::ENOSPC)? as u64,
@@ -326,9 +326,9 @@ impl FatVNode {
     }
 
     /// Determine whether a SFN already exists in this dir.
-    fn sfn_is_duplicate(&self, arc_self: &Arc<VNode>, name: &[u8; 11]) -> EResult<bool> {
+    fn sfn_is_duplicate(&self, vnode_self: &VNode, name: &[u8; 11]) -> EResult<bool> {
         let mut dup = false;
-        self.iter_dirents(arc_self, false, 0, &mut |_off, ent, _sfn, _lfn| {
+        self.iter_dirents(vnode_self, false, 0, &mut |_off, ent, _sfn, _lfn| {
             if ent.name == *name {
                 dup = true;
             }
@@ -341,14 +341,14 @@ impl FatVNode {
     /// Returns the on-disk offset of the dirent.
     fn create_dirent(
         &mut self,
-        arc_self: &Arc<VNode>,
+        vnode_self: &VNode,
         name: &str,
         is_dir: bool,
         is_rdonly: bool,
         first_cluster: Option<u32>,
         size: u32,
     ) -> EResult<u32> {
-        let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
+        let fatfs = vnode_self.vfs.get_ops_as::<FatFs>();
         debug_assert!(name == FatFs::trim_name(name).unwrap());
 
         // Convert UTF-8 to 16-bit unicode string.
@@ -372,7 +372,7 @@ impl FatVNode {
         let mut use_lfn = fatfs.long_to_short_name(lfn, &mut sfn, &mut attr2);
 
         // Increment the number suffix on the short name while it already exists.
-        while self.sfn_is_duplicate(arc_self, &sfn)? {
+        while self.sfn_is_duplicate(vnode_self, &sfn)? {
             use_lfn = true;
             FatFs::increment_sfn_number(&mut sfn)?;
         }
@@ -380,7 +380,7 @@ impl FatVNode {
         // Try to allocate dirents to store these.
         let lfn_ent_count = (lfn.len() as u32 + 12) / 13;
         let ent_count = 1 + use_lfn as u32 * lfn_ent_count;
-        let free_range = self.alloc_dirents(arc_self, ent_count as u32)?;
+        let free_range = self.alloc_dirents(vnode_self, ent_count as u32)?;
         let dirent_off = free_range + 32 * (ent_count - 1);
 
         // Format the current date.
@@ -418,7 +418,7 @@ impl FatVNode {
             .name
             .iter()
             .fold(0u8, |sum, &byte| sum.rotate_right(1).wrapping_add(byte));
-        self.writek(arc_self, dirent_off as u64, &dirent_bytes)?;
+        self.writek(vnode_self, dirent_off as u64, &dirent_bytes)?;
 
         if use_lfn {
             // Write the preceding LFN entries.
@@ -447,7 +447,7 @@ impl FatVNode {
                 // Write the new LFN entry.
                 lfn_ent.to_le();
                 let lfn_bytes: [u8; 32] = lfn_ent.into();
-                self.writek(arc_self, (dirent_off - i * 32 - 32) as u64, &lfn_bytes)?;
+                self.writek(vnode_self, (dirent_off - i * 32 - 32) as u64, &lfn_bytes)?;
             }
         }
 
@@ -457,11 +457,11 @@ impl FatVNode {
     /// Implementation of [`VNodeOps::make_file`].
     fn make_file_impl(
         &mut self,
-        arc_self: &Arc<VNode>,
+        vnode_self: &VNode,
         name: &str,
         first_cluster: Option<u32>,
     ) -> EResult<(super::Dirent, Box<dyn VNodeOps>)> {
-        let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
+        let fatfs = vnode_self.vfs.get_ops_as::<FatFs>();
 
         // Format the current date.
         let now = Timespec::now();
@@ -529,7 +529,7 @@ impl FatVNode {
 
         // Make the new dirent.
         let dirent_off = self.create_dirent(
-            arc_self,
+            vnode_self,
             name,
             first_cluster.is_some(),
             false,
@@ -545,17 +545,17 @@ impl FatVNode {
         let ops = Box::try_new(FatVNode {
             storage: FatFileStorage::Clusters(chain),
             len: 0,
-            dirent_disk_off: Mutex::new(Some(self.disk_offset_of(arc_self, dirent_off))),
+            dirent_disk_off: Mutex::new(Some(self.disk_offset_of(vnode_self, dirent_off))),
             is_dir: first_cluster.is_some(),
         })?;
-        let dirent = self.find_dirent(arc_self, name.as_bytes())?;
+        let dirent = self.find_dirent(vnode_self, name.as_bytes())?;
         Ok((dirent, Box::<dyn VNodeOps>::from(ops)))
     }
 }
 
 impl VNodeOps for FatVNode {
-    fn write(&self, arc_self: &Arc<VNode>, offset: u64, wdata: UserSlice<'_, u8>) -> EResult<()> {
-        let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
+    fn write(&self, vnode_self: &VNode, offset: u64, wdata: UserSlice<'_, u8>) -> EResult<()> {
+        let fatfs = vnode_self.vfs.get_ops_as::<FatFs>();
         if offset.checked_add(wdata.len() as u64).ok_or(Errno::EIO)? > self.len as u64 {
             return Err(Errno::EIO);
         }
@@ -565,8 +565,8 @@ impl VNodeOps for FatVNode {
         }
     }
 
-    fn read(&self, arc_self: &Arc<VNode>, offset: u64, rdata: UserSliceMut<'_, u8>) -> EResult<()> {
-        let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
+    fn read(&self, vnode_self: &VNode, offset: u64, rdata: UserSliceMut<'_, u8>) -> EResult<()> {
+        let fatfs = vnode_self.vfs.get_ops_as::<FatFs>();
         if offset.checked_add(rdata.len() as u64).ok_or(Errno::EIO)? > self.len as u64 {
             return Err(Errno::EIO);
         }
@@ -576,10 +576,10 @@ impl VNodeOps for FatVNode {
         }
     }
 
-    fn resize(&mut self, arc_self: &Arc<VNode>, new_size: u64) -> EResult<()> {
+    fn resize(&mut self, vnode_self: &VNode, new_size: u64) -> EResult<()> {
         let old_size = self.len;
         let new_size = TryInto::<u32>::try_into(new_size).map_err(|_| Errno::ENOSPC)?;
-        let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
+        let fatfs = vnode_self.vfs.get_ops_as::<FatFs>();
         let mut new_clusters =
             ((new_size + (1 << fatfs.cluster_size_exp) - 1) >> fatfs.cluster_size_exp) as u32;
         let dirent_disk_offset = self.dirent_disk_off.lock_shared()?;
@@ -647,7 +647,7 @@ impl VNodeOps for FatVNode {
 
         self.len = new_size;
         if let Some(dirent_disk_offset) = *dirent_disk_offset
-            && arc_self.type_ == NodeType::Regular
+            && vnode_self.type_ == NodeType::Regular
         {
             // Update length, but only for regular files.
             let len = new_size.to_le_bytes();
@@ -660,7 +660,7 @@ impl VNodeOps for FatVNode {
             let mut offset = old_size;
             while offset < new_size {
                 let len = zeroes.len().min((new_size - offset) as usize);
-                self.writek(arc_self, offset as u64, &zeroes[..len])?;
+                self.writek(vnode_self, offset as u64, &zeroes[..len])?;
                 offset += len as u32;
             }
         }
@@ -668,12 +668,12 @@ impl VNodeOps for FatVNode {
         Ok(())
     }
 
-    fn find_dirent(&self, arc_self: &Arc<VNode>, name: &[u8]) -> EResult<super::Dirent> {
+    fn find_dirent(&self, vnode_self: &VNode, name: &[u8]) -> EResult<super::Dirent> {
         let name = FatFs::trim_name_bytes(name);
         let mut res = Err(Errno::ENOENT);
         let res_ptr = &mut res;
-        self.iter_dirents(arc_self, true, 0, &mut |off, dent, sfn, lfn| {
-            let disk_off = self.disk_offset_of(arc_self, off);
+        self.iter_dirents(vnode_self, true, 0, &mut |off, dent, sfn, lfn| {
+            let disk_off = self.disk_offset_of(vnode_self, off);
             if let Some(lfn) = lfn
                 && FatFs::name_equals(lfn.as_bytes(), name)
             {
@@ -691,17 +691,17 @@ impl VNodeOps for FatVNode {
 
     fn get_dirents(
         &self,
-        arc_self: &Arc<VNode>,
+        vnode_self: &VNode,
         offset: u64,
         buffer: &mut DentBuffer<'_>,
     ) -> EResult<u64> {
         let mut offset = offset as u32;
         offset -= offset % 32;
-        self.iter_dirents(arc_self, true, offset, &mut |off, dent, sfn, lfn| {
+        self.iter_dirents(vnode_self, true, offset, &mut |off, dent, sfn, lfn| {
             if off < offset {
                 Ok(true)
             } else {
-                let disk_off = self.disk_offset_of(arc_self, off);
+                let disk_off = self.disk_offset_of(vnode_self, off);
                 let fits = Self::convert_dirent(disk_off, off, dent, lfn.unwrap_or(sfn).as_bytes())
                     .and_then(|x| buffer.push(x))?;
                 if fits {
@@ -715,13 +715,13 @@ impl VNodeOps for FatVNode {
 
     fn unlink(
         &mut self,
-        arc_self: &Arc<VNode>,
+        vnode_self: &VNode,
         name: &[u8],
         mode: UnlinkMode,
         unlinked_vnode: Option<Arc<VNode>>,
     ) -> EResult<()> {
-        let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
-        let ent = self.find_dirent(arc_self, name)?;
+        let fatfs = vnode_self.vfs.get_ops_as::<FatFs>();
+        let ent = self.find_dirent(vnode_self, name)?;
 
         // Get the FAT dirent.
         let mut fat_ent = [0u8; size_of::<Dirent>()];
@@ -731,7 +731,7 @@ impl VNodeOps for FatVNode {
         let first_cluster =
             ((fat_ent.first_cluster_hi as u32) << 16) | (fat_ent.first_cluster_lo as u32);
         let mut chain = if let Some(first_cluster) = first_cluster.checked_sub(2) {
-            Some(fatfs.read_chain(&arc_self.vfs, first_cluster)?)
+            Some(fatfs.read_chain(&vnode_self.vfs, first_cluster)?)
         } else {
             None
         };
@@ -786,22 +786,22 @@ impl VNodeOps for FatVNode {
             }
         }
 
-        self.delete_dirent(arc_self, ent.dirent_off as u32)
+        self.delete_dirent(vnode_self, ent.dirent_off as u32)
     }
 
-    fn link(&mut self, _arc_self: &Arc<VNode>, _name: &[u8], _inode: &VNode) -> EResult<()> {
+    fn link(&mut self, _vnode_self: &VNode, _name: &[u8], _inode: &VNode) -> EResult<()> {
         Err(Errno::EPERM)
     }
 
     fn make_file(
         &mut self,
-        arc_self: &Arc<VNode>,
+        vnode_self: &VNode,
         name: &[u8],
         spec: MakeFileSpec,
     ) -> EResult<(super::Dirent, Box<dyn VNodeOps>)> {
         let name = FatFs::trim_name(str::from_utf8(name).map_err(|_| Errno::EINVAL)?)
             .ok_or(Errno::ENOENT)?;
-        let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
+        let fatfs = vnode_self.vfs.get_ops_as::<FatFs>();
 
         let first_cluster = match spec {
             MakeFileSpec::Directory => Some({
@@ -816,7 +816,7 @@ impl VNodeOps for FatVNode {
             _ => return Err(Errno::EPERM),
         };
 
-        let mut res = self.make_file_impl(arc_self, name, first_cluster);
+        let mut res = self.make_file_impl(vnode_self, name, first_cluster);
         if let Some(cluster) = first_cluster
             && res.is_err()
         {
@@ -831,7 +831,7 @@ impl VNodeOps for FatVNode {
 
     fn rename(
         &mut self,
-        arc_self: &Arc<VNode>,
+        vnode_self: &VNode,
         old_name: &[u8],
         new_name: &[u8],
     ) -> EResult<super::Dirent> {
@@ -840,7 +840,7 @@ impl VNodeOps for FatVNode {
 
         // Find the old dirent.
         let mut old_dent = None;
-        self.iter_dirents(arc_self, true, 0, &mut |off, dent, sfn, lfn| {
+        self.iter_dirents(vnode_self, true, 0, &mut |off, dent, sfn, lfn| {
             if FatFs::name_equals(old_name, lfn.unwrap_or(sfn).as_bytes()) {
                 old_dent = Some((off, *dent));
                 Ok(false)
@@ -851,11 +851,11 @@ impl VNodeOps for FatVNode {
         let (old_dent_off, old_dent) = old_dent.ok_or(Errno::ENOENT)?;
 
         // Replace the dirent.
-        self.delete_dirent(arc_self, old_dent_off)?;
+        self.delete_dirent(vnode_self, old_dent_off)?;
         let first_cluster =
             ((old_dent.first_cluster_hi as u32) << 16) + old_dent.first_cluster_lo as u32;
         let new_dent_off = self.create_dirent(
-            arc_self,
+            vnode_self,
             new_name,
             old_dent.attr & attr::DIRECTORY != 0,
             old_dent.attr & attr::READ_ONLY != 0,
@@ -865,11 +865,11 @@ impl VNodeOps for FatVNode {
 
         // New dirent conv.
         let mut new_dent = [0u8; 32];
-        self.readk(arc_self, new_dent_off as u64, &mut new_dent)?;
+        self.readk(vnode_self, new_dent_off as u64, &mut new_dent)?;
         let mut new_dent = Dirent::from(new_dent);
         new_dent.from_le();
         let dirent = Self::convert_dirent(
-            self.disk_offset_of(arc_self, new_dent_off),
+            self.disk_offset_of(vnode_self, new_dent_off),
             new_dent_off,
             &new_dent,
             new_name.as_bytes(),
@@ -878,12 +878,12 @@ impl VNodeOps for FatVNode {
         Ok(dirent)
     }
 
-    fn readlink(&self, _arc_self: &Arc<VNode>) -> EResult<Box<[u8]>> {
+    fn readlink(&self, _vnode_self: &VNode) -> EResult<Box<[u8]>> {
         Err(Errno::EINVAL)
     }
 
-    fn stat(&self, arc_self: &Arc<VNode>) -> EResult<Stat> {
-        let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
+    fn stat(&self, vnode_self: &VNode) -> EResult<Stat> {
+        let fatfs = vnode_self.vfs.get_ops_as::<FatFs>();
         let guard = self.dirent_disk_off.lock_shared()?;
         let epoch = Utc.timestamp_nanos(0);
 
@@ -974,11 +974,11 @@ impl VNodeOps for FatVNode {
         unimplemented!()
     }
 
-    fn get_size(&self, _arc_self: &Arc<VNode>) -> u64 {
+    fn get_size(&self, _vnode_self: &VNode) -> u64 {
         self.len as u64
     }
 
-    fn get_type(&self, _arc_self: &Arc<VNode>) -> NodeType {
+    fn get_type(&self, _vnode_self: &VNode) -> NodeType {
         if self.is_dir {
             NodeType::Directory
         } else {
@@ -986,8 +986,8 @@ impl VNodeOps for FatVNode {
         }
     }
 
-    fn sync(&self, arc_self: &Arc<VNode>) -> EResult<()> {
-        let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
+    fn sync(&self, vnode_self: &VNode) -> EResult<()> {
+        let fatfs = vnode_self.vfs.get_ops_as::<FatFs>();
         match &self.storage {
             FatFileStorage::Root16(x) => fatfs.media.sync(*x, self.len as u64),
             FatFileStorage::Clusters(chain) => chain.sync(&fatfs),

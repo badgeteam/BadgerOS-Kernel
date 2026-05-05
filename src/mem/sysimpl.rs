@@ -4,11 +4,9 @@
 
 use core::ffi::{c_int, c_void};
 
-use crate::{
-    bindings::{error::Errno, log::LogLevel},
-    mem::vmm,
-    process,
-};
+use crate::{bindings::error::Errno, config::PAGE_SIZE, mem::vmm, process};
+
+use super::vmm::map::Mapping;
 
 /// Map a new range of memory at an arbitrary virtual address.
 /// This may round up to a multiple of the page size.
@@ -19,22 +17,32 @@ pub unsafe extern "C" fn syscall_mem_map(
     size: usize,
     prot: u32,
     flags: u32,
-    _fd: c_int,
-    _offset: i64,
+    fd: c_int,
+    offset: i64,
 ) -> *mut c_void {
-    if flags & vmm::map::ANONYMOUS == 0 {
-        logkf!(LogLevel::Warning, "TODO: Non-anonymous mmap()");
-        return -(Errno::ENOSYS as i32) as isize as *mut c_void;
-    }
-
     let proc = process::current().unwrap();
-    match proc
-        .memmap()
-        .map(size, address as usize, flags, prot as u8, None)
-    {
-        Ok(addr) => addr as *mut c_void,
-        Err(err) => -(err as i32) as isize as *mut c_void,
-    }
+    Errno::extract_ptr(
+        try {
+            let mapping;
+            if flags & vmm::map::ANONYMOUS == 0 {
+                if offset < 0 || offset % PAGE_SIZE as i64 != 0 {
+                    Err(Errno::EINVAL)?;
+                }
+
+                let file = proc.files.lock_shared()?.get_file(fd)?;
+                let object = file.get_memobject().ok_or(Errno::EACCES)?;
+                mapping = Some(Mapping {
+                    offset: offset as u64,
+                    object,
+                });
+            } else {
+                mapping = None;
+            }
+
+            proc.memmap()
+                .map(size, address as usize, flags, prot as u8, mapping)? as *mut c_void
+        },
+    )
 }
 
 /// Unmap a range of memory previously allocated with `SYSCALL_MEM_MAP`.

@@ -154,6 +154,36 @@ impl PhysMap {
         }
     }
 
+    /// Clean up a mapping from the old PTE.
+    unsafe fn cleanup_pte(old: PTE) {
+        if !old.valid || old.flags & flags::REFCOUNT == 0 {
+            return;
+        }
+        unsafe {
+            let paddr = old.ppn * PAGE_SIZE as usize;
+            let meta = page_struct_base(paddr).0;
+
+            // Asked to decrease refcount upon unmap.
+            let rc = (*meta).refcount.fetch_sub(1, Ordering::Relaxed);
+            if rc == 0 {
+                logkf!(
+                    LogLevel::Warning,
+                    "Refcount underflow for physical page at 0x{:x}",
+                    old.ppn * PAGE_SIZE as usize
+                );
+            }
+
+            if old.flags & flags::D != 0 {
+                if let Some(memobject) = *(*meta).memobject.get() {
+                    // There's a memory object, notify it that the page is dirty.
+                    memobject
+                        .as_ref()
+                        .mark_dirty(*(*meta).offset.get() + ((*meta).paddr() - paddr) as u64);
+                }
+            }
+        }
+    }
+
     unsafe fn map_raw_impl(&self, vaddr: usize, new_pte: Option<PTE>, level: u8) -> EResult<()> {
         debug_assert!(vaddr % PAGE_SIZE as usize == 0);
         let mut pgtable_paddr = self.root;
@@ -221,22 +251,8 @@ impl PhysMap {
         // Write new PTE.
         let index = get_vpn_index(vaddr, level);
         unsafe {
-            let old = PTE::unpack(
-                xchg_pte(pgtable_paddr, index, new_pte.map(PTE::pack).unwrap_or(0)),
-                level,
-            );
-            if old.flags & flags::REFCOUNT != 0 {
-                // Asked to decrease refcount upon unmap.
-                let meta = page_struct_base(old.ppn * PAGE_SIZE as usize).0;
-                let rc = (*meta).refcount.fetch_sub(1, Ordering::Relaxed);
-                if rc == 0 {
-                    logkf!(
-                        LogLevel::Warning,
-                        "Refcount underflow for physical page at 0x{:x}",
-                        old.ppn * PAGE_SIZE as usize
-                    );
-                }
-            }
+            let old = xchg_pte(pgtable_paddr, index, new_pte.map(PTE::pack).unwrap_or(0));
+            Self::cleanup_pte(PTE::unpack(old, level));
         }
 
         Ok(())
@@ -351,17 +367,7 @@ impl PhysMap {
                     continue;
                 }
                 if pte.leaf {
-                    if pte.flags & flags::REFCOUNT != 0 {
-                        let meta = page_struct_base(pte.ppn * PAGE_SIZE as usize).0;
-                        let rc = (*meta).refcount.fetch_sub(1, Ordering::Relaxed);
-                        if rc == 0 {
-                            logkf!(
-                                LogLevel::Warning,
-                                "Refcount underflow for physical page at 0x{:x}",
-                                pte.ppn * PAGE_SIZE as usize
-                            );
-                        }
-                    }
+                    Self::cleanup_pte(pte);
                 } else {
                     assert!(level > 0, "Non-leaf PTE at page table root");
                     Self::drop_impl(pte.ppn * PAGE_SIZE as usize, 0..PTE_PER_PAGE, level - 1);

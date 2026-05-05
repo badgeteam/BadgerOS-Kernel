@@ -40,7 +40,7 @@ use crate::{
         vfs::{VNodeMtxInner, mflags, vnflags},
     },
     kernel::sync::mutex::{Mutex, SharedMutexGuard},
-    mem::vmm::pagecache::PageCache,
+    mem::vmm::{memobject::MemObject, pagecache::PageCache},
     process::{
         uapi::stat::stat,
         usercopy::{UserSlice, UserSliceMut},
@@ -314,6 +314,10 @@ pub trait File: Sync {
     }
     /// Read directory entries into the buffer.
     fn get_dirents(&self, buffer: &mut DentBuffer<'_>) -> EResult<()>;
+    /// Get the memory object for this file, if any.
+    fn get_memobject(&self) -> Option<Arc<dyn MemObject>> {
+        None
+    }
     /// Get the device that this file represents, if any.
     fn get_device(&self) -> Option<BaseDevice> {
         None

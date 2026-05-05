@@ -278,6 +278,13 @@ impl Errno {
             Err(x) => -(x as u32 as isize),
         }
     }
+    /// Convert an `EResult` into a raw pointer.
+    pub fn extract_ptr<T>(res: EResult<*mut T>) -> *mut T {
+        match res {
+            Ok(x) => x,
+            Err(x) => -(x as u32 as isize) as *mut T,
+        }
+    }
     /// Convert an `EResult` into an integer.
     pub fn extract_usize(res: EResult<usize>) -> isize {
         match res {

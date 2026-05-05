@@ -5,9 +5,10 @@
 use core::{
     any::Any,
     cell::UnsafeCell,
+    fmt::Debug,
     hint::unlikely,
     ops::Range,
-    ptr,
+    ptr::{self, NonNull},
     sync::atomic::{AtomicU32, AtomicU64, Ordering},
 };
 
@@ -33,7 +34,10 @@ use crate::{
     kernel::sync::mutex::{Mutex, MutexGuard, SharedMutexGuard},
     mem::{
         pmm::PAddrr,
-        vmm::pagecache::{PageCache, Pager},
+        vmm::{
+            memobject::{MappablePage, MemObject},
+            pagecache::{PageCache, Pager},
+        },
     },
     process::usercopy::{UserSlice, UserSliceMut},
 };
@@ -45,12 +49,16 @@ pub struct FlagsAndOffset {
 }
 
 /// Implementation of [`Pager`] used by [`VfsFile`].
-struct VfsFilePager<'a> {
-    vnode: &'a Arc<VNode>,
+struct VNodePager<'a> {
+    vnode: &'a VNode,
     ops: &'a dyn VNodeOps,
 }
 
-impl Pager for VfsFilePager<'_> {
+impl Pager for VNodePager<'_> {
+    fn memobject(&self) -> Option<NonNull<dyn MemObject>> {
+        Some(NonNull::from_ref(self.vnode as &dyn MemObject))
+    }
+
     unsafe fn read_blocks(
         &self,
         start_block: u64,
@@ -102,7 +110,7 @@ impl VfsFile {
 
         ops.resize(&self.vnode, new_size)?;
         flags.offset = new_size;
-        let pager = VfsFilePager {
+        let pager = VNodePager {
             vnode: &self.vnode,
             ops: &*guard.ops,
         };
@@ -135,7 +143,7 @@ impl VfsFile {
         }
 
         // Offset updated successfully; perform write.
-        let pager = VfsFilePager {
+        let pager = VNodePager {
             vnode: &self.vnode,
             ops: &*guard.ops,
         };
@@ -165,6 +173,13 @@ impl File for VfsFile {
         let guard = self.vnode.mtx.lock_shared()?;
         flags.offset = guard.ops.get_dirents(&self.vnode, flags.offset, buffer)?;
         Ok(())
+    }
+
+    fn get_memobject(&self) -> Option<Arc<dyn MemObject>> {
+        if self.vnode.pagecache.is_none() {
+            return None;
+        }
+        Some(self.vnode.clone())
     }
 
     fn get_device(&self) -> Option<BaseDevice> {
@@ -245,7 +260,7 @@ impl File for VfsFile {
         flags.offset = offset + readlen as u64;
 
         // Perform read on vnode ops.
-        let pager = VfsFilePager {
+        let pager = VNodePager {
             vnode: &self.vnode,
             ops: &*guard.ops,
         };
@@ -270,9 +285,15 @@ impl File for VfsFile {
     }
 
     fn sync(&self) -> EResult<()> {
-        self.vnode
-            .vfs
-            .check_eio(self.vnode.mtx.lock_shared()?.ops.sync(&self.vnode))
+        let guard = self.vnode.mtx.lock_shared()?;
+        if let Some(pagecache) = &self.vnode.pagecache {
+            let pager = VNodePager {
+                vnode: &self.vnode,
+                ops: &*guard.ops,
+            };
+            pagecache.sync_all(&pager)?;
+        }
+        self.vnode.vfs.check_eio(guard.ops.sync(&self.vnode))
     }
 
     fn get_vnode(&self) -> Option<Arc<VNode>> {
@@ -312,6 +333,59 @@ pub struct VNode {
     pub(super) pagecache: Option<PageCache>,
     /// Deny writes counter set by the executable loader.
     pub denywrite: AtomicU32,
+}
+
+impl Debug for VNode {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let realpath = try {
+            self.vfs
+                .mountpoint
+                .as_ref()?
+                .mtx
+                .unintr_lock_shared()
+                .dentcache
+                .clone()?
+                .realpath()
+                .ok()?
+        };
+        let realpath = realpath.unwrap_or(vec![b'/']);
+        write!(f, "VNode {} in VFS at {}", self.ino, unsafe {
+            str::from_utf8_unchecked(&realpath)
+        })
+    }
+}
+
+impl MemObject for VNode {
+    fn len(&self) -> u64 {
+        self.mtx.unintr_lock_shared().ops.get_size(self)
+    }
+
+    fn get(&self, offset: u64) -> Option<MappablePage> {
+        self.pagecache.as_ref().unwrap().get(offset).unwrap_or(None)
+    }
+
+    fn alloc(&self, offset: u64) -> EResult<MappablePage> {
+        let guard = self.mtx.unintr_lock_shared();
+        let pager = VNodePager {
+            vnode: self,
+            ops: &*guard.ops,
+        };
+        self.pagecache.as_ref().unwrap().alloc(&pager, offset)
+    }
+
+    fn mark_dirty(&self, offset: u64) {
+        self.pagecache.as_ref().unwrap().mark_dirty(offset);
+    }
+
+    fn tracks_dirty(&self) -> bool {
+        true
+    }
+
+    fn has_dirty_pages(&self) -> bool {
+        self.pagecache
+            .as_ref()
+            .map_or(false, |pc| pc.has_dirty_pages())
+    }
 }
 
 impl VNode {
@@ -374,71 +448,66 @@ impl Drop for VNode {
 /// Abstract vnode operations.
 pub trait VNodeOps: Any {
     /// Get the associated character device, if any.
-    fn get_device(&self, _arc_self: &Arc<VNode>) -> Option<BaseDevice> {
+    fn get_device(&self, _vnode_self: &VNode) -> Option<BaseDevice> {
         None
     }
     /// Get the partition offset and size that this file represents, if any.
-    fn get_part_offset(&self, _arc_self: &Arc<VNode>) -> Option<Range<u64>> {
+    fn get_part_offset(&self, _vnode_self: &VNode) -> Option<Range<u64>> {
         None
     }
 
     /// Read directory entries into the buffer.
     fn get_dirents(
         &self,
-        arc_self: &Arc<VNode>,
+        vnode_self: &VNode,
         offset: u64,
         buffer: &mut DentBuffer<'_>,
     ) -> EResult<u64>;
     /// Write data to the file.
-    fn write(&self, arc_self: &Arc<VNode>, offset: u64, wdata: UserSlice<'_, u8>) -> EResult<()>;
+    fn write(&self, vnode_self: &VNode, offset: u64, wdata: UserSlice<'_, u8>) -> EResult<()>;
     /// Read data from the file.
-    fn read(&self, arc_self: &Arc<VNode>, offset: u64, rdata: UserSliceMut<'_, u8>) -> EResult<()>;
+    fn read(&self, vnode_self: &VNode, offset: u64, rdata: UserSliceMut<'_, u8>) -> EResult<()>;
     /// Resize the file.
-    fn resize(&mut self, arc_self: &Arc<VNode>, new_size: u64) -> EResult<()>;
+    fn resize(&mut self, vnode_self: &VNode, new_size: u64) -> EResult<()>;
 
     /// Find a directory entry.
-    fn find_dirent(&self, arc_self: &Arc<VNode>, name: &[u8]) -> EResult<Dirent>;
+    fn find_dirent(&self, vnode_self: &VNode, name: &[u8]) -> EResult<Dirent>;
     /// Unlink a node from this directory.
     /// Uses POSIX `rmdir` semantics iff `is_rmdir`, otherwise POSIX unlink semantics.
     fn unlink(
         &mut self,
-        arc_self: &Arc<VNode>,
+        vnode_self: &VNode,
         name: &[u8],
         mode: UnlinkMode,
         unlinked_vnode: Option<Arc<VNode>>,
     ) -> EResult<()>;
     /// Link an existing inode to this directory.
-    fn link(&mut self, arc_self: &Arc<VNode>, name: &[u8], inode: &VNode) -> EResult<()>;
+    fn link(&mut self, vnode_self: &VNode, name: &[u8], inode: &VNode) -> EResult<()>;
     /// Create a new file in this directory.
     fn make_file(
         &mut self,
-        arc_self: &Arc<VNode>,
+        vnode_self: &VNode,
         name: &[u8],
         spec: MakeFileSpec,
     ) -> EResult<(Dirent, Box<dyn VNodeOps>)>;
     /// Rename a file within this directory.
     /// See [`VfsOps::rename`] for renaming between two different directories.
-    fn rename(
-        &mut self,
-        arc_self: &Arc<VNode>,
-        old_name: &[u8],
-        new_name: &[u8],
-    ) -> EResult<Dirent>;
+    fn rename(&mut self, vnode_self: &VNode, old_name: &[u8], new_name: &[u8]) -> EResult<Dirent>;
 
     /// Read the link if this is a symlink.
-    fn readlink(&self, arc_self: &Arc<VNode>) -> EResult<Box<[u8]>>;
+    fn readlink(&self, vnode_self: &VNode) -> EResult<Box<[u8]>>;
     /// Get this node's stat buffer.
     /// This function need not set [`Stat::ino`]; it is copied from the [`VNode`].
-    fn stat(&self, arc_self: &Arc<VNode>) -> EResult<Stat>;
+    fn stat(&self, vnode_self: &VNode) -> EResult<Stat>;
     /// Get this node's inode number.
-    /// Called only once during construction of the VNode and therefor doesn't have `arc_self`.
+    /// Called only once during construction of the VNode and therefor doesn't have `vnode_self`.
     fn get_inode(&self) -> u64;
     /// Get the current size of the file.
-    fn get_size(&self, arc_self: &Arc<VNode>) -> u64;
+    fn get_size(&self, vnode_self: &VNode) -> u64;
     /// Get the type of nod this is.
-    fn get_type(&self, arc_self: &Arc<VNode>) -> NodeType;
+    fn get_type(&self, vnode_self: &VNode) -> NodeType;
     /// Sync the underlying caches to disk.
-    fn sync(&self, arc_self: &Arc<VNode>) -> EResult<()>;
+    fn sync(&self, vnode_self: &VNode) -> EResult<()>;
 
     /// Called in the [`Drop`] implementation of [`VNode`].
     fn close(&mut self, _vnode_self: &VNode) {}
@@ -446,13 +515,13 @@ pub trait VNodeOps: Any {
 
 impl dyn VNodeOps + '_ {
     /// Write data to the file.
-    pub fn writek(&self, arc_self: &Arc<VNode>, offset: u64, wdata: &[u8]) -> EResult<()> {
-        self.write(arc_self, offset, UserSlice::new_kernel(wdata))
+    pub fn writek(&self, vnode_self: &VNode, offset: u64, wdata: &[u8]) -> EResult<()> {
+        self.write(vnode_self, offset, UserSlice::new_kernel(wdata))
     }
 
     /// Read data from the file.
-    pub fn readk(&self, arc_self: &Arc<VNode>, offset: u64, rdata: &mut [u8]) -> EResult<()> {
-        self.read(arc_self, offset, UserSliceMut::new_kernel_mut(rdata))
+    pub fn readk(&self, vnode_self: &VNode, offset: u64, rdata: &mut [u8]) -> EResult<()> {
+        self.read(vnode_self, offset, UserSliceMut::new_kernel_mut(rdata))
     }
 }
 

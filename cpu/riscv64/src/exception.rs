@@ -207,9 +207,11 @@ unsafe fn riscv_exception_handler_impl(regs: &mut GpRegfile, sregs: &mut SpRegfi
             CAUSE_SPAGE => vmm::prot::WRITE,
             _ => unsafe { unreachable_unchecked() },
         };
+        unsafe { cpu::irq::enable() };
 
         if sregs.is_kernel_mode() && vmm::physmap::is_canon_kernel_addr(sregs.stval) {
             if vmm::kernel_mm().fault(sregs.stval, access).is_ok() {
+                unsafe { cpu::irq::disable() };
                 return;
             }
         } else if (!sregs.is_kernel_mode() || is_sum)
@@ -217,9 +219,11 @@ unsafe fn riscv_exception_handler_impl(regs: &mut GpRegfile, sregs: &mut SpRegfi
         {
             let mm = unsafe { (*thread).runtime().memmap };
             if !mm.is_null() && unsafe { &*mm }.fault(sregs.stval, access).is_ok() {
+                unsafe { cpu::irq::disable() };
                 return;
             }
         }
+        unsafe { cpu::irq::disable() };
     }
 
     // Fallible instructions.

@@ -239,7 +239,7 @@ struct RamVNode {
 }
 
 impl VNodeOps for RamVNode {
-    fn get_device(&self, _arc_self: &Arc<VNode>) -> Option<BaseDevice> {
+    fn get_device(&self, _vnode_self: &VNode) -> Option<BaseDevice> {
         let inode = unsafe { self.inode.as_ref_unchecked() };
         match &inode.data {
             RamFsData::CharDev(dev) => Some(dev.as_base().clone()),
@@ -248,7 +248,7 @@ impl VNodeOps for RamVNode {
         }
     }
 
-    fn get_part_offset(&self, _arc_self: &Arc<VNode>) -> Option<Range<u64>> {
+    fn get_part_offset(&self, _vnode_self: &VNode) -> Option<Range<u64>> {
         let inode = unsafe { self.inode.as_ref_unchecked() };
         if let RamFsData::BlockDev(dev) = &inode.data {
             dev.1.clone()
@@ -257,7 +257,7 @@ impl VNodeOps for RamVNode {
         }
     }
 
-    fn write(&self, _arc_self: &Arc<VNode>, offset: u64, wdata: UserSlice<'_, u8>) -> EResult<()> {
+    fn write(&self, _vnode_self: &VNode, offset: u64, wdata: UserSlice<'_, u8>) -> EResult<()> {
         let offset: usize = offset.try_into().map_err(|_| Errno::EIO)?;
         let inode = unsafe { self.inode.as_mut_unchecked() };
         let regular = inode.data.as_regular_mut().ok_or(Errno::EINVAL)?;
@@ -269,7 +269,7 @@ impl VNodeOps for RamVNode {
 
     fn read(
         &self,
-        _arc_self: &Arc<VNode>,
+        _vnode_self: &VNode,
         offset: u64,
         mut rdata: UserSliceMut<'_, u8>,
     ) -> EResult<()> {
@@ -282,7 +282,7 @@ impl VNodeOps for RamVNode {
         Ok(rdata.write_multiple(0, &regular[offset..offset + rdata.len()])?)
     }
 
-    fn resize(&mut self, _arc_self: &Arc<VNode>, new_size: u64) -> EResult<()> {
+    fn resize(&mut self, _vnode_self: &VNode, new_size: u64) -> EResult<()> {
         let new_size: usize = new_size.try_into().map_err(|_| Errno::ENOSPC)?;
         let inode = unsafe { self.inode.as_mut_unchecked() };
         let regular = inode.data.as_regular_mut().ok_or(Errno::EINVAL)?;
@@ -294,7 +294,7 @@ impl VNodeOps for RamVNode {
         Ok(())
     }
 
-    fn find_dirent(&self, _arc_self: &Arc<VNode>, name: &[u8]) -> EResult<Dirent> {
+    fn find_dirent(&self, _vnode_self: &VNode, name: &[u8]) -> EResult<Dirent> {
         let inode = unsafe { self.inode.as_ref_unchecked() };
         let directory = inode.data.as_directory().ok_or(Errno::EINVAL)?;
         directory.get(name).ok_or(Errno::ENOENT).cloned()
@@ -302,7 +302,7 @@ impl VNodeOps for RamVNode {
 
     fn get_dirents(
         &self,
-        _arc_self: &Arc<VNode>,
+        _vnode_self: &VNode,
         offset: u64,
         buffer: &mut DentBuffer<'_>,
     ) -> EResult<u64> {
@@ -323,12 +323,12 @@ impl VNodeOps for RamVNode {
 
     fn unlink(
         &mut self,
-        arc_self: &Arc<VNode>,
+        vnode_self: &VNode,
         name: &[u8],
         mode: UnlinkMode,
         _unlinked_vnode: Option<Arc<VNode>>,
     ) -> EResult<()> {
-        let ramfs = arc_self.vfs.get_ops_as::<RamFs>();
+        let ramfs = vnode_self.vfs.get_ops_as::<RamFs>();
         let inode = unsafe { self.inode.as_mut_unchecked() };
         let directory = inode.data.as_directory_mut().ok_or(Errno::EINVAL)?;
 
@@ -367,8 +367,8 @@ impl VNodeOps for RamVNode {
         Ok(())
     }
 
-    fn link(&mut self, arc_self: &Arc<VNode>, name: &[u8], inode: &VNode) -> EResult<()> {
-        let ramfs = arc_self.vfs.get_ops_as::<RamFs>();
+    fn link(&mut self, vnode_self: &VNode, name: &[u8], inode: &VNode) -> EResult<()> {
+        let ramfs = vnode_self.vfs.get_ops_as::<RamFs>();
         let dir_inode = unsafe { self.inode.as_mut_unchecked() };
         let directory = dir_inode.data.as_directory_mut().ok_or(Errno::EINVAL)?;
 
@@ -414,11 +414,11 @@ impl VNodeOps for RamVNode {
 
     fn make_file(
         &mut self,
-        arc_self: &Arc<VNode>,
+        vnode_self: &VNode,
         name: &[u8],
         spec: MakeFileSpec,
     ) -> EResult<(Dirent, Box<dyn VNodeOps>)> {
-        let ramfs = arc_self.vfs.get_ops_as::<RamFs>();
+        let ramfs = vnode_self.vfs.get_ops_as::<RamFs>();
 
         let inode = unsafe { self.inode.as_mut_unchecked() };
         let directory = inode.data.as_directory_mut().ok_or(Errno::EINVAL)?;
@@ -474,12 +474,7 @@ impl VNodeOps for RamVNode {
         Ok((dirent, Box::<dyn VNodeOps>::from(ops)))
     }
 
-    fn rename(
-        &mut self,
-        _arc_self: &Arc<VNode>,
-        old_name: &[u8],
-        new_name: &[u8],
-    ) -> EResult<Dirent> {
+    fn rename(&mut self, _vnode_self: &VNode, old_name: &[u8], new_name: &[u8]) -> EResult<Dirent> {
         let inode = unsafe { self.inode.as_mut_unchecked() };
         let directory = inode.data.as_directory_mut().ok_or(Errno::EINVAL)?;
 
@@ -500,12 +495,12 @@ impl VNodeOps for RamVNode {
         }
     }
 
-    fn readlink(&self, _arc_self: &Arc<VNode>) -> EResult<Box<[u8]>> {
+    fn readlink(&self, _vnode_self: &VNode) -> EResult<Box<[u8]>> {
         let inode = unsafe { self.inode.as_ref_unchecked() };
         inode.data.as_symlink().ok_or(Errno::EINVAL).cloned()
     }
 
-    fn stat(&self, arc_self: &Arc<VNode>) -> EResult<Stat> {
+    fn stat(&self, vnode_self: &VNode) -> EResult<Stat> {
         let inode = unsafe { self.inode.as_ref_unchecked() };
         let size = inode.size.load(Ordering::Relaxed);
         assert!(unsafe { cpu::irq::disable() });
@@ -528,7 +523,7 @@ impl VNodeOps for RamVNode {
             uid: 0,
             gid: 0,
             rdev: self
-                .get_device(arc_self)
+                .get_device(vnode_self)
                 .map(|dev| ((u32::from(dev.id()) as u64) << 32) | dev.class() as u64)
                 .unwrap_or(0),
             size: size as u64,
@@ -545,17 +540,17 @@ impl VNodeOps for RamVNode {
         inode.ino
     }
 
-    fn get_size(&self, _arc_self: &Arc<VNode>) -> u64 {
+    fn get_size(&self, _vnode_self: &VNode) -> u64 {
         let inode = unsafe { self.inode.as_ref_unchecked() };
         inode.size.load(Ordering::Relaxed) as u64
     }
 
-    fn get_type(&self, _arc_self: &Arc<VNode>) -> NodeType {
+    fn get_type(&self, _vnode_self: &VNode) -> NodeType {
         let inode = unsafe { self.inode.as_ref_unchecked() };
         inode.data.node_type()
     }
 
-    fn sync(&self, _arc_self: &Arc<VNode>) -> EResult<()> {
+    fn sync(&self, _vnode_self: &VNode) -> EResult<()> {
         Ok(())
     }
 }
