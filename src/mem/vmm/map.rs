@@ -153,7 +153,7 @@ impl AnonMap {
 }
 
 /// One contiguous range of mapped memory with the same protection and mapping flags.
-struct MapEntry {
+pub struct MapEntry {
     node: InvasiveListNode,
     /// Region start and end virtual addresses.
     range: Range<usize>,
@@ -164,7 +164,7 @@ impl_has_list_node!(MapEntry, node);
 
 /// One contiguous range of mapped memory with the same protection and mapping flags.
 #[derive(Clone)]
-struct MapEntryInner {
+pub struct MapEntryInner {
     /// Region protection flags.
     prot_flags: u8,
     /// Region mapping flags.
@@ -300,7 +300,7 @@ impl MapEntryInner {
 }
 
 /// Virtual address-space map.
-pub(super) struct VmSpaceInner {
+pub struct VmSpaceInner {
     /// Architecture-specific virtual to physical address map.
     pub(super) pmap: PhysMap,
     /// Doubly-linked list of contiguous ranges with identical map and protection flags.
@@ -353,6 +353,7 @@ impl VmSpaceInner {
         pmap: &PhysMap,
         map: &mut InvasiveList<MapEntry>,
         bounds: Range<usize>,
+        vmspace: *const VmSpaceInner,
     ) {
         let mut deferred_free = Vec::new();
         unsafe {
@@ -371,6 +372,9 @@ impl VmSpaceInner {
                     // Schedule VM fences for all affected pages.
                     for vaddr in (*entry).range.clone() {
                         fences.add(Some(vaddr), None);
+                    }
+                    if let Some(m) = &(*entry).inner.lock().mapping {
+                        m.object.on_unmapped(vmspace, entry);
                     }
                     // Can't free the entry until VM fence is done; this vector defers it to the end of the function.
                     deferred_free.push(Box::from_raw(entry));
@@ -419,6 +423,7 @@ impl VmSpaceInner {
         fences: &mut VmFenceSet,
         pmap: &PhysMap,
         map: &mut InvasiveList<MapEntry>,
+        vmspace: *const VmSpaceInner,
         size: usize,
         addr: usize,
         map_flags: u32,
@@ -440,9 +445,19 @@ impl VmSpaceInner {
                 mapping,
             }),
         })?;
+        let entry_ptr = entry.as_ref() as *const MapEntry;
         unsafe {
-            Self::remove_mappings(fences, pmap, map, addr..addr + size);
+            Self::remove_mappings(fences, pmap, map, addr..addr + size, vmspace);
             Self::insert_mapping(map, entry);
+            if let Some(m) = &(*entry_ptr).inner.lock().mapping {
+                let obj = m.object.clone();
+                if let Err(e) = obj.on_mapped(vmspace, entry_ptr) {
+                    // on_mapped failed after FIXED already cleared the old range; a hole is left.
+                    map.remove(entry_ptr as *mut _);
+                    drop(Box::from_raw(entry_ptr as *mut MapEntry));
+                    return Err(e);
+                }
+            }
         }
 
         Ok(())
@@ -451,6 +466,7 @@ impl VmSpaceInner {
     /// Implementation of [`Self::map`] without the [`FIXED`] flag.
     unsafe fn map_dynamic(
         map: &mut InvasiveList<MapEntry>,
+        vmspace: *const VmSpaceInner,
         size: usize,
         mut hint: usize,
         mut bounds: Range<usize>,
@@ -510,8 +526,17 @@ impl VmSpaceInner {
                 mapping,
             }),
         })?;
+        let entry_ptr = entry.as_ref() as *const MapEntry;
         unsafe {
             Self::insert_mapping(map, entry);
+            if let Some(m) = &(*entry_ptr).inner.lock().mapping {
+                let obj = m.object.clone();
+                if let Err(e) = obj.on_mapped(vmspace, entry_ptr) {
+                    map.remove(entry_ptr as *mut _);
+                    drop(Box::from_raw(entry_ptr as *mut MapEntry));
+                    return Err(e);
+                }
+            }
         }
 
         Ok(hint)
@@ -553,6 +578,7 @@ impl VmSpaceInner {
                     &mut fences,
                     &self.pmap,
                     &mut map,
+                    self as *const _,
                     size,
                     hint,
                     map_flags,
@@ -561,7 +587,16 @@ impl VmSpaceInner {
                 )?;
                 hint
             } else {
-                Self::map_dynamic(&mut map, size, hint, bounds, map_flags, prot_flags, mapping)?
+                Self::map_dynamic(
+                    &mut map,
+                    self as *const _,
+                    size,
+                    hint,
+                    bounds,
+                    map_flags,
+                    prot_flags,
+                    mapping,
+                )?
             };
             let _map = map.demote();
             if map_flags & POPULATE != 0 {
@@ -634,11 +669,87 @@ impl VmSpaceInner {
 
         let mut fences = VmFenceSet::new();
         unsafe {
-            Self::remove_mappings(&mut fences, &self.pmap, &mut map, bounds);
+            Self::remove_mappings(&mut fences, &self.pmap, &mut map, bounds, self as *const _);
         }
         vmfence::shootdown(&fences);
 
         Ok(())
+    }
+
+    /// Evict entries from the pmaps and anons that are beyond the new length.
+    /// Called by memory objects that have been resized to become smaller.
+    pub unsafe fn shrink(&self, entry: *const MapEntry, max_len: u64) {
+        let entry = unsafe { &*entry };
+        let entry_len = entry.range.end - entry.range.start;
+
+        // Anons detached from the amap must not be dropped until after the TLB shootdown,
+        // because the pmap does not shoot down TLBs itself.
+        let mut deferred: Vec<Arc<Anon>> = Vec::new();
+
+        let cutoff_offset = {
+            let mut inner = entry.inner.lock();
+
+            let m = match &inner.mapping {
+                Some(m) => m,
+                None => return,
+            };
+
+            // Bytes of the file that still fall within this entry's range.
+            let valid = max_len.saturating_sub(m.offset).min(entry_len as u64) as usize;
+            // Round up to a page boundary: the partial last page stays because the page cache
+            // already zeroed its tail; only pages lying entirely beyond max_len are evicted.
+            let cutoff = valid.div_ceil(PAGE_SIZE as usize) * PAGE_SIZE as usize;
+
+            if cutoff < entry_len {
+                // Evict pmap entries while holding the inner lock so a concurrent fault
+                // cannot re-install a page we just removed (fault_impl locks inner first).
+                unsafe {
+                    self.pmap
+                        .unmap_multiple(entry.range.start + cutoff, entry_len - cutoff);
+                }
+
+                // Detach anon pages at and beyond the cutoff into `deferred`; they must
+                // not actually be freed until the TLB shootdown below.
+                let drop_all = inner.amap.as_ref().map_or(false, |a| cutoff <= a.offset);
+                if drop_all {
+                    if let Some(amap) = inner.amap.take() {
+                        // If unique, drain pages into deferred. If shared (CoW clone), the
+                        // Arc drop is safe — the other clone still holds the physical pages.
+                        if let Ok(mut unique) = Arc::try_unwrap(amap) {
+                            for slot in unique.pages.drain(..) {
+                                if let Some(anon) = slot {
+                                    deferred.push(anon);
+                                }
+                            }
+                        }
+                    }
+                } else if let Some(amap) = inner.amap.as_mut() {
+                    let amap = Arc::make_mut(amap);
+                    let start_page = (cutoff - amap.offset) / PAGE_SIZE as usize;
+                    for slot in &mut amap.pages[start_page..] {
+                        if let Some(anon) = slot.take() {
+                            deferred.push(anon);
+                        }
+                    }
+                }
+            }
+
+            cutoff
+        };
+
+        if cutoff_offset >= entry_len {
+            return;
+        }
+
+        let mut fences = VmFenceSet::new();
+        for vaddr in
+            (entry.range.start + cutoff_offset..entry.range.end).step_by(PAGE_SIZE as usize)
+        {
+            fences.add(Some(vaddr), None);
+        }
+        vmfence::shootdown(&fences);
+        // TLB shootdown complete; safe to free the detached anon pages now.
+        drop(deferred);
     }
 
     /// Implementation of [`Self::fault`] if the entry is found.

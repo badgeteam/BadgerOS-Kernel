@@ -6,12 +6,14 @@ use alloc::vec::Vec;
 
 use crate::{
     bindings::error::Errno,
-    filesystem::{oflags, open},
-    ktest_expect,
+    config::PAGE_SIZE,
+    cpu::usercopy::{fallible_load_u8, fallible_store_u8},
+    filesystem::{oflags, open, unlink},
+    ktest_assert, ktest_expect,
     mem::vmm::{
         kernel_mm,
         map::{self, Mapping},
-        prot,
+        prot, zeroes,
     },
     rootfs_ktest,
 };
@@ -148,4 +150,61 @@ rootfs_ktest! { FILE_MAP_SUBBLOCK,
 
         kernel_mm().unmap(vaddr..vaddr + stat.size as usize)?;
     }
+}
+
+rootfs_ktest! { FILE_MAP_RESIZE,
+    // Make a file and make it two pages long.
+    let fd = open(None, b"/resizetest.bin", oflags::CREATE | oflags::READ_WRITE | oflags::TRUNCATE)?;
+    ktest_expect!(fd.writek(zeroes())?, PAGE_SIZE as usize);
+    ktest_expect!(fd.writek(zeroes())?, PAGE_SIZE as usize);
+    let stat = fd.stat()?;
+    ktest_expect!(stat.size, 2 * PAGE_SIZE as u64);
+
+    unsafe {
+        // Memory-map the file and check that we can access both pages.
+        let vaddr = kernel_mm().map(
+            stat.size as usize,
+            0,
+            map::SHARED | map::LAZY_KERNEL,
+            prot::READ | prot::WRITE,
+            Some(
+                Mapping {
+                    offset: 0,
+                    object: fd.get_memobject().ok_or(Errno::EACCES)?
+                }
+            )
+        )?;
+        let ptr = vaddr as *mut u8;
+
+        // Before resize: both pages accessible.
+        fallible_store_u8(ptr, 1)?;
+        fallible_store_u8(ptr.add(PAGE_SIZE as usize), 2)?;
+
+        // After resize: second page no longer accessible.
+        fd.resize(PAGE_SIZE as u64)?;
+        fallible_store_u8(ptr, 1)?;
+        ktest_assert!(fallible_store_u8(ptr.add(PAGE_SIZE as usize), 2).is_err());
+
+        // Fractional page size: first page still accessible, OOB data zeroed.
+        fallible_store_u8(ptr.add(42), 9)?;
+        fd.resize(42)?;
+        ktest_expect!(fallible_load_u8(ptr.add(42))?, 0);
+
+        // Complete truncation: no access at all.
+        fd.resize(0)?;
+        ktest_assert!(fallible_store_u8(ptr, 1).is_err());
+        ktest_assert!(fallible_store_u8(ptr.add(PAGE_SIZE as usize), 2).is_err());
+
+        // Make it bigger again: data still zeroes but pages accessible again.
+        fd.resize(2*PAGE_SIZE as u64)?;
+        ktest_expect!(fallible_load_u8(ptr)?, 0);
+        ktest_expect!(fallible_load_u8(ptr.add(42))?, 0);
+        ktest_expect!(fallible_load_u8(ptr.add(PAGE_SIZE as usize))?, 0);
+
+        // Clean up by unmapping.
+        kernel_mm().unmap(vaddr..vaddr + stat.size as usize)?;
+    }
+
+    // Delete the file now that it's unneeded.
+    unlink(None, b"/resizetest.bin", false)?;
 }

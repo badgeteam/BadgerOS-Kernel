@@ -82,8 +82,77 @@ impl PageCache {
     /// Change the page cache's length.
     pub fn set_len(&self, new_len: u64) {
         let mut guard = self.len.unintr_lock();
+        let old_len = *guard;
         *guard = new_len;
-        logkf!(LogLevel::Warning, "TODO: PageCache::set_len invalidation");
+        drop(guard);
+
+        if new_len >= old_len {
+            return;
+        }
+
+        let entry_size = (PAGE_SIZE as usize) << self.entry_pages_exp;
+        if new_len % entry_size as u64 != 0 {
+            let partial_index = new_len / entry_size as u64;
+            let zero_from = (new_len % entry_size as u64) as usize;
+
+            let _noirq = IrqGuard::new();
+            let pages = self.pages.lock_shared();
+            if let Some(ent) = pages.get(partial_index) {
+                if ent.flags.load(Ordering::Relaxed) & flags::READING == 0 {
+                    // SAFETY: paddr is valid for entry_pages_exp pages; zero_from < entry_size.
+                    unsafe {
+                        core::ptr::write_bytes(
+                            (ent.paddr + zero_from + HHDM_OFFSET) as *mut u8,
+                            0,
+                            entry_size - zero_from,
+                        );
+                    }
+                }
+            }
+        }
+
+        // Truncation: evict entries whose byte range starts at or beyond new_len.
+        let entry_size = 1u64 << (self.block_size_exp + self.entry_blocks_exp);
+        let first_invalid = new_len.div_ceil(entry_size);
+
+        let mut to_free: Vec<(PAddrr, u8)> = Vec::new();
+        {
+            let mut pages = self.pages.lock();
+            let mut to_remove = Vec::new();
+            for (index, entry) in pages.iter() {
+                if index < first_invalid {
+                    continue;
+                }
+                // SAFETY: paddr is valid for the lifetime of the cache entry.
+                let refcount = unsafe {
+                    (*pmm::page_struct(entry.paddr))
+                        .refcount
+                        .load(Ordering::Relaxed)
+                };
+                if refcount != 0 {
+                    logkf!(
+                        LogLevel::Error,
+                        "PageCache::set_len: truncated entry {} has {} live references, leaking",
+                        index,
+                        refcount
+                    );
+                    continue;
+                }
+                if to_remove.try_reserve(1).is_err() || to_free.try_reserve(1).is_err() {
+                    break;
+                }
+                to_remove.push(index);
+                to_free.push((entry.paddr, self.entry_pages_exp));
+            }
+            for index in to_remove {
+                pages.remove(index);
+            }
+        }
+
+        for (paddr, order) in to_free {
+            // SAFETY: entry removed from cache with refcount confirmed 0.
+            unsafe { pmm::page_free(paddr, order) };
+        }
     }
 
     /// Index calculation helper: returns (entry_index, page_within_entry).
@@ -108,6 +177,10 @@ impl PageCache {
         // Determine bounds.
         let start_block = index << self.entry_blocks_exp;
         let end_block = (start_block + (1 << self.entry_blocks_exp)).min(block_len);
+
+        if start_block >= block_len {
+            return Err(Errno::ENXIO);
+        }
 
         unsafe {
             let hhdm_slice = core::ptr::slice_from_raw_parts_mut(
@@ -236,14 +309,12 @@ impl PageCache {
                     .replace(index << (self.entry_pages_exp + PAGE_SIZE.ilog2() as u8));
 
                 // Insert new entry marked as being read in.
-                let noirq = IrqGuard::new();
                 let entry = Entry {
                     paddr,
                     flags: AtomicU32::new(flags::READING),
                 };
                 let res = inner.insert(index, entry);
                 drop(inner);
-                drop(noirq);
                 if res.is_err() {
                     // Insert FAILED, free the memory.
                     pmm::page_free(paddr, self.entry_pages_exp);
@@ -260,14 +331,12 @@ impl PageCache {
 
                 // Read SUCCESS, mark entry as writable.
                 (*meta).refcount.fetch_add(1, Ordering::Relaxed);
-                let noirq = IrqGuard::new();
                 self.pages
                     .lock_shared()
                     .get(index)
                     .expect("PageCache pending read deleted by another thread")
                     .flags
                     .store(0, Ordering::Relaxed);
-                drop(noirq);
 
                 // SAFETY: We own this physical address through the cache entries.
                 return Ok(MappablePage::new(

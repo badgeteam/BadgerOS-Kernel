@@ -10,6 +10,8 @@ use crate::{
     mem::pmm::{self, PAddrr},
 };
 
+use super::map::{MapEntry, VmSpaceInner};
+
 /// A page that can be memory-mapped.
 pub struct MappablePage(NonZeroUsize);
 
@@ -72,11 +74,19 @@ impl Drop for MappablePage {
 }
 
 /// An object that can be mapped into a [`super::map::VmSpace`].
-/// TODO: Support for truncation while already mapped.
 pub trait MemObject: Debug {
     /// Get the size in bytes of the object.
     /// Must be page-aligned.
     fn len(&self) -> u64;
+
+    /// Called when a new mapping entry is made with this memory object.
+    /// The [`VmSpaceInner`] promises that [`MemObject::on_unmapped`] is called before the pointers become invalid.
+    fn on_mapped(&self, _vmspace: *const VmSpaceInner, _range: *const MapEntry) -> EResult<()> {
+        Ok(())
+    }
+
+    /// Called when a new mapping entry is made with this memory object.
+    fn on_unmapped(&self, _vmspace: *const VmSpaceInner, _range: *const MapEntry) {}
 
     /// Try to get an existing page from the object.
     /// May spuriously return [`None`] even if the page is available.

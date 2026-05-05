@@ -765,6 +765,7 @@ fn o_creat_helper(to_create: Arc<DentCache>, exclusive: bool) -> EResult<Arc<VNo
         type_: NodeType::Regular,
         fifo: None,
         pagecache: Some(PageCache::new(dir_vnode.vfs.block_size_exp, 0)),
+        mappings: Mutex::new(Vec::new()),
         denywrite: AtomicU32::new(0),
     })?;
     *dentcache.vnode.unintr_lock() = Some(Arc::downgrade(&new_vnode));
@@ -1111,6 +1112,7 @@ pub fn make_file(at: Option<&dyn File>, path: &[u8], spec: MakeFileSpec) -> ERes
         type_,
         fifo,
         pagecache,
+        mappings: Mutex::new(Vec::new()),
         denywrite: AtomicU32::new(0),
     })?;
     *dentcache.vnode.unintr_lock() = Some(Arc::downgrade(&new_vnode));
@@ -1472,6 +1474,7 @@ fn create_vfs(
         type_: NodeType::Directory,
         fifo: None,
         pagecache: None,
+        mappings: Mutex::new(Vec::new()),
         denywrite: AtomicU32::new(0),
     });
     vfs.vnodes

@@ -30,11 +30,13 @@ use crate::{
         device::BaseDevice,
         error::{EResult, Errno},
     },
+    config::PAGE_SIZE,
     filesystem::fifo::FifoShared,
     kernel::sync::mutex::{Mutex, MutexGuard, SharedMutexGuard},
     mem::{
         pmm::PAddrr,
         vmm::{
+            map::{MapEntry, VmSpaceInner},
             memobject::{MappablePage, MemObject},
             pagecache::{PageCache, Pager},
         },
@@ -114,6 +116,7 @@ impl VfsFile {
             vnode: &self.vnode,
             ops: &*guard.ops,
         };
+        pagecache.set_len(new_size);
         pagecache
             .write_bytes(&pager, old_size, wdata)
             .map(|_| wdata.len())
@@ -140,6 +143,7 @@ impl VfsFile {
             let mut mut_guard = self.vnode.mtx.lock()?;
             mut_guard.ops.resize(&self.vnode, new_off)?;
             guard = mut_guard.demote();
+            pagecache.set_len(new_off);
         }
 
         // Offset updated successfully; perform write.
@@ -277,9 +281,26 @@ impl File for VfsFile {
             return Err(Errno::EROFS);
         }
         let mut guard = self.vnode.mtx.lock()?;
+
+        let old_size = guard.ops.get_size(&self.vnode);
         self.vnode
             .vfs
             .check_eio(guard.ops.resize(&self.vnode, size))?;
+
+        if let Some(pagecache) = &self.vnode.pagecache {
+            // SAFETY: The VNodeOps are locked, preventing another resize, and the smaller size prevents new pages to be mapped for the OOB area.
+
+            if size < old_size {
+                // First enforce that the vmspaces don't have the OOB area mapped...
+                for &(vmspace, entry) in self.vnode.mappings.unintr_lock_shared().iter() {
+                    // SAFETY: The VmSpaceInner promised to notify us to remove the entries before they become invalid.
+                    unsafe { (*vmspace).shrink(entry, size) };
+                }
+            }
+            // ...then delete them from the cache.
+            pagecache.set_len(size);
+        }
+
         flags.offset = flags.offset.min(size);
         Ok(())
     }
@@ -331,6 +352,8 @@ pub struct VNode {
     pub(super) fifo: Option<Arc<FifoShared>>,
     /// Page cache for regular files.
     pub(super) pagecache: Option<PageCache>,
+    /// Set of mappings of this as a memory object.
+    pub(super) mappings: Mutex<Vec<(*const VmSpaceInner, *const MapEntry)>>,
     /// Deny writes counter set by the executable loader.
     pub denywrite: AtomicU32,
 }
@@ -360,12 +383,28 @@ impl MemObject for VNode {
         self.mtx.unintr_lock_shared().ops.get_size(self)
     }
 
+    fn on_mapped(&self, vmspace: *const VmSpaceInner, range: *const MapEntry) -> EResult<()> {
+        let mut guard = self.mappings.unintr_lock();
+        guard.try_reserve(1)?;
+        guard.push((vmspace, range));
+        Ok(())
+    }
+
+    fn on_unmapped(&self, _vmspace: *const VmSpaceInner, range: *const MapEntry) {
+        let mut guard = self.mappings.unintr_lock();
+        // No need to check vmspace since the entry pointers will only exist in one vmspace.
+        guard.retain(|e| !core::ptr::addr_eq(e.1, range));
+    }
+
     fn get(&self, offset: u64) -> Option<MappablePage> {
         self.pagecache.as_ref().unwrap().get(offset).unwrap_or(None)
     }
 
     fn alloc(&self, offset: u64) -> EResult<MappablePage> {
         let guard = self.mtx.unintr_lock_shared();
+        if offset >= guard.ops.get_size(self) {
+            return Err(Errno::ENXIO);
+        }
         let pager = VNodePager {
             vnode: self,
             ops: &*guard.ops,
@@ -631,6 +670,7 @@ impl Vfs {
             type_: dirent.type_,
             fifo,
             pagecache,
+            mappings: Mutex::new(Vec::new()),
             denywrite: AtomicU32::new(0),
         })?;
         if dirent.type_ == NodeType::Regular {
