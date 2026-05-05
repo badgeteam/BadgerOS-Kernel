@@ -1627,6 +1627,10 @@ impl VfsOps for E2Fs {
         self.feature_ro_compat & !RO_COMPAT_SUPPORTED != 0
     }
 
+    fn block_size_exp(&self) -> u8 {
+        self.block_size_exp as u8
+    }
+
     fn open_root(&self, _arc_self: &Arc<Vfs>) -> EResult<Box<dyn VNodeOps>> {
         self.open_impl(NonZeroU32::new(ROOT_INO).unwrap())
     }

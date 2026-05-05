@@ -18,6 +18,7 @@ use crate::{
     config::PAGE_SIZE,
     kernel::sync::{mutex::Mutex, spinlock::Spinlock, waitlist::Waitlist},
     mem::pmm::{self, PAddrr},
+    process::usercopy::{UserSlice, UserSliceMut},
     util::rtree::RadixTree,
 };
 
@@ -59,7 +60,7 @@ pub struct PageCache {
 impl PageCache {
     pub fn new(block_size_exp: u8, len: u64) -> Self {
         let entry_size_exp = block_size_exp.max(PAGE_SIZE.ilog2() as u8);
-        let entry_pages_exp = block_size_exp - PAGE_SIZE.ilog2() as u8;
+        let entry_pages_exp = entry_size_exp - PAGE_SIZE.ilog2() as u8;
         let entry_blocks_exp = entry_size_exp - block_size_exp;
         Self {
             block_size_exp,
@@ -70,6 +71,13 @@ impl PageCache {
             read_waitlist: Waitlist::new(),
             write_waitlist: Waitlist::new(),
         }
+    }
+
+    /// Change the page cache's length.
+    pub fn set_len(&self, new_len: u64) {
+        let mut guard = self.len.unintr_lock();
+        *guard = new_len;
+        logkf!(LogLevel::Warning, "TODO: PageCache::set_len invalidation");
     }
 
     /// Index calculation helper.
@@ -85,7 +93,7 @@ impl PageCache {
     unsafe fn read_from_disk(&self, pager: &dyn Pager, index: u64, paddr: PAddrr) -> EResult<()> {
         // Lock length while we're accessing.
         let byte_len = self.len.unintr_lock_shared();
-        let block_len = *byte_len >> self.block_size_exp;
+        let block_len = (*byte_len).div_ceil(1 << self.block_size_exp);
 
         // Determine bounds.
         let start_block = index << self.entry_blocks_exp;
@@ -96,7 +104,7 @@ impl PageCache {
         }
 
         // Backfill the remaining bytes with zeroes.
-        let margin = ((block_len << self.block_size_exp) - *byte_len) as usize;
+        let margin = (block_len << self.block_size_exp).saturating_sub(*byte_len) as usize;
         if margin > 0 {
             // SAFETY: `paddr` comes from the cache and is valid for `2^entry_pages_exp` pages.
             unsafe {
@@ -113,7 +121,7 @@ impl PageCache {
     unsafe fn write_to_disk(&self, pager: &dyn Pager, index: u64, paddr: PAddrr) -> EResult<()> {
         // Lock length while we're accessing.
         let byte_len = self.len.unintr_lock_shared();
-        let block_len = *byte_len >> self.block_size_exp;
+        let block_len = (*byte_len).div_ceil(1 << self.block_size_exp);
 
         // Determine bounds.
         let start_block = index << self.entry_blocks_exp;
@@ -373,6 +381,62 @@ impl PageCache {
             unsafe { pmm::page_free(paddr, order) };
         }
     }
+
+    /// Read bytes through the cache.
+    pub fn read_bytes(
+        &self,
+        pager: &dyn Pager,
+        addr: u64,
+        mut rdata: UserSliceMut<'_, u8>,
+    ) -> EResult<()> {
+        let len = rdata.len() as u64;
+        let mut progress: u64 = 0;
+        while progress < len {
+            let cur_addr = addr + progress;
+            let page_base = cur_addr & !(PAGE_SIZE as u64 - 1);
+            let page_offset = (cur_addr - page_base) as usize;
+            let copy_len = (PAGE_SIZE as usize - page_offset).min((len - progress) as usize);
+
+            let page = self.get(pager, page_base)?;
+            let src_vaddr = page.paddr() + unsafe { HHDM_OFFSET } + page_offset;
+            // SAFETY: paddr from the cache is valid for PAGE_SIZE bytes; copy_len fits within it.
+            let src_slice =
+                unsafe { core::slice::from_raw_parts(src_vaddr as *const u8, copy_len) };
+            rdata.write_multiple(progress as usize, src_slice)?;
+
+            progress += copy_len as u64;
+        }
+        Ok(())
+    }
+
+    /// Write bytes through the cache.
+    pub fn write_bytes(
+        &self,
+        pager: &dyn Pager,
+        addr: u64,
+        wdata: UserSlice<'_, u8>,
+    ) -> EResult<()> {
+        let len = wdata.len() as u64;
+        let mut progress: u64 = 0;
+        while progress < len {
+            let cur_addr = addr + progress;
+            let page_base = cur_addr & !(PAGE_SIZE as u64 - 1);
+            let page_offset = (cur_addr - page_base) as usize;
+            let copy_len = (PAGE_SIZE as usize - page_offset).min((len - progress) as usize);
+
+            let page = self.get(pager, page_base)?;
+            let dst_vaddr = page.paddr() + unsafe { HHDM_OFFSET } + page_offset;
+            // SAFETY: paddr from the cache is valid for PAGE_SIZE bytes; copy_len fits within it.
+            let dst_slice =
+                unsafe { core::slice::from_raw_parts_mut(dst_vaddr as *mut u8, copy_len) };
+            wdata.read_multiple(progress as usize, dst_slice)?;
+            // Mark dirty before dropping page so flush can't evict the just-written entry.
+            self.mark_dirty(pager, page_base);
+
+            progress += copy_len as u64;
+        }
+        Ok(())
+    }
 }
 
 impl Drop for PageCache {
@@ -414,9 +478,6 @@ impl Drop for PageCache {
 
 /// Interface for reading and writing blocks for a [`PageCache`] (note: not locked to system page size).
 pub trait Pager {
-    /// Log-base 2 number of bytes a block is.
-    fn block_size_exp(&self) -> u8;
-
     /// Read data in multiples of the block size of this pager.
     /// The data read if a concurrent write is happening is undefined.
     unsafe fn read_blocks(
@@ -491,10 +552,6 @@ impl TestPager {
 
 #[cfg(feature = "ktest")]
 impl Pager for TestPager {
-    fn block_size_exp(&self) -> u8 {
-        self.block_size_exp
-    }
-
     unsafe fn read_blocks(
         &self,
         start_block: u64,

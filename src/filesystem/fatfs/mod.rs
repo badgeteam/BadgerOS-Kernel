@@ -765,9 +765,8 @@ impl VNodeOps for FatVNode {
 
         if let Some(unlinked_vnode) = &unlinked_vnode {
             let mut guard = unlinked_vnode.mtx.unintr_lock();
-            let fat_vnode = unsafe {
-                &*(guard.ops.as_ref() as *const dyn VNodeOps as *const FatVNode)
-            };
+            let fat_vnode =
+                unsafe { &*(guard.ops.as_ref() as *const dyn VNodeOps as *const FatVNode) };
             *fat_vnode.dirent_disk_off.unintr_lock() = None;
             guard.flags |= vnflags::REMOVED;
         }
@@ -1519,6 +1518,10 @@ impl VfsOps for FatFs {
 
     fn uses_inodes(&self) -> bool {
         false
+    }
+
+    fn block_size_exp(&self) -> u8 {
+        self.cluster_size_exp as u8
     }
 
     fn open_root(&self, self_arc: &Arc<Vfs>) -> EResult<Box<dyn VNodeOps>> {

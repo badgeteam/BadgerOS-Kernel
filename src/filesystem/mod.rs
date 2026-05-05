@@ -40,6 +40,7 @@ use crate::{
         vfs::{VNodeMtxInner, mflags, vnflags},
     },
     kernel::sync::mutex::{Mutex, SharedMutexGuard},
+    mem::vmm::pagecache::PageCache,
     process::{
         uapi::stat::stat,
         usercopy::{UserSlice, UserSliceMut},
@@ -758,6 +759,7 @@ fn o_creat_helper(to_create: Arc<DentCache>, exclusive: bool) -> EResult<Arc<VNo
         vfs: dir_vnode.vfs.clone(),
         type_: NodeType::Regular,
         fifo: None,
+        pagecache: Some(PageCache::new(dir_vnode.vfs.block_size_exp, 0)),
         denywrite: AtomicU32::new(0),
     })?;
     *dentcache.vnode.unintr_lock() = Some(Arc::downgrade(&new_vnode));
@@ -1091,6 +1093,8 @@ pub fn make_file(at: Option<&dyn File>, path: &[u8], spec: MakeFileSpec) -> ERes
 
     // Create new VNode.
     let fifo = (type_ == NodeType::Fifo).then(|| FifoShared::new());
+    let pagecache =
+        (type_ == NodeType::Regular).then(|| PageCache::new(dir_vnode.vfs.block_size_exp, 0));
     let new_vnode = Arc::try_new(VNode {
         mtx: Mutex::new(VNodeMtxInner {
             ops: new_ops,
@@ -1101,6 +1105,7 @@ pub fn make_file(at: Option<&dyn File>, path: &[u8], spec: MakeFileSpec) -> ERes
         vfs: dir_vnode.vfs.clone(),
         type_,
         fifo,
+        pagecache,
         denywrite: AtomicU32::new(0),
     })?;
     *dentcache.vnode.unintr_lock() = Some(Arc::downgrade(&new_vnode));
@@ -1417,6 +1422,7 @@ fn create_vfs(
     };
 
     let vfs_ops = driver.mount(media, mflags)?;
+    let block_size_exp = vfs_ops.block_size_exp();
 
     let vfs = Arc::try_new(Vfs {
         flags: AtomicU32::new(vfs_ops.read_only() as u32 * mflags::READ_ONLY),
@@ -1425,6 +1431,7 @@ fn create_vfs(
         root: UnsafeCell::new(None),
         mountpoint,
         next_fake_ino: AtomicU64::new(1),
+        block_size_exp,
     })
     .unwrap();
 
@@ -1459,6 +1466,7 @@ fn create_vfs(
         vfs: vfs.clone(),
         type_: NodeType::Directory,
         fifo: None,
+        pagecache: None,
         denywrite: AtomicU32::new(0),
     });
     vfs.vnodes

@@ -22,6 +22,7 @@ use crate::{
         error::{EResult, Errno},
         spinlock::Spinlock,
     },
+    config::PAGE_SIZE,
     cpu,
     filesystem::{VNodeMtxInner, vfs::mflags},
     kernel::sync::mutex::Mutex,
@@ -85,6 +86,10 @@ impl VfsOps for RamFs {
 
     fn uses_inodes(&self) -> bool {
         true
+    }
+
+    fn block_size_exp(&self) -> u8 {
+        PAGE_SIZE.ilog2() as u8
     }
 
     fn open_root(&self, _self_arc: &Arc<Vfs>) -> EResult<Box<dyn VNodeOps>> {

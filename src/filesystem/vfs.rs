@@ -31,6 +31,13 @@ use crate::{
     },
     filesystem::fifo::FifoShared,
     kernel::sync::mutex::{Mutex, MutexGuard, SharedMutexGuard},
+    mem::{
+        pmm::PAddrr,
+        vmm::{
+            HHDM_OFFSET,
+            pagecache::{PageCache, Pager},
+        },
+    },
     process::usercopy::{UserSlice, UserSliceMut},
 };
 
@@ -38,6 +45,48 @@ use crate::{
 pub struct FlagsAndOffset {
     pub offset: u64,
     pub flags: u32,
+}
+
+/// Implementation of [`Pager`] used by [`VfsFile`].
+struct VfsFilePager<'a> {
+    vnode: &'a Arc<VNode>,
+    ops: &'a dyn VNodeOps,
+}
+
+impl Pager for VfsFilePager<'_> {
+    unsafe fn read_blocks(
+        &self,
+        start_block: u64,
+        block_count: usize,
+        paddr: PAddrr,
+    ) -> EResult<()> {
+        let block_size_exp = self.vnode.vfs.block_size_exp;
+        let hhdm_slice = unsafe {
+            &mut *core::ptr::slice_from_raw_parts_mut(
+                (paddr + unsafe { HHDM_OFFSET }) as *mut u8,
+                block_count << block_size_exp,
+            )
+        };
+        self.ops
+            .readk(self.vnode, start_block << block_size_exp, hhdm_slice)
+    }
+
+    unsafe fn write_blocks(
+        &self,
+        start_block: u64,
+        block_count: usize,
+        paddr: PAddrr,
+    ) -> EResult<()> {
+        let block_size_exp = self.vnode.vfs.block_size_exp;
+        let hhdm_slice = unsafe {
+            &*core::ptr::slice_from_raw_parts(
+                (paddr + unsafe { HHDM_OFFSET }) as *mut u8,
+                block_count << block_size_exp,
+            )
+        };
+        self.ops
+            .writek(self.vnode, start_block << block_size_exp, hhdm_slice)
+    }
 }
 
 /// A file that is stored in a [`Vfs`].
@@ -55,15 +104,24 @@ impl VfsFile {
         mut flags: MutexGuard<'_, FlagsAndOffset>,
         wdata: UserSlice<'_, u8>,
     ) -> EResult<usize> {
+        let pagecache = self.vnode.pagecache.as_ref().unwrap();
         let mut guard = self.vnode.mtx.lock()?;
         let ops = &mut guard.ops;
+
         let old_size = ops.get_size(&self.vnode);
         let new_size = old_size
             .checked_add(wdata.len() as u64)
             .ok_or(Errno::ENOSPC)?;
+
         ops.resize(&self.vnode, new_size)?;
         flags.offset = new_size;
-        ops.write(&self.vnode, old_size, wdata).map(|_| wdata.len())
+        let pager = VfsFilePager {
+            vnode: &self.vnode,
+            ops: &*guard.ops,
+        };
+        pagecache
+            .write_bytes(&pager, old_size, wdata)
+            .map(|_| wdata.len())
     }
 
     /// Implementation of non-append writes.
@@ -72,6 +130,7 @@ impl VfsFile {
         mut flags: MutexGuard<'_, FlagsAndOffset>,
         wdata: UserSlice<'_, u8>,
     ) -> EResult<usize> {
+        let pagecache = self.vnode.pagecache.as_ref().unwrap();
         let mut guard = self.vnode.mtx.lock_shared()?;
         let size = guard.ops.get_size(&self.vnode);
 
@@ -85,15 +144,17 @@ impl VfsFile {
             drop(guard);
             let mut mut_guard = self.vnode.mtx.lock()?;
             mut_guard.ops.resize(&self.vnode, new_off)?;
-            drop(mut_guard);
-            guard = self.vnode.mtx.lock_shared()?;
+            guard = mut_guard.demote();
         }
+
         // Offset updated successfully; perform write.
+        let pager = VfsFilePager {
+            vnode: &self.vnode,
+            ops: &*guard.ops,
+        };
+        pagecache.write_bytes(&pager, flags.offset, wdata)?;
         flags.offset = new_off;
-        return guard
-            .ops
-            .write(&self.vnode, flags.offset, wdata)
-            .map(|_| wdata.len());
+        Ok(wdata.len())
     }
 }
 
@@ -187,6 +248,7 @@ impl File for VfsFile {
         }
 
         // Get file ops and size.
+        let pagecache = self.vnode.pagecache.as_ref().unwrap();
         let guard = self.vnode.mtx.lock_shared()?;
         let size = guard.ops.get_size(&self.vnode);
 
@@ -196,9 +258,12 @@ impl File for VfsFile {
         flags.offset = offset + readlen as u64;
 
         // Perform read on vnode ops.
-        guard
-            .ops
-            .read(&self.vnode, offset, rdata.subslice_mut(0..readlen))?;
+        let pager = VfsFilePager {
+            vnode: &self.vnode,
+            ops: &*guard.ops,
+        };
+        pagecache.read_bytes(&pager, offset, rdata.subslice_mut(0..readlen))?;
+
         Ok(readlen)
     }
 
@@ -256,6 +321,8 @@ pub struct VNode {
     pub(super) type_: NodeType,
     /// Shared FIFO data.
     pub(super) fifo: Option<Arc<FifoShared>>,
+    /// Page cache for regular files.
+    pub(super) pagecache: Option<PageCache>,
     /// Deny writes counter set by the executable loader.
     pub denywrite: AtomicU32,
 }
@@ -344,8 +411,6 @@ pub trait VNodeOps: Any {
 
     /// Find a directory entry.
     fn find_dirent(&self, arc_self: &Arc<VNode>, name: &[u8]) -> EResult<Dirent>;
-    /// Get all directory entries.
-    // fn get_dirents(&self, arc_self: &Arc<VNode>) -> EResult<Vec<Dirent>>;
     /// Unlink a node from this directory.
     /// Uses POSIX `rmdir` semantics iff `is_rmdir`, otherwise POSIX unlink semantics.
     fn unlink(
@@ -432,6 +497,8 @@ pub struct Vfs {
     pub(super) flags: AtomicU32,
     /// Fake inode counter for filesystems that do not implement inodes.
     pub(super) next_fake_ino: AtomicU64,
+    /// Log-base 2 number of bytes a block is for regular file I/O.
+    pub(super) block_size_exp: u8,
 }
 unsafe impl Sync for Vfs {}
 
@@ -490,6 +557,8 @@ impl Vfs {
         let ops = self.ops.lock_shared()?.open(self, dirent)?;
 
         let fifo = (dirent.type_ == NodeType::Fifo).then(|| FifoShared::new());
+        let pagecache =
+            (dirent.type_ == NodeType::Regular).then(|| PageCache::new(self.block_size_exp, 0));
         let ino = if uses_inodes {
             dirent.ino
         } else {
@@ -505,8 +574,16 @@ impl Vfs {
             vfs: self.clone(),
             type_: dirent.type_,
             fifo,
+            pagecache,
             denywrite: AtomicU32::new(0),
         })?;
+        if dirent.type_ == NodeType::Regular {
+            vnode
+                .pagecache
+                .as_ref()
+                .unwrap()
+                .set_len(vnode.mtx.lock_shared()?.ops.get_size(&vnode));
+        }
 
         // Insert the new vnode.
         // This is done for inode-less filesystems so that we can tell whether any files are open.
@@ -515,8 +592,8 @@ impl Vfs {
         Ok(vnode)
     }
 
-    #[inline(never)]
     /// Called if an I/O error happens on this VFS.
+    #[inline(never)]
     pub(super) fn check_eio_failed(&self) {
         if self.flags.fetch_or(mflags::READ_ONLY, Ordering::Relaxed) & mflags::READ_ONLY == 0 {
             logkf!(
@@ -526,8 +603,8 @@ impl Vfs {
         }
     }
 
-    #[inline(always)]
     /// Mark the VFS as readonly and raise a warning if `result` is [`Errno::EIO`].
+    #[inline(always)]
     pub(super) fn check_eio<T>(&self, result: EResult<T>) -> EResult<T> {
         if unlikely(match &result {
             Err(x) => *x == Errno::EIO,
@@ -556,6 +633,8 @@ pub trait VfsOps: Sync + Any {
     fn read_only(&self) -> bool {
         false
     }
+    /// Log-base 2 number of bytes a block is for regular file I/O.
+    fn block_size_exp(&self) -> u8;
 
     /// Open the root directory.
     fn open_root(&self, self_arc: &Arc<Vfs>) -> EResult<Box<dyn VNodeOps>>;
