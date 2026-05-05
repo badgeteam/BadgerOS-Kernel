@@ -36,7 +36,7 @@ lto = false
 opt-level = 2
 
 [profile.dev.package.kernel]
-opt-level = 0
+opt-level = 1
 debug = true
 
 [profile.release]

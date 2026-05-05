@@ -33,10 +33,7 @@ use crate::{
     kernel::sync::mutex::{Mutex, MutexGuard, SharedMutexGuard},
     mem::{
         pmm::PAddrr,
-        vmm::{
-            HHDM_OFFSET,
-            pagecache::{PageCache, Pager},
-        },
+        vmm::pagecache::{PageCache, Pager},
     },
     process::usercopy::{UserSlice, UserSliceMut},
 };
@@ -57,35 +54,25 @@ impl Pager for VfsFilePager<'_> {
     unsafe fn read_blocks(
         &self,
         start_block: u64,
-        block_count: usize,
-        paddr: PAddrr,
+        _block_count: usize,
+        _paddr: PAddrr,
+        vaddr: &mut [u8],
     ) -> EResult<()> {
         let block_size_exp = self.vnode.vfs.block_size_exp;
-        let hhdm_slice = unsafe {
-            &mut *core::ptr::slice_from_raw_parts_mut(
-                (paddr + unsafe { HHDM_OFFSET }) as *mut u8,
-                block_count << block_size_exp,
-            )
-        };
         self.ops
-            .readk(self.vnode, start_block << block_size_exp, hhdm_slice)
+            .readk(self.vnode, start_block << block_size_exp, vaddr)
     }
 
     unsafe fn write_blocks(
         &self,
         start_block: u64,
-        block_count: usize,
-        paddr: PAddrr,
+        _block_count: usize,
+        _paddr: PAddrr,
+        vaddr: &[u8],
     ) -> EResult<()> {
         let block_size_exp = self.vnode.vfs.block_size_exp;
-        let hhdm_slice = unsafe {
-            &*core::ptr::slice_from_raw_parts(
-                (paddr + unsafe { HHDM_OFFSET }) as *mut u8,
-                block_count << block_size_exp,
-            )
-        };
         self.ops
-            .writek(self.vnode, start_block << block_size_exp, hhdm_slice)
+            .writek(self.vnode, start_block << block_size_exp, vaddr)
     }
 }
 

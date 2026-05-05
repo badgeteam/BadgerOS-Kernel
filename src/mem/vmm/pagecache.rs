@@ -104,7 +104,16 @@ impl PageCache {
         let end_block = (start_block + (1 << self.entry_blocks_exp)).min(block_len);
 
         unsafe {
-            pager.read_blocks(start_block, (end_block - start_block) as usize, paddr)?;
+            let hhdm_slice = core::ptr::slice_from_raw_parts_mut(
+                (paddr + HHDM_OFFSET) as *mut u8,
+                ((end_block - start_block) as usize) << self.block_size_exp,
+            );
+            pager.read_blocks(
+                start_block,
+                (end_block - start_block) as usize,
+                paddr,
+                &mut *hhdm_slice,
+            )?;
         }
 
         // Backfill with zeroes past the file's end — only on the last entry.
@@ -139,7 +148,18 @@ impl PageCache {
         let start_block = index << self.entry_blocks_exp;
         let end_block = (start_block + (1 << self.entry_blocks_exp)).min(block_len);
 
-        unsafe { pager.write_blocks(start_block, (end_block - start_block) as usize, paddr) }
+        unsafe {
+            let hhdm_slice = core::ptr::slice_from_raw_parts(
+                (paddr + HHDM_OFFSET) as *const u8,
+                ((end_block - start_block) as usize) << self.block_size_exp,
+            );
+            pager.write_blocks(
+                start_block,
+                (end_block - start_block) as usize,
+                paddr,
+                &*hhdm_slice,
+            )
+        }
     }
 
     /// Try to get an existing entry.
@@ -501,6 +521,7 @@ pub trait Pager {
         start_block: u64,
         block_count: usize,
         paddr: PAddrr,
+        vaddr: &mut [u8],
     ) -> EResult<()>;
 
     /// Write data in multiples of the block size of this pager.
@@ -510,6 +531,7 @@ pub trait Pager {
         start_block: u64,
         block_count: usize,
         paddr: PAddrr,
+        vaddr: &[u8],
     ) -> EResult<()>;
 }
 
@@ -572,7 +594,8 @@ impl Pager for TestPager {
         &self,
         start_block: u64,
         block_count: usize,
-        paddr: PAddrr,
+        _paddr: PAddrr,
+        vaddr: &mut [u8],
     ) -> EResult<()> {
         let op = TestPagerOp::Read {
             start_block,
@@ -584,13 +607,7 @@ impl Pager for TestPager {
         let src_start = start_block as usize * block_size;
         let data = self.data.borrow();
         let src = &data[src_start..src_start + block_count * block_size];
-        unsafe {
-            let dst = core::slice::from_raw_parts_mut(
-                (paddr + HHDM_OFFSET) as *mut u8,
-                block_count * block_size,
-            );
-            dst.copy_from_slice(src);
-        }
+        vaddr.copy_from_slice(src);
         Ok(())
     }
 
@@ -598,7 +615,8 @@ impl Pager for TestPager {
         &self,
         start_block: u64,
         block_count: usize,
-        paddr: PAddrr,
+        _paddr: PAddrr,
+        vaddr: &[u8],
     ) -> EResult<()> {
         let op = TestPagerOp::Write {
             start_block,
@@ -608,14 +626,8 @@ impl Pager for TestPager {
 
         let block_size = 1usize << self.block_size_exp;
         let dst_start = start_block as usize * block_size;
-        let src = unsafe {
-            core::slice::from_raw_parts(
-                (paddr + HHDM_OFFSET) as *const u8,
-                block_count * block_size,
-            )
-        };
         let mut data = self.data.borrow_mut();
-        data[dst_start..dst_start + block_count * block_size].copy_from_slice(src);
+        data[dst_start..dst_start + block_count * block_size].copy_from_slice(vaddr);
         Ok(())
     }
 }
