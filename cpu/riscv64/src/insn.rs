@@ -51,7 +51,7 @@ pub const fn is_float_opc(opc: u16) -> bool {
 
 pub const fn is_float_op(op: u32) -> bool {
     use op_maj::*;
-    let op_maj = (op >> 2) & 0x3f;
+    let op_maj = (op >> 2) & 0x1f;
     let funct3 = (op >> 12) & 0x7;
     let csr = op >> 20;
     match op_maj {
