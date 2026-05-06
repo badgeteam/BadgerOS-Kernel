@@ -30,7 +30,7 @@ pub unsafe extern "C" fn syscall_mem_map(
                 }
 
                 let file = proc.files.lock_shared()?.get_file(fd)?;
-                let object = file.get_memobject().ok_or(Errno::EACCES)?;
+                let object = file.get_memobject().ok_or(Errno::ENODEV)?;
                 mapping = Some(Mapping {
                     offset: offset as u64,
                     object,

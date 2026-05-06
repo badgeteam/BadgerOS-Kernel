@@ -9,9 +9,14 @@ use crate::{
     bindings::error::{EResult, Errno},
     config::PAGE_SIZE,
     filesystem::{self, File, oflags},
-    mem::vmm::{self, map::VmSpace, prot},
-    process::usercopy::UserSliceMut,
+    mem::vmm::{
+        self,
+        map::{self, Mapping, VmSpace},
+        prot,
+    },
 };
+
+use super::usercopy::UserSliceMut;
 
 mod elf64;
 
@@ -67,8 +72,84 @@ pub struct ElfIdent {
     pub _padding0: [u8; 7],
 }
 
-/// Temporary mapping helper for [`load`].
+/// Program header segment mapping helper for [`load_impl`].
 fn map_helper(
+    file: &dyn File,
+    memmap: &VmSpace,
+    phdr: elf64::ProgHeader,
+    load_offset: usize,
+) -> EResult<()> {
+    // Address calculations.
+    let vaddr = phdr.vaddr as usize + load_offset;
+    let end_vaddr = vaddr + phdr.file_size as usize;
+    let file_start_vaddr = vaddr / PAGE_SIZE as usize * PAGE_SIZE as usize;
+    let file_end_vaddr =
+        (vaddr + phdr.file_size as usize).div_ceil(PAGE_SIZE as usize) * PAGE_SIZE as usize;
+    let mem_end_vaddr =
+        (vaddr + phdr.mem_size as usize).div_ceil(PAGE_SIZE as usize) * PAGE_SIZE as usize;
+    let file_start_offset = phdr.offset - (vaddr - file_start_vaddr) as u64;
+
+    // Mapping: Phase 1: Back with anonymous allocations.
+    memmap.map(
+        mem_end_vaddr - file_start_vaddr,
+        file_start_vaddr,
+        map::PRIVATE | map::FIXED,
+        prot::READ | prot::WRITE,
+        None,
+    )?;
+
+    // Mapping: Phase 2: Cover with file mappings.
+    memmap.map(
+        file_end_vaddr - file_start_vaddr,
+        file_start_vaddr,
+        map::PRIVATE | map::FIXED | map::DENYWRITE,
+        prot::READ | prot::WRITE,
+        Some(Mapping {
+            offset: file_start_offset,
+            object: file.get_memobject().ok_or(Errno::ENODEV)?,
+        }),
+    )?;
+
+    // Mapping: Phase 3: Enforce all BSS is zeroes and write zeroes if it is not.
+    let check_bss_zero = |mut uptr: UserSliceMut<u8>| -> EResult<()> {
+        let mut write = false;
+        for i in 0..uptr.len() {
+            if write || uptr.read(i)? != 0 {
+                write = true;
+                uptr.write(i, 0)?;
+            }
+        }
+        Ok(())
+    };
+
+    check_bss_zero(UserSliceMut::new_mut(
+        file_start_vaddr as *mut u8,
+        vaddr - file_start_vaddr,
+    )?)?;
+    check_bss_zero(UserSliceMut::new_mut(
+        end_vaddr as *mut u8,
+        file_end_vaddr - end_vaddr,
+    )?)?;
+
+    // Mapping: Phase 4: Apply protections.
+    let mut prot = 0;
+    if phdr.flags & elf64::PF_R != 0 {
+        prot |= prot::READ;
+    }
+    if phdr.flags & elf64::PF_W != 0 {
+        // On most architectures, and in BadgerOS, write implies read.
+        prot |= prot::WRITE | prot::READ;
+    }
+    if phdr.flags & elf64::PF_X != 0 {
+        prot |= prot::EXEC;
+    }
+    memmap.protect(file_start_vaddr..mem_end_vaddr, prot)?;
+
+    Ok(())
+}
+
+/// Temporary mapping helper for [`load`].
+fn map_helper1(
     file: &dyn File,
     memmap: &VmSpace,
     phdr: elf64::ProgHeader,
@@ -77,19 +158,11 @@ fn map_helper(
     let vaddr = phdr.vaddr as usize + load_offset;
     let aligned_vaddr = vaddr / PAGE_SIZE as usize * PAGE_SIZE as usize;
     let vaddr_end = vaddr + phdr.mem_size as usize;
+    let aligned_offset = phdr.offset / PAGE_SIZE as u64 * PAGE_SIZE as u64;
 
-    memmap.map(
-        vaddr_end - aligned_vaddr,
-        aligned_vaddr,
-        vmm::map::FIXED | vmm::map::PRIVATE,
-        vmm::prot::READ | vmm::prot::WRITE | vmm::prot::EXEC,
-        None,
-    )?;
-
-    let mut uslice = UserSliceMut::new_mut(vaddr as *mut u8, phdr.mem_size as usize)?;
-    uslice.fill(0)?;
-    file.seek_strong(phdr.offset, Errno::ENOEXEC)?;
-    file.read(uslice.subslice_mut(0..phdr.file_size as usize))?;
+    if vaddr % PAGE_SIZE as usize != phdr.offset as usize % PAGE_SIZE as usize {
+        return Err(Errno::ENOEXEC);
+    }
 
     let mut prot = prot::READ;
     if phdr.flags & elf64::PF_W != 0 {
@@ -98,7 +171,17 @@ fn map_helper(
     if phdr.flags & elf64::PF_X != 0 {
         prot |= prot::EXEC;
     }
-    memmap.protect(aligned_vaddr..vaddr_end, prot)?;
+
+    memmap.map(
+        vaddr_end - aligned_vaddr,
+        aligned_vaddr,
+        vmm::map::FIXED | vmm::map::PRIVATE | vmm::map::DENYWRITE | vmm::map::POPULATE,
+        prot,
+        Some(Mapping {
+            offset: aligned_offset,
+            object: file.get_memobject().ok_or(Errno::ENODEV)?,
+        }),
+    )?;
 
     Ok(())
 }
@@ -106,15 +189,17 @@ fn map_helper(
 /// Load an ELF file into a memory map.
 /// Returns the entrypoint to jump to.
 pub fn load(file: &dyn File, memmap: &VmSpace, auxv: &mut Vec<AuxvEntry>) -> EResult<usize> {
-    load_impl(file, memmap, auxv, false)
+    let (entry, _) = load_impl(file, memmap, auxv, false)?;
+    Ok(entry)
 }
 
+/// Returns `(entry, load_offset)`.
 pub fn load_impl(
     file: &dyn File,
     memmap: &VmSpace,
     auxv: &mut Vec<AuxvEntry>,
     is_interp: bool,
-) -> EResult<usize> {
+) -> EResult<(usize, usize)> {
     file.seek_strong(0, Errno::ENOEXEC)?;
     let header: elf64::ElfHeader = file.read_pod(Errno::ENOEXEC)?;
 
@@ -211,9 +296,15 @@ pub fn load_impl(
             let interp_file = filesystem::open(None, &path, oflags::READ_ONLY | oflags::FILE_ONLY)?;
 
             let mut dummy = Vec::new();
-            entry = load_impl(interp_file.as_ref(), memmap, &mut dummy, true)?;
+            let (interp_entry, interp_base) =
+                load_impl(interp_file.as_ref(), memmap, &mut dummy, true)?;
+            entry = interp_entry;
+            auxv.push(AuxvEntry {
+                type_: AT_BASE,
+                value: interp_base,
+            });
         }
     }
 
-    Ok(entry)
+    Ok((entry, load_offset))
 }

@@ -34,14 +34,6 @@ unsafe extern "C" fn vmm_map_k(
                     flags as _,
                     Some(Mapping { object, offset: 0 }),
                 )?;
-                logkf!(
-                    LogLevel::Debug,
-                    "vmm_map_k(..., 0x{:x}, 0x{:x}, {}) -> 0x{:x}",
-                    virt_len,
-                    phys_base,
-                    flags,
-                    vaddr
-                );
                 *virt_base_out = vaddr;
             }
         },
