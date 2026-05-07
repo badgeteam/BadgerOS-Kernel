@@ -17,7 +17,6 @@ use device::{BlockDevFile, CharDevFile};
 use linkflags::LinkFlags;
 use media::Media;
 use oflags::OFlags;
-use sysimpl::DentBuffer;
 use vfs::{
     DentCache, DentCacheDir, DentCacheType, FlagsAndOffset, VNode, Vfs, VfsDriver, VfsFile,
     mflags::MFlags,
@@ -45,6 +44,7 @@ use crate::{
     },
     mem::vmm::{memobject::MemObject, pagecache::PageCache},
     process::{
+        syscall::fs::DentBuffer,
         uapi::stat::stat,
         usercopy::{UserSlice, UserSliceMut},
     },
@@ -59,7 +59,6 @@ pub mod media;
 pub mod mount_root;
 pub mod partition;
 pub mod ramfs;
-pub mod sysimpl;
 pub mod test;
 pub mod vfs;
 

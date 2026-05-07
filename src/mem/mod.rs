@@ -5,7 +5,6 @@
 use core::sync::atomic::AtomicU32;
 
 pub mod pmm;
-pub mod sysimpl;
 pub mod vmm;
 
 /// Percentage quota of unused pages to use for caches.

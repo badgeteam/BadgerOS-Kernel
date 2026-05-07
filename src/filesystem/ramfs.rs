@@ -26,13 +26,15 @@ use crate::{
     cpu,
     filesystem::{VNodeMtxInner, vfs::mflags},
     kernel::sync::mutex::Mutex,
-    process::usercopy::{UserSlice, UserSliceMut},
+    process::{
+        syscall::fs::DentBuffer,
+        usercopy::{UserSlice, UserSliceMut},
+    },
 };
 
 use super::{
     Dirent, FSDRIVERS, MakeFileSpec, NodeMode, NodeType, Stat, UnlinkMode,
     media::Media,
-    sysimpl::DentBuffer,
     vfs::{VNode, VNodeOps, Vfs, VfsDriver, VfsOps, mflags::MFlags},
 };
 

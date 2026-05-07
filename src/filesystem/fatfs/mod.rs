@@ -19,15 +19,17 @@ use crate::{
     filesystem::{VNodeMtxInner, fatfs::spec::attr2, vfs::vnflags},
     kernel::sync::mutex::Mutex,
     mem::vmm::zeroes,
-    process::usercopy::{UserSlice, UserSliceMut},
+    process::{
+        syscall::fs::DentBuffer,
+        usercopy::{UserSlice, UserSliceMut},
+    },
 };
 
 use super::{
-    FSDRIVERS, MakeFileSpec, NodeType, Stat, UnlinkMode,
+    FSDRIVERS, MakeFileSpec, NAME_MAX, NodeType, Stat, UnlinkMode,
     media::Media,
     vfs::{VNode, VNodeOps, Vfs, VfsDriver, VfsOps, mflags::MFlags},
 };
-use super::{NAME_MAX, sysimpl::DentBuffer};
 use core::{fmt::Debug, num::NonZeroU8};
 
 mod cluster;

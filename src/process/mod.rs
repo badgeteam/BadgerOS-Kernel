@@ -57,7 +57,6 @@ pub mod elf;
 pub mod files;
 pub mod signal;
 pub mod syscall;
-pub mod sysimpl;
 pub mod uapi;
 pub mod usercopy;
 
@@ -72,6 +71,8 @@ pub mod pflags {
 
 /// Unique process identifier.
 pub type PID = pid_t;
+/// Per-process thread identifier.
+pub type TID = i64;
 
 /// Count of next PID that will be used.
 /// TODO: We can actually make this 64-bit but I'll do that later.
@@ -102,7 +103,7 @@ pub struct Cmdline {
 /// Process threads list.
 #[derive(Default)]
 struct ProcThreads {
-    threads: BTreeMap<i64, Arc<Thread>>,
+    threads: BTreeMap<TID, Arc<Thread>>,
     detached: Vec<Weak<Thread>>,
 }
 
@@ -536,7 +537,7 @@ impl Process {
         self: &Arc<Self>,
         setup: impl FnOnce(*mut ()) -> (*const (), *mut ()) + Send + 'static,
         name: Option<String>,
-    ) -> EResult<i64> {
+    ) -> EResult<TID> {
         let tid = self.tid_counter.fetch_add(1, Ordering::Relaxed);
         // TODO: Safe and owning API for memory objects?
         let u_stack = self.memmap().map(

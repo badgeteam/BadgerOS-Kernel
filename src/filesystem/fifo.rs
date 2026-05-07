@@ -15,10 +15,13 @@ use crate::{
     },
     cpu::irq,
     kernel::sync::{mutex::Mutex, waitlist::Waitlist},
-    process::usercopy::{UserSlice, UserSliceMut},
+    process::{
+        syscall::fs::DentBuffer,
+        usercopy::{UserSlice, UserSliceMut},
+    },
 };
 
-use super::{File, SeekMode, Stat, VNode, oflags, poll, sysimpl::DentBuffer};
+use super::{File, SeekMode, Stat, VNode, oflags, poll};
 
 pub type FifoBuffer = badgelib::fifo::Fifo;
 

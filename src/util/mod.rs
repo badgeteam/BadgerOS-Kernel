@@ -10,6 +10,10 @@ pub mod bitset;
 pub mod list;
 pub mod rtree;
 
+pub mod version {
+    include!("../../target/version.rs");
+}
+
 /// Enum that represents either a const or a mut reference.
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 pub enum MaybeMut<'a, T> {

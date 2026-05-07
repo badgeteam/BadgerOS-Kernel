@@ -8,7 +8,7 @@ use alloc::{collections::btree_map::BTreeMap, sync::Arc, vec::Vec};
 
 use crate::{
     bindings::error::{EResult, Errno},
-    filesystem::{self, File, oflags, sysimpl::AT_FDCWD},
+    filesystem::{self, File, oflags},
     process::FILE_MAX,
 };
 
@@ -74,9 +74,9 @@ impl FDTable {
         Ok(())
     }
 
-    /// If `fileno` is [`AT_FDCWD`], return `self.fd_cwd`; otherwise, the same as [`Self::get_file`].
+    /// If `fileno` is AT_FDCWD, return `self.fd_cwd`; otherwise, the same as [`Self::get_file`].
     pub fn get_atfile(&self, fileno: i32) -> EResult<Option<Arc<dyn File>>> {
-        if fileno == AT_FDCWD {
+        if fileno == -100 {
             Ok(self.fd_cwd.clone())
         } else {
             Ok(Some(self.get_file(fileno)?))

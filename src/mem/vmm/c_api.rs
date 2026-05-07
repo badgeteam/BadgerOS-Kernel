@@ -5,7 +5,7 @@
 use alloc::sync::Arc;
 
 use crate::{
-    bindings::{error::Errno, log::LogLevel, raw::errno_t},
+    bindings::{error::Errno, raw::errno_t},
     mem::pmm::PAddrr,
 };
 

@@ -6,4 +6,3 @@ pub mod cpulocal;
 pub mod sched;
 pub mod smp;
 pub mod sync;
-pub mod sysimpl;

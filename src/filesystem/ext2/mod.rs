@@ -23,17 +23,18 @@ use crate::{
         device::HasBaseDevice,
         error::{EResult, Errno},
     },
-    filesystem::{MakeFileSpec, NAME_MAX},
     kernel::sync::mutex::Mutex,
-    process::usercopy::{UserSlice, UserSliceMut},
+    process::{
+        syscall::fs::DentBuffer,
+        usercopy::{UserSlice, UserSliceMut},
+    },
     util::MaybeMut,
 };
 use spec::*;
 
 use super::{
-    Dirent, FSDRIVERS, NodeType, Stat, UnlinkMode,
+    Dirent, FSDRIVERS, MakeFileSpec, NAME_MAX, NodeType, Stat, UnlinkMode,
     media::Media,
-    sysimpl::DentBuffer,
     vfs::{
         VNode, VNodeMtxInner, VNodeOps, Vfs, VfsDriver, VfsOps,
         mflags::{self, MFlags},

@@ -24,7 +24,7 @@ use crate::{
     ktest::{KTestWhen, ktests_runlevel},
     mem::vmm,
     process::Process,
-    sys::version,
+    util::version,
 };
 
 unsafe extern "C" {

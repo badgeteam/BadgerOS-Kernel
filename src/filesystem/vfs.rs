@@ -22,7 +22,6 @@ use mflags::MFlags;
 
 use super::{
     Dirent, File, MakeFileSpec, NodeType, SeekMode, Stat, UnlinkMode, media::Media, oflags, poll,
-    sysimpl::DentBuffer,
 };
 use crate::{
     LogLevel,
@@ -43,7 +42,10 @@ use crate::{
             pagecache::{PageCache, Pager},
         },
     },
-    process::usercopy::{UserSlice, UserSliceMut},
+    process::{
+        syscall::fs::DentBuffer,
+        usercopy::{UserSlice, UserSliceMut},
+    },
 };
 
 /// Offset and flags for [`VfsFile`].
