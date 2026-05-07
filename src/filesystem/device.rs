@@ -46,6 +46,18 @@ impl CharDevFile {
 }
 
 impl File for CharDevFile {
+    fn poll(&self) -> u32 {
+        self.char_dev.poll()
+    }
+
+    fn poll_waitlists<'a>(
+        &'a self,
+        interest: u32,
+        collect: &mut Vec<&'a Waitlist>,
+    ) -> EResult<()> {
+        self.char_dev.poll_waitlists(interest, collect)
+    }
+
     fn get_flags(&self) -> u32 {
         *self.flags.unintr_lock_shared()
     }
@@ -147,6 +159,19 @@ impl BlockDevFile {
 }
 
 impl File for BlockDevFile {
+    fn poll(&self) -> u32 {
+        // I/O is always non-blocking on raw block devices.
+        poll::IN | poll::OUT
+    }
+
+    fn poll_waitlists<'a>(
+        &'a self,
+        _interest: u32,
+        _collect: &mut Vec<&'a Waitlist>,
+    ) -> EResult<()> {
+        Ok(())
+    }
+
     fn get_flags(&self) -> u32 {
         self.flags.unintr_lock_shared().flags
     }

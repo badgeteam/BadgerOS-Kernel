@@ -1,5 +1,7 @@
 use alloc::boxed::Box;
 
+use alloc::vec::Vec;
+
 use crate::{
     bindings::{
         device::{self, BaseDriver, Device, DeviceInfoView, class::char::CharDriver},
@@ -7,6 +9,8 @@ use crate::{
         raw::driver_char_t,
     },
     char_driver_struct,
+    filesystem::poll,
+    kernel::sync::waitlist::Waitlist,
     process::usercopy::{UserSlice, UserSliceMut},
 };
 
@@ -28,6 +32,20 @@ impl CharDriver for DevZero {
 
     fn write(&self, buf: UserSlice<'_, u8>, _nonblock: bool) -> EResult<usize> {
         Ok(buf.len())
+    }
+
+    fn poll(&self) -> u32 {
+        // /dev/zero - always writable and readable.
+        poll::IN | poll::OUT
+    }
+
+    fn poll_waitlists<'a>(
+        &'a self,
+        _interest: u32,
+        _collect: &mut Vec<&'a Waitlist>,
+    ) -> EResult<()> {
+        // /dev/zero - always writable and readable.
+        Ok(())
     }
 }
 

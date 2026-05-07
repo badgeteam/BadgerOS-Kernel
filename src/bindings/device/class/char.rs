@@ -6,8 +6,9 @@ use crate::{
     bindings::{
         device::{AbstractDevice, BaseDriver, Device, DeviceFilters},
         error::{EResult, Errno},
-        raw::{self, dev_class_t_DEV_CLASS_CHAR, device_char_t},
+        raw::{self, dev_class_t_DEV_CLASS_CHAR, device_char_t, driver_char_t},
     },
+    kernel::sync::waitlist::Waitlist,
     process::usercopy::{UserSlice, UserSliceMut},
 };
 
@@ -47,6 +48,62 @@ impl CharDevice {
             )
         })
     }
+
+    /// Get current polling status flags.
+    /// Returns `0` if no driver is bound.
+    pub fn poll(&self) -> u32 {
+        unsafe { poll_via_char(self.as_raw_ptr()) }
+    }
+
+    /// Collect waitlists for the requested poll interest flags.
+    /// Returns `Ok(())` with no waitlists collected if no driver is bound.
+    pub fn poll_waitlists<'a>(
+        &'a self,
+        interest: u32,
+        collect: &mut Vec<&'a Waitlist>,
+    ) -> EResult<()> {
+        unsafe { poll_waitlists_via_char(self.as_raw_ptr(), interest, collect) }
+    }
+}
+
+/// Dispatch `poll` for any device whose driver inherits from `driver_char_t`.
+/// Used by both [`CharDevice`] and [`super::tty::TTYDevice`].
+pub(super) unsafe fn poll_via_char(device: *mut device_char_t) -> u32 {
+    unsafe {
+        raw::mutex_lock_shared(&raw mut (*device).base.driver_mtx);
+        let driver = (*device).base.driver as *const driver_char_t;
+        let res = if driver.is_null() {
+            0
+        } else {
+            ((*driver).poll.unwrap())(device)
+        };
+        raw::mutex_unlock_shared(&raw mut (*device).base.driver_mtx);
+        res
+    }
+}
+
+/// Dispatch `poll_waitlists` for any device whose driver inherits from `driver_char_t`.
+/// Used by both [`CharDevice`] and [`super::tty::TTYDevice`].
+pub(super) unsafe fn poll_waitlists_via_char<'a>(
+    device: *mut device_char_t,
+    interest: u32,
+    collect: &mut Vec<&'a Waitlist>,
+) -> EResult<()> {
+    unsafe {
+        raw::mutex_lock_shared(&raw mut (*device).base.driver_mtx);
+        let driver = (*device).base.driver as *const driver_char_t;
+        let res = if driver.is_null() {
+            Ok(())
+        } else {
+            Errno::check(((*driver).poll_waitlists.unwrap())(
+                device,
+                interest,
+                collect as *mut Vec<&'a Waitlist> as *mut c_void,
+            ))
+        };
+        raw::mutex_unlock_shared(&raw mut (*device).base.driver_mtx);
+        res
+    }
 }
 
 /// Character device driver functions.
@@ -55,6 +112,14 @@ pub trait CharDriver: BaseDriver {
     fn read(&self, rdata: UserSliceMut<'_, u8>, nonblock: bool) -> EResult<usize>;
     /// Write bytes to the device.
     fn write(&self, wdata: UserSlice<'_, u8>, nonblock: bool) -> EResult<usize>;
+    /// Get current polling status flags.
+    fn poll(&self) -> u32;
+    /// Collect waitlists for the requested poll interest flags.
+    fn poll_waitlists<'a>(
+        &'a self,
+        interest: u32,
+        collect: &mut Vec<&'a Waitlist>,
+    ) -> EResult<()>;
 }
 
 /// Helper macro for filling in character driver fields.
@@ -73,8 +138,10 @@ macro_rules! abstract_char_driver_struct {
     ($type: ty, $class: expr, $match_: expr, $add: expr) => {{
         use crate::{
             bindings::{device::class::char::*, error::*, raw::*},
+            kernel::sync::waitlist::Waitlist,
             process::usercopy::{UserSlice, UserSliceMut},
         };
+        use ::alloc::vec::Vec;
         use ::core::{
             ffi::c_void,
             ptr::{slice_from_raw_parts, slice_from_raw_parts_mut},
@@ -119,6 +186,25 @@ macro_rules! abstract_char_driver_struct {
                     ))
                 }
                 Some(read_wrapper)
+            },
+            poll: {
+                unsafe extern "C" fn poll_wrapper(device: *mut device_char_t) -> u32 {
+                    let ptr = unsafe { &*((*device).base.cookie as *const $type) };
+                    ptr.poll()
+                }
+                Some(poll_wrapper)
+            },
+            poll_waitlists: {
+                unsafe extern "C" fn poll_waitlists_wrapper(
+                    device: *mut device_char_t,
+                    interest: u32,
+                    collect: *mut c_void,
+                ) -> errno_t {
+                    let ptr = unsafe { &*((*device).base.cookie as *const $type) };
+                    let collect = unsafe { &mut *(collect as *mut Vec<&Waitlist>) };
+                    Errno::extract(ptr.poll_waitlists(interest, collect))
+                }
+                Some(poll_waitlists_wrapper)
             },
         }
     }};

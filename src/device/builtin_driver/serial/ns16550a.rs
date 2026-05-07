@@ -2,7 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use alloc::boxed::Box;
+use alloc::{boxed::Box, vec::Vec};
 use tock_registers::{
     interfaces::{Readable, Writeable},
     register_structs,
@@ -24,6 +24,8 @@ use crate::{
         raw::{dev_atype_t_DEV_ATYPE_MMIO, driver_tty_t, irqno_t},
         spinlock::Spinlock,
     },
+    filesystem::poll,
+    kernel::sync::waitlist::Waitlist,
     process::{
         uapi::termios,
         usercopy::{UserSlice, UserSliceMut},
@@ -269,6 +271,24 @@ impl CharDriver for Ns16550aDriver {
         self.check_fifos();
 
         res
+    }
+
+    fn poll(&self) -> u32 {
+        let read = self.rxfifo.read_avl() > 0;
+        let write = self.txfifo.write_avl() > 0;
+        read as u32 * poll::IN + write as u32 * poll::OUT
+    }
+
+    fn poll_waitlists<'a>(&'a self, interest: u32, collect: &mut Vec<&'a Waitlist>) -> EResult<()> {
+        if interest & poll::IN != 0 {
+            collect.try_reserve(1)?;
+            collect.push(self.rxfifo.read_waitlist());
+        }
+        if interest & poll::OUT != 0 {
+            collect.try_reserve(1)?;
+            collect.push(self.rxfifo.write_waitlist());
+        }
+        Ok(())
     }
 }
 

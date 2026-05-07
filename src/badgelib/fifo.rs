@@ -279,4 +279,12 @@ impl BlockingFifo {
     pub fn write_avl(&self) -> usize {
         self.fifo.write_avl()
     }
+
+    pub fn read_waitlist(&self) -> &Waitlist {
+        &self.read_waitlist
+    }
+
+    pub fn write_waitlist(&self) -> &Waitlist {
+        &self.write_waitlist
+    }
 }

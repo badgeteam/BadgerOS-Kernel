@@ -8,13 +8,14 @@ use crate::{
         error::{EResult, Errno},
         raw::{self, dev_class_t_DEV_CLASS_TTY, device_char_t, device_tty_t},
     },
+    kernel::sync::waitlist::Waitlist,
     process::{
         uapi::termios::termios,
         usercopy::{UserSlice, UserSliceMut},
     },
 };
 
-use super::char::CharDriver;
+use super::char::{CharDriver, poll_via_char, poll_waitlists_via_char};
 
 /// Specialization for TTY devices.
 pub type TTYDevice = AbstractDevice<device_tty_t>;
@@ -48,6 +49,24 @@ impl TTYDevice {
                 nonblock,
             )
         })
+    }
+
+    /// Get current polling status flags.
+    /// Returns `0` if no driver is bound.
+    pub fn poll(&self) -> u32 {
+        unsafe { poll_via_char(self.as_raw_ptr() as *mut device_char_t) }
+    }
+
+    /// Collect waitlists for the requested poll interest flags.
+    /// Returns `Ok(())` with no waitlists collected if no driver is bound.
+    pub fn poll_waitlists<'a>(
+        &'a self,
+        interest: u32,
+        collect: &mut Vec<&'a Waitlist>,
+    ) -> EResult<()> {
+        unsafe {
+            poll_waitlists_via_char(self.as_raw_ptr() as *mut device_char_t, interest, collect)
+        }
     }
 
     /// Get terminal attributes.

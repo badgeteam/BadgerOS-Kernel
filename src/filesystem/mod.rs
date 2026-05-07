@@ -39,7 +39,10 @@ use crate::{
         fifo::{Fifo, FifoShared},
         vfs::{VNodeMtxInner, mflags, vnflags},
     },
-    kernel::sync::mutex::{Mutex, SharedMutexGuard},
+    kernel::sync::{
+        mutex::{Mutex, SharedMutexGuard},
+        waitlist::Waitlist,
+    },
     mem::vmm::{memobject::MemObject, pagecache::PageCache},
     process::{
         uapi::stat::stat,
@@ -302,8 +305,28 @@ impl Debug for Dirent {
     }
 }
 
+/// Polling flags.
+pub mod poll {
+    /// There is data to read.
+    pub const IN: u32 = 1 << 0;
+    /// Exceptional condition on the file.
+    pub const PRI: u32 = 1 << 1;
+    /// There is space available to write.
+    pub const OUT: u32 = 1 << 2;
+    /// Error condition (only returned by the poll syscall).
+    pub const ERR: u32 = 1 << 3;
+    /// Hangup.
+    pub const HUP: u32 = 1 << 4;
+    /// Invalid file descriptor (only returned by the poll syscall).
+    pub const NVAL: u32 = 1 << 5;
+}
+
 /// Handle to an open file. Dropping it closes the file.
 pub trait File: Sync {
+    /// Check polling status flags.
+    fn poll(&self) -> u32;
+    /// Get polling waitlists for the [`poll`] flags in `interest`, if they exist.
+    fn poll_waitlists<'a>(&'a self, interest: u32, collect: &mut Vec<&'a Waitlist>) -> EResult<()>;
     /// Get file mode and access flags.
     fn get_flags(&self) -> u32;
     /// Try to set file mode and access flags.

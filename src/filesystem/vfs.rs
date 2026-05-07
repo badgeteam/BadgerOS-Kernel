@@ -21,7 +21,7 @@ use alloc::{
 use mflags::MFlags;
 
 use super::{
-    Dirent, File, MakeFileSpec, NodeType, SeekMode, Stat, UnlinkMode, media::Media, oflags,
+    Dirent, File, MakeFileSpec, NodeType, SeekMode, Stat, UnlinkMode, media::Media, oflags, poll,
     sysimpl::DentBuffer,
 };
 use crate::{
@@ -31,7 +31,10 @@ use crate::{
         error::{EResult, Errno},
     },
     filesystem::fifo::FifoShared,
-    kernel::sync::mutex::{Mutex, MutexGuard, SharedMutexGuard},
+    kernel::sync::{
+        mutex::{Mutex, MutexGuard, SharedMutexGuard},
+        waitlist::Waitlist,
+    },
     mem::{
         pmm::PAddrr,
         vmm::{
@@ -157,6 +160,20 @@ impl VfsFile {
 }
 
 impl File for VfsFile {
+    fn poll(&self) -> u32 {
+        // Regular VFS file; I/O is never blocking.
+        poll::IN | poll::OUT
+    }
+
+    fn poll_waitlists<'a>(
+        &'a self,
+        _interest: u32,
+        _collect: &mut Vec<&'a Waitlist>,
+    ) -> EResult<()> {
+        // Regular VFS file; I/O is never blocking.
+        Ok(())
+    }
+
     fn get_flags(&self) -> u32 {
         self.flags.unintr_lock_shared().flags
     }

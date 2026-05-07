@@ -4,7 +4,7 @@
 
 use core::sync::atomic::{AtomicU32, Ordering, fence};
 
-use alloc::{boxed::Box, sync::Arc};
+use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
 use crate::{
     badgelib::{self, irq::IrqGuard},
@@ -18,7 +18,7 @@ use crate::{
     process::usercopy::{UserSlice, UserSliceMut},
 };
 
-use super::{File, SeekMode, Stat, VNode, oflags, sysimpl::DentBuffer};
+use super::{File, SeekMode, Stat, VNode, oflags, poll, sysimpl::DentBuffer};
 
 pub type FifoBuffer = badgelib::fifo::Fifo;
 
@@ -210,6 +210,24 @@ impl FifoShared {
 
         res
     }
+
+    /// Get the amount of available read data.
+    fn read_avl(&self) -> usize {
+        self.buffer
+            .lock_shared()
+            .as_ref()
+            .map(|x| x.read_avl())
+            .unwrap_or(0)
+    }
+
+    /// Get the amount of available write space.
+    fn write_avl(&self) -> usize {
+        self.buffer
+            .lock_shared()
+            .as_ref()
+            .map(|x| x.write_avl())
+            .unwrap_or(0)
+    }
 }
 unsafe impl Send for FifoShared {}
 unsafe impl Sync for FifoShared {}
@@ -254,6 +272,24 @@ impl Drop for Fifo {
 }
 
 impl File for Fifo {
+    fn poll(&self) -> u32 {
+        let read_avl = self.shared.read_avl() > 0;
+        let write_avl = self.shared.write_avl() > 0;
+        read_avl as u32 * poll::IN + write_avl as u32 * poll::OUT
+    }
+
+    fn poll_waitlists<'a>(&'a self, interest: u32, collect: &mut Vec<&'a Waitlist>) -> EResult<()> {
+        if interest & poll::IN != 0 {
+            collect.try_reserve(1)?;
+            collect.push(&self.shared.read_queue);
+        }
+        if interest & poll::OUT != 0 {
+            collect.try_reserve(1)?;
+            collect.push(&self.shared.write_queue);
+        }
+        Ok(())
+    }
+
     fn get_flags(&self) -> u32 {
         *self.flags.unintr_lock_shared()
     }
