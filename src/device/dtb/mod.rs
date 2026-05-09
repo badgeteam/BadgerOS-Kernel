@@ -24,6 +24,8 @@ pub struct Dtb {
     /// Map from phandle to node.
     by_phandle: BTreeMap<u32, *const DtbNode>,
 }
+unsafe impl Send for Dtb {}
+unsafe impl Sync for Dtb {}
 
 impl Dtb {
     pub const MIN_SUPPORTED: u32 = 16;
@@ -180,6 +182,8 @@ pub struct DtbNode {
     /// Child props.
     pub props: BTreeMap<String, DtbProp>,
 }
+unsafe impl Send for DtbNode {}
+unsafe impl Sync for DtbNode {}
 
 impl DtbNode {
     /// Get the node's name.
@@ -233,6 +237,8 @@ pub struct DtbProp {
     /// Binary value.
     pub blob: Box<[u8]>,
 }
+unsafe impl Send for DtbProp {}
+unsafe impl Sync for DtbProp {}
 
 impl DtbProp {
     /// Get the prop's name.
