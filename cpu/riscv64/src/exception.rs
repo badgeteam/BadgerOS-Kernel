@@ -134,14 +134,19 @@ unsafe fn riscv_exception_handler_impl(regs: &mut GpRegfile, sregs: &mut SpRegfi
         }
         return;
     } else if sregs.scause < 0 {
-        // Other interrups.
+        // External or software interrupt.
         unsafe {
-            let cpulocal = &mut *CpuLocal::get();
-            let handled = cpulocal
-                .irqctl
-                .as_ref()
-                .expect("Missing interrupt controller")
-                .interrupt(sregs.scause as irqno_t);
+            // Low cause bits: 1 = supervisor software, 9 = supervisor external.
+            let cause = (sregs.scause as usize & 0xff) as u128;
+            let cpulocal = &*CpuLocal::get();
+            let mut handled = false;
+            for ctl in &cpulocal.dev2_ext_irqctls {
+                handled |= ctl.interrupt(cause);
+            }
+            // Fall back to the legacy interrupt controller during migration.
+            if !handled && let Some(irqctl) = cpulocal.irqctl.as_ref() {
+                handled = irqctl.interrupt(sregs.scause as irqno_t);
+            }
             if !handled {
                 unhandled_trap(regs, sregs);
             }

@@ -168,6 +168,8 @@ pub struct Thread {
     pub sigqueue: Spinlock<LinkedList<siginfo_t>>,
 }
 impl_has_list_node!(Thread, node);
+unsafe impl Send for Thread {}
+unsafe impl Sync for Thread {}
 
 impl Thread {
     /// Part 2: Reconstruct and call the `Box<dyn FnOnce()>`.

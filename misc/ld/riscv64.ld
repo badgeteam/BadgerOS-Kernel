@@ -42,6 +42,10 @@ SECTIONS
         __start_ktests = .;
         KEEP(*(.ktests .ktests.*))
         __stop_ktests = .;
+        . = ALIGN(16);
+        __start_dev2_drivers = .;
+        KEEP(*(.dev2_drivers .dev2_drivers.*))
+        __stop_dev2_drivers = .;
     } :rodata
     .dynstr : { *(.dynstr) } :rodata
     .dynsym : { *(.dynsym) } :rodata

@@ -109,7 +109,7 @@ pub unsafe fn exit_signal(regs: &mut GpRegfile, sregs: &mut SpRegfile) -> Access
 pub fn call_usermode(regs: &GpRegfile) {
     unsafe {
         let uctx = &mut (&*Thread::current()).runtime().uctx;
-        debug_assert!(uctx.pc == 0, "Cannot recursively call into usermode");
+        assert!(uctx.pc == 0, "Cannot recursively call into usermode");
         irq::disable();
 
         let cpulocal = &mut *CpuLocal::get();

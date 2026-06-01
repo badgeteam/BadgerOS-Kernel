@@ -34,6 +34,8 @@
 #![feature(vec_try_remove)]
 #![feature(arc_is_unique)]
 #![feature(debug_closure_helpers)]
+#![feature(unsize)]
+#![feature(macro_metavar_expr_concat)]
 
 #[macro_use]
 extern crate alloc;

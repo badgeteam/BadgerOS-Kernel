@@ -4,7 +4,7 @@
 
 use core::ffi::c_int;
 
-use alloc::sync::Arc;
+use alloc::{sync::Arc, vec::Vec};
 
 use crate::{
     bindings::{
@@ -12,6 +12,7 @@ use crate::{
         raw::device_t,
     },
     cpu::{CpuFeatures, PhysCpuID, cpulocal::ArchCpuLocal},
+    dev2::device::class::irqctl::IrqCtlDevice,
     kernel::sched::{Scheduler, Thread},
 };
 
@@ -34,6 +35,9 @@ pub struct CpuLocal {
     pub sched: Option<Scheduler>,
     /// The CPU's direct interrupt controller.
     pub irqctl: Option<BaseDevice>,
+    /// dev2 external interrupt controllers attached to this hart (e.g. PLIC contexts).
+    /// Dispatched by the arch trap handler for external (and software) interrupts.
+    pub dev2_ext_irqctls: Vec<Arc<dyn IrqCtlDevice>>,
 }
 
 unsafe extern "C" fn cpulocal_set_irqctl(_smp_idx: c_int, irqctl: *mut device_t) {

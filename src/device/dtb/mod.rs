@@ -201,6 +201,18 @@ impl DtbNode {
         }
         Some(unsafe { &*self.parent })
     }
+
+    /// Whether this node's `compatible` property contains the given string.
+    pub fn is_compatible(&self, want: &str) -> bool {
+        self.props
+            .get("compatible")
+            .is_some_and(|prop| prop.strings().any(|s| s == want))
+    }
+
+    /// Whether this node's `compatible` property contains any of the given strings.
+    pub fn is_compatible_any(&self, want: &[&str]) -> bool {
+        want.iter().any(|w| self.is_compatible(w))
+    }
 }
 
 impl Display for DtbNode {
@@ -249,6 +261,19 @@ impl DtbProp {
     /// Get the parent node.
     pub fn parent(&self) -> &DtbNode {
         unsafe { &*self.parent }
+    }
+
+    /// Number of `<u32>` cells in this prop.
+    pub fn cell_count(&self) -> usize {
+        self.blob.len() / 4
+    }
+
+    /// Iterate the NUL-separated strings in this prop (e.g. a `compatible` list).
+    pub fn strings(&self) -> impl Iterator<Item = &str> {
+        self.blob
+            .split(|&b| b == 0)
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| str::from_utf8(s).ok())
     }
 
     /// Read a cell in this prop.

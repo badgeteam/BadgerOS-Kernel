@@ -11,7 +11,7 @@ use core::{
 use alloc::{boxed::Box, collections::btree_map::BTreeMap};
 
 #[cfg(feature = "dtb")]
-use crate::bindings::device::dtb::DtbNode;
+use crate::{bindings::device::dtb::DtbNode, device};
 use crate::{
     bindings::{
         error::{EResult, Errno},
@@ -160,6 +160,90 @@ pub fn init_dtb(cpus_node: &DtbNode) {
 
     maps.cpu_index_end = smp_counter;
     init_common(&mut maps);
+}
+
+/// Initialize the SMP subsystem from DTB.
+#[cfg(feature = "dtb")]
+pub fn init_dtb2(cpus_node: &device::dtb::DtbNode) {
+    let bsp_cpuid: PhysCpuID;
+    unsafe {
+        if SMP_REQ.response.is_null() {
+            panic!("Missing Limine SMP response");
+        }
+        #[cfg(target_arch = "riscv64")]
+        {
+            bsp_cpuid = (*SMP_REQ.response).bsp_hartid as PhysCpuID;
+        }
+        #[cfg(target_arch = "x86_64")]
+        {
+            bsp_cpuid = (*SMP_REQ.response).bsp_lapic_id as PhysCpuID;
+        }
+    };
+
+    let mut maps = SMP_MAPS.unintr_lock();
+    let mut smp_counter = 1u32;
+    for cpu in cpus_node.nodes.values() {
+        let _ = try {
+            let features = cpu::dtb::is_usable2(cpu)?;
+            let reg = cpu.props.get("reg")?;
+            let cpuid: PhysCpuID = reg.read_uint()? as PhysCpuID;
+
+            let smp_index: u32;
+            let power;
+            if cpuid == bsp_cpuid {
+                smp_index = 0;
+                power = PowerState::Online;
+            } else {
+                smp_index = smp_counter;
+                smp_counter += 1;
+                power = PowerState::PreHandover;
+            }
+            logkf!(
+                LogLevel::Info,
+                "Detected CPU{} (CPUID {})",
+                smp_index,
+                cpuid
+            );
+
+            let mut status = SmpStatus {
+                cpulocal: Box::new(CpuLocal {
+                    smp_index,
+                    features,
+                    ..Default::default()
+                }),
+                power: AtomicU32::new(power as u32),
+            };
+
+            status.cpulocal.smp_index = smp_index;
+            status.cpulocal.cpuid = cpuid;
+
+            maps.by_index.insert(smp_index, status);
+            maps.by_cpuid.insert(cpuid, smp_index);
+        };
+    }
+
+    maps.cpu_index_end = smp_counter;
+    init_common(&mut maps);
+}
+
+/// Get SMP index from physical CPU ID.
+pub fn by_phys_id(cpuid: PhysCpuID) -> Option<u32> {
+    SMP_MAPS.unintr_lock().by_cpuid.get(&cpuid).cloned()
+}
+
+/// Attach a dev2 external interrupt controller (e.g. a PLIC context) to a hart.
+/// The arch trap handler dispatches external interrupts to all controllers registered here.
+///
+/// Must be called before the target hart is taking external interrupts from this controller.
+pub fn register_ext_irqctl(
+    smp_index: u32,
+    ctl: alloc::sync::Arc<dyn crate::dev2::device::class::irqctl::IrqCtlDevice>,
+) -> EResult<()> {
+    let mut maps = SMP_MAPS.unintr_lock();
+    let status = maps.by_index.get_mut(&smp_index).ok_or(Errno::ENOENT)?;
+    status.cpulocal.dev2_ext_irqctls.try_reserve(1)?;
+    status.cpulocal.dev2_ext_irqctls.push(ctl);
+    Ok(())
 }
 
 /// Initialize the SMP subsystem.
@@ -322,12 +406,7 @@ mod c_api {
 
     #[unsafe(no_mangle)]
     extern "C" fn smp_get_cpu(cpuid: usize) -> u32 {
-        SMP_MAPS
-            .unintr_lock()
-            .by_cpuid
-            .get(&(cpuid as PhysCpuID))
-            .cloned()
-            .unwrap_or(u32::MAX)
+        by_phys_id(cpuid as PhysCpuID).unwrap_or(u32::MAX)
     }
 
     #[unsafe(no_mangle)]

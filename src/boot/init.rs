@@ -11,10 +11,11 @@ use crate::{
         log::{LogLevel, logk_unlocked},
         raw::{
             bootp_early_init, bootp_full_init, bootp_postheap_init, bootp_reclaim_mem,
-            device_create_null_zero, kernel_heap_init, kmodule_t,
+            device_create_null_zero, kernel_heap_init, kmodule_t, limine_dtb_request,
         },
     },
     cpu::{self, spinup::arch_cpu_spinup},
+    dev2,
     filesystem::mount_root::mount_root_fs,
     kernel::{
         cpulocal::CpuLocal,
@@ -93,6 +94,15 @@ unsafe fn general_init() {
             }
             cur = cur.add(1);
         }
+
+        unsafe extern "C" {
+            static bootp_dtb_req: limine_dtb_request;
+        }
+        dev2::init_dtb((*bootp_dtb_req.response).dtb_ptr as _);
+
+        // After this is old device and init.
+        return;
+
         device_create_null_zero();
 
         // Finish bootloader hand-over.
