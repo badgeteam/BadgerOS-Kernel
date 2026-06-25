@@ -205,7 +205,7 @@ set(rust_target ${CMAKE_CURRENT_LIST_DIR}/misc/rust_target/${CONFIG_CPU}-kernel.
 set(rust_lib ${CMAKE_CURRENT_LIST_DIR}/target/${CONFIG_CPU}-kernel/${rust_build_type}/libkernel.a)
 add_custom_target(
     rust.target ALL
-    cargo build ${rust_features} --target=${rust_target}
+    TARGET_CC=${CMAKE_C_COMPILER} TARGET_CFLAGS="${common_compiler_flags}" cargo build ${rust_features} --target=${rust_target}
 )
 add_dependencies(badger-os.elf rust.target)
 target_link_libraries(badger-os.elf PRIVATE -Wl,--whole-archive ${rust_lib} -Wl,--no-whole-archive)

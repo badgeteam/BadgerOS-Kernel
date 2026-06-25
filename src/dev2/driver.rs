@@ -98,7 +98,7 @@ impl ProbeContext<'_> {
         if stride == 0 {
             return Err(Errno::EINVAL);
         }
-        let count = reg.cell_count() / stride;
+        let count = reg.cell_count().ok_or(Errno::EINVAL)? / stride;
         let mut out = Vec::new();
         out.try_reserve(count)?;
         for i in 0..count {
@@ -117,7 +117,7 @@ impl ProbeContext<'_> {
     pub fn interrupts(&self) -> EResult<Vec<IrqEntry>> {
         let mut out = Vec::new();
         if let Some(ext) = self.node.props.get("interrupts-extended") {
-            let total = ext.cell_count();
+            let total = ext.cell_count().ok_or(Errno::EINVAL)?;
             let mut i = 0;
             while i < total {
                 let phandle = ext.read_cell(i).ok_or(Errno::EINVAL)?;
@@ -138,7 +138,7 @@ impl ProbeContext<'_> {
             if icells == 0 {
                 return Err(Errno::EINVAL);
             }
-            let count = ints.cell_count() / icells;
+            let count = ints.cell_count().ok_or(Errno::EINVAL)? / icells;
             for i in 0..count {
                 let entry = read_cells(ints, i * icells, icells)?;
                 out.try_reserve(1)?;
@@ -194,7 +194,11 @@ fn cells(node: &DtbNode, name: &str) -> EResult<usize> {
 }
 
 /// Read `count` cells starting at cell index `start` from a prop into a boxed slice.
-fn read_cells(prop: &crate::device::dtb::DtbProp, start: usize, count: usize) -> EResult<Box<[u32]>> {
+fn read_cells(
+    prop: &crate::device::dtb::DtbProp,
+    start: usize,
+    count: usize,
+) -> EResult<Box<[u32]>> {
     let mut v = Vec::new();
     v.try_reserve(count)?;
     for c in 0..count {
@@ -249,7 +253,13 @@ pub fn probe_all(dtb: &'static Dtb, root: &'static DtbNode) {
                 Err(Errno::EAGAIN) => deferred.push(node),
                 Err(e) => {
                     progressed = true;
-                    logkf!(LogLevel::Error, "Failed to probe {} ({}): {}", node, driver.name(), e);
+                    logkf!(
+                        LogLevel::Error,
+                        "Failed to probe {} ({}): {}",
+                        node,
+                        driver.name(),
+                        e
+                    );
                 }
             }
         }
@@ -258,7 +268,11 @@ pub fn probe_all(dtb: &'static Dtb, root: &'static DtbNode) {
         }
         if !progressed {
             for node in &deferred {
-                logkf!(LogLevel::Warning, "Could not probe {} (dependencies unmet)", node);
+                logkf!(
+                    LogLevel::Warning,
+                    "Could not probe {} (dependencies unmet)",
+                    node
+                );
             }
             break;
         }

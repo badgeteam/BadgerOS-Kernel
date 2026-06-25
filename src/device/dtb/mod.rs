@@ -3,24 +3,25 @@
 // SPDX-License-Identifier: MIT
 
 use core::{
-    ffi::c_char,
+    ffi::CStr,
     fmt::{Display, Write},
-    ops::Range,
-    ptr::slice_from_raw_parts,
+    ops::{Deref, Range},
+    ptr::null,
 };
 
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, string::String};
-use spec::*;
+use lex::*;
 
-use crate::bindings::{self, log::LogLevel};
+use crate::bindings::log::LogLevel;
 
-mod c_api;
-mod spec;
+mod lex;
+
+pub type FdtHeader = lex::FdtHeader;
 
 /// Loaded device tree structure.
 pub struct Dtb {
     /// DTB root node.
-    pub root: DtbNode,
+    root: Box<DtbNode>,
     /// Map from phandle to node.
     by_phandle: BTreeMap<u32, *const DtbNode>,
 }
@@ -34,133 +35,41 @@ impl Dtb {
     /// Parse DTB from an FDT pointer.
     /// # Panics
     /// - If the FDT is malformed.
-    pub unsafe fn parse(fdt: *const ()) -> Self {
-        let mut by_phandle = BTreeMap::<u32, *const DtbNode>::new();
-        const NULL_STR: *const str = core::ptr::from_raw_parts(0 as *const (), 0);
-        let mut root = DtbNode {
-            name: NULL_STR,
-            parent: 0 as *const DtbNode,
-            phandle: None,
-            nodes: BTreeMap::new(),
-            props: BTreeMap::new(),
+    pub unsafe fn parse(fdt: *const FdtHeader) -> Self {
+        let header = FdtHeader::from_be(unsafe { *fdt });
+        assert!(header.magic == FdtHeader::MAGIC, "Invalid FDT magic");
+
+        let mut tkn = TokenStream {
+            struct_block: unsafe {
+                &*core::ptr::slice_from_raw_parts(
+                    (fdt as usize + header.struct_offset as usize) as *const u32,
+                    header.struct_size as usize,
+                )
+            },
+            string_block: unsafe {
+                &*core::ptr::slice_from_raw_parts(
+                    (fdt as usize + header.string_offset as usize) as *const u8,
+                    header.string_size as usize,
+                )
+            },
         };
 
-        unsafe {
-            // Validate header.
-            let header = (*(fdt as *const FdtHeader)).from_be();
-            assert!(
-                header.magic == FdtHeader::MAGIC,
-                "FDT header has invalid magic"
-            );
-            assert!(
-                16 <= header.compat_version && header.compat_version <= 17,
-                "FDT uses incompatible version {} (supported are {}-{})",
-                header.compat_version,
-                Self::MIN_SUPPORTED,
-                Self::MAX_SUPPORTED
-            );
-            let struct_ = fdt.byte_add(header.struct_offset as usize);
-            let string = fdt.byte_add(header.string_offset as usize);
-
-            let mut node = &raw mut root;
-            let mut index = 0usize;
-            loop {
-                let token = u32::from_be(*(struct_ as *const u32).add(index));
-                index += 1;
-                if token == FDT_BEGIN_NODE {
-                    // Beginning of FDT node; extract name.
-                    let name_ptr = struct_.byte_add(index * 4) as *const u8;
-                    let name_len = bindings::raw::strlen(name_ptr as *const c_char);
-                    index += (name_len + 1).div_ceil(4);
-                    let name = str::from_utf8_unchecked(&*slice_from_raw_parts(name_ptr, name_len));
-
-                    // Assert that the name isn't taken.
-                    assert!(
-                        (*node).nodes.get(name).is_none() && (*node).props.get(name).is_none(),
-                        "FDT node with duplicate name"
-                    );
-
-                    // Insert new empty node in parent.
-                    (*node).nodes.insert(
-                        name.into(),
-                        DtbNode {
-                            name: NULL_STR,
-                            parent: node,
-                            phandle: None,
-                            nodes: BTreeMap::new(),
-                            props: BTreeMap::new(),
-                        },
-                    );
-
-                    // Now that it's in the tree, set its name.
-                    let (name, new_node) = (*node).nodes.get_key_value(name).unwrap();
-                    node = new_node as *const DtbNode as *mut DtbNode;
-                    (*node).name = name.as_ref();
-                } else if token == FDT_END_NODE {
-                    // End of FDT node.
-                    assert!(!(*node).parent.is_null(), "Unexepcted FDT_END_NODE token");
-                    node = (*node).parent as *mut DtbNode;
-                } else if token == FDT_PROP {
-                    // FDT prop; get name and length.
-                    let len = u32::from_be(*(struct_ as *const u32).add(index));
-                    let nameoff = u32::from_be(*(struct_ as *const u32).add(index + 1));
-                    index += 2;
-                    let name_ptr = string.byte_add(nameoff as usize) as *const u8;
-                    let name_len = bindings::raw::strlen(name_ptr as *const c_char);
-                    let name = str::from_utf8_unchecked(&*slice_from_raw_parts(name_ptr, name_len));
-
-                    // Assert that the name isn't taken.
-                    assert!(
-                        (*node).nodes.get(name).is_none() && (*node).props.get(name).is_none(),
-                        "FDT prop with duplicate name"
-                    );
-
-                    // Read prop value.
-                    let blob = Box::<[u8]>::from(&*slice_from_raw_parts(
-                        struct_.byte_add(index * 4) as *const u8,
-                        len as usize,
-                    ));
-                    index += len.div_ceil(4) as usize;
-
-                    // Insert new prop.
-                    (*node).props.insert(
-                        name.into(),
-                        DtbProp {
-                            name: NULL_STR,
-                            parent: node,
-                            blob,
-                        },
-                    );
-                    let (name, prop) = (*node).props.get_key_value(name).unwrap();
-                    let prop = prop as *const DtbProp as *mut DtbProp;
-                    (*prop).name = name.as_ref();
-
-                    // Automatically set phandles.
-                    if *name == *"phandle" {
-                        let phandle = (&*prop).read_cell(0);
-                        match phandle {
-                            Some(phandle) => {
-                                (*node).phandle = Some(phandle);
-                                by_phandle.insert(phandle, node);
-                            }
-                            None => {
-                                logkf!(LogLevel::Warning, "Ignored malformed phandle in {}", &*node)
-                            }
-                        }
-                    }
-                } else if token == FDT_NOP {
-                    // Ignored.
-                } else if token == FDT_END {
-                    // End of the FDT structure block.
-                    assert!(node == &raw mut root, "Unexpected FDT_END token");
-                    break;
-                } else {
-                    panic!("Invalid FDT token")
-                }
-            }
+        if let Some(Token::BeginNode(name)) = tkn.next() {
+            assert!(name.is_empty(), "FDT root node's name must be empty");
+        } else {
+            panic!("FDT must begin with FDT_BEGIN_NODE");
         }
 
-        Dtb { root, by_phandle }
+        let mut by_phandle = BTreeMap::new();
+        let root = unsafe { DtbNode::parse(&mut tkn, &mut by_phandle, null(), "") };
+        assert!(tkn.next().is_none(), "Unexpected extra data in FDT");
+
+        Self { root, by_phandle }
+    }
+
+    /// DTB root node.
+    pub fn root(&self) -> &DtbNode {
+        &self.root
     }
 
     /// Get a node by its phandle.
@@ -170,15 +79,16 @@ impl Dtb {
 }
 
 /// Device tree node.
+#[derive(Debug)]
 pub struct DtbNode {
     /// This node's name.
-    name: *const str,
+    pub name: String,
     /// Parent node, if any.
     parent: *const DtbNode,
     /// Cached phandle, if any.
     pub phandle: Option<u32>,
-    /// Child nodes and props.
-    pub nodes: BTreeMap<String, DtbNode>,
+    /// Child nodes.
+    pub nodes: BTreeMap<String, Box<DtbNode>>,
     /// Child props.
     pub props: BTreeMap<String, DtbProp>,
 }
@@ -186,12 +96,48 @@ unsafe impl Send for DtbNode {}
 unsafe impl Sync for DtbNode {}
 
 impl DtbNode {
-    /// Get the node's name.
-    pub fn name(&self) -> &str {
-        if self.name.is_null() {
-            return "";
+    unsafe fn parse(
+        tkn: &mut TokenStream<'_>,
+        by_phandle: &mut BTreeMap<u32, *const DtbNode>,
+        parent: *const DtbNode,
+        name: &str,
+    ) -> Box<Self> {
+        let mut this = Box::new(Self {
+            name: name.into(),
+            parent,
+            phandle: None,
+            nodes: BTreeMap::new(),
+            props: BTreeMap::new(),
+        });
+
+        loop {
+            match tkn.next().expect("Unexpected FDT_END") {
+                Token::BeginNode(name) => {
+                    let child = unsafe { Self::parse(tkn, by_phandle, this.deref(), name) };
+                    this.nodes.insert(name.into(), child);
+                }
+                Token::EndNode => break,
+                Token::Prop(name, blob) => {
+                    let child = DtbProp {
+                        name: name.into(),
+                        parent: this.deref(),
+                        blob: blob.into(),
+                    };
+                    this.props.insert(name.into(), child);
+                }
+            }
         }
-        unsafe { &*self.name }
+
+        this.phandle = this.props.get("phandle").map(|prop| {
+            assert!(prop.cell_count() == Some(1));
+            prop.read_cell(0).unwrap()
+        });
+
+        if let Some(phandle) = this.phandle {
+            by_phandle.insert(phandle, this.deref());
+        }
+
+        this
     }
 
     /// Get the parent node.
@@ -231,19 +177,20 @@ impl Display for DtbNode {
             for _ in 0..x {
                 cur = cur.parent().unwrap();
             }
-            f.write_str(cur.name())?;
+            f.write_str(&cur.name)?;
             f.write_char('/')?;
         }
-        f.write_str(self.name())?;
+        f.write_str(&self.name)?;
 
         Ok(())
     }
 }
 
 /// Device tree property.
+#[derive(Debug)]
 pub struct DtbProp {
     /// This prop's name.
-    name: *const str,
+    pub name: String,
     /// Parent node, if any.
     parent: *const DtbNode,
     /// Binary value.
@@ -253,19 +200,14 @@ unsafe impl Send for DtbProp {}
 unsafe impl Sync for DtbProp {}
 
 impl DtbProp {
-    /// Get the prop's name.
-    pub fn name(&self) -> &str {
-        unsafe { &*self.name }
-    }
-
     /// Get the parent node.
     pub fn parent(&self) -> &DtbNode {
         unsafe { &*self.parent }
     }
 
     /// Number of `<u32>` cells in this prop.
-    pub fn cell_count(&self) -> usize {
-        self.blob.len() / 4
+    pub fn cell_count(&self) -> Option<usize> {
+        (self.blob.len() % 4 == 0).then_some(self.blob.len() / 4)
     }
 
     /// Iterate the NUL-separated strings in this prop (e.g. a `compatible` list).
@@ -314,7 +256,7 @@ impl Display for DtbProp {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.parent().fmt(f)?;
         f.write_str(" prop ")?;
-        f.write_str(self.name())?;
+        f.write_str(&self.name)?;
         Ok(())
     }
 }

@@ -2,7 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-//! Defines structs for the FDT layout in memory; they are all big-endian.
+use core::ffi::CStr;
 
 /// Calls conversion function `$func` on integers in `$type`.
 #[rustfmt::skip]
@@ -105,4 +105,71 @@ pub const FDT_BEGIN_NODE: u32 = 1;
 pub const FDT_END_NODE: u32 = 2;
 pub const FDT_PROP: u32 = 3;
 pub const FDT_NOP: u32 = 4;
-pub const FDT_END: u32 = 5;
+pub const FDT_END: u32 = 9;
+
+/// FDT token.
+#[derive(Clone, Copy)]
+pub enum Token<'a> {
+    BeginNode(&'a str),
+    EndNode,
+    Prop(&'a str, &'a [u8]),
+}
+
+pub struct TokenStream<'a> {
+    pub struct_block: &'a [u32],
+    pub string_block: &'a [u8],
+}
+
+impl<'a> TokenStream<'a> {
+    pub fn next(&mut self) -> Option<Token<'a>> {
+        loop {
+            assert!(self.struct_block.len() > 0, "Missing FDT_END token");
+            let raw = u32::from_be(self.struct_block[0]);
+            if raw == FDT_END {
+                return None;
+            }
+            self.struct_block = &self.struct_block[1..];
+
+            match raw {
+                FDT_BEGIN_NODE => {
+                    let as_bytes: &[u8] = bytemuck::cast_slice(self.struct_block);
+                    let name = CStr::from_bytes_until_nul(as_bytes).expect("Unterminated string");
+                    self.struct_block = &self.struct_block[(name.count_bytes() + 1).div_ceil(4)..];
+
+                    return Some(Token::BeginNode(
+                        name.to_str().expect("Invalid UTF-8 in FDT"),
+                    ));
+                }
+                FDT_END_NODE => return Some(Token::EndNode),
+                FDT_PROP => {
+                    assert!(
+                        self.struct_block.len() >= 2,
+                        "Not enough data for FDT property header"
+                    );
+                    let data_len = u32::from_be(self.struct_block[0]) as usize;
+                    let str_off = u32::from_be(self.struct_block[1]) as usize;
+                    self.struct_block = &self.struct_block[2..];
+
+                    let data_words = data_len.div_ceil(4);
+                    assert!(
+                        self.struct_block.len() >= data_words,
+                        "Not enough data for FDT property value"
+                    );
+                    let data: &[u8] = &bytemuck::cast_slice(self.struct_block)[..data_len];
+                    self.struct_block = &self.struct_block[data_words..];
+
+                    let name = CStr::from_bytes_until_nul(&self.string_block[str_off..])
+                        .expect("Unterminated string");
+                    assert!(!name.is_empty(), "Empty property name in FDT");
+
+                    return Some(Token::Prop(
+                        name.to_str().expect("Invalid UTF-8 in FDT"),
+                        data,
+                    ));
+                }
+                FDT_NOP => (),
+                x => panic!("Invalid FDT token 0x{:x}", x),
+            }
+        }
+    }
+}

@@ -99,6 +99,7 @@ unsafe fn general_init() {
             static bootp_dtb_req: limine_dtb_request;
         }
         dev2::init_dtb((*bootp_dtb_req.response).dtb_ptr as _);
+        logkf!(LogLevel::Info, "Finished");
 
         // After this is old device and init.
         return;
