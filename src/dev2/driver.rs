@@ -8,13 +8,14 @@
 
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc, vec::Vec};
 use core::ops::Range;
-use dtb::{Dtb, DtbNode};
+use dtb::DtbNode;
 
 use crate::{
     bindings::{
         error::{EResult, Errno},
         log::LogLevel,
     },
+    dev2,
     mem::pmm::PAddrr,
 };
 
@@ -76,8 +77,6 @@ pub struct IrqEntry {
 
 /// Context handed to a [`Driver::probe`], exposing the node and resolution helpers.
 pub struct ProbeContext<'a> {
-    /// The full device tree (for phandle resolution).
-    pub dtb: &'static Dtb,
     /// The node being probed.
     pub node: &'static DtbNode,
     /// Interrupt controllers probed so far, keyed by phandle.
@@ -120,7 +119,9 @@ impl ProbeContext<'_> {
             while i < total {
                 let phandle = ext.read_cell(i).ok_or(Errno::EINVAL)?;
                 i += 1;
-                let parent = self.dtb.node_by_phandle(phandle).ok_or(Errno::EINVAL)?;
+                let parent = dev2::dtb::get()
+                    .node_by_phandle(phandle)
+                    .ok_or(Errno::EINVAL)?;
                 let icells = cells(parent, "#interrupt-cells")?;
                 let entry = ext.read_cells(i, icells)?;
                 i += icells;
@@ -131,7 +132,7 @@ impl ProbeContext<'_> {
                 });
             }
         } else if let Some(ints) = self.node.props.get("interrupts") {
-            let parent = super::dtb::irq_parent(self.dtb, self.node).ok_or(Errno::EINVAL)?;
+            let parent = super::dtb::irq_parent(self.node).ok_or(Errno::EINVAL)?;
             let icells = cells(parent, "#interrupt-cells")?;
             if icells == 0 {
                 return Err(Errno::EINVAL);
@@ -192,7 +193,7 @@ fn cells(node: &DtbNode, name: &str) -> EResult<usize> {
 /// Uses deferred probing: a driver returning [`Errno::EAGAIN`] is retried on a later
 /// pass, until a full pass makes no progress.
 #[cfg(feature = "dtb")]
-pub fn probe_dtb(dtb: &'static Dtb, children_of: &'static DtbNode) {
+pub fn probe_dtb(children_of: &'static DtbNode) {
     let drivers = registered_drivers();
     let mut phandle_irqctls: BTreeMap<u32, Arc<dyn IrqCtlDevice>> = BTreeMap::new();
 
@@ -206,7 +207,6 @@ pub fn probe_dtb(dtb: &'static Dtb, children_of: &'static DtbNode) {
                 continue;
             };
             let ctx = ProbeContext {
-                dtb,
                 node,
                 phandle_irqctls: &phandle_irqctls,
             };

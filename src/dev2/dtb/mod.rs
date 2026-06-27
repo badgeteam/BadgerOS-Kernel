@@ -2,13 +2,21 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use alloc::boxed::Box;
 use dtb::{Dtb, DtbNode, spec::FdtHeader};
 
 use crate::{bindings::log::LogLevel, kernel};
 
+/// The device tree.
+static mut DTB: Option<Dtb> = None;
+
+/// Get the device tree.
+pub fn get() -> &'static Dtb {
+    unsafe { (*&raw const DTB).as_ref().expect("DTB is uninitialized") }
+}
+
 /// Get the closest interrup parent for a node.
-pub(crate) fn irq_parent<'a>(dtb: &'a Dtb, node: &DtbNode) -> Option<&'a DtbNode> {
+pub(crate) fn irq_parent<'a>(node: &DtbNode) -> Option<&'a DtbNode> {
+    let dtb = get();
     let irq_parent = node.prop("interrupt-parent")?;
     let Some(phandle) = irq_parent.read_u32() else {
         logkf!(LogLevel::Error, "{}: interrupt-parent malformed", node);
@@ -28,8 +36,11 @@ pub(crate) fn irq_parent<'a>(dtb: &'a Dtb, node: &DtbNode) -> Option<&'a DtbNode
 
 /// Initialize the device subsystem on DTB systems.
 pub unsafe fn init_dtb(fdt: *const FdtHeader) {
-    // Leak the parsed device tree so its nodes are `'static` for the lifetime of the kernel.
-    let dtb: &'static Dtb = Box::leak(Box::new(unsafe { Dtb::parse(fdt) }));
+    unsafe {
+        assert!((*&raw const DTB).is_none());
+        DTB = Some(Dtb::parse(fdt));
+    }
+    let dtb = get();
 
     let soc = dtb.root().nodes.get("soc").expect("Missing DTB /soc");
     let cpus = dtb.root().nodes.get("cpus").expect("Missing DTB /cpus");
@@ -37,8 +48,6 @@ pub unsafe fn init_dtb(fdt: *const FdtHeader) {
     // Discover CPUs; this sets up the per-hart CpuLocal state used for interrupt routing.
     kernel::smp::init_dtb2(cpus);
 
-    // Probe all devices under /soc. Interrupt controllers (PLICs) probe first and register
-    // themselves with the arch root; leaf devices then bind to them via deferred probing.
-    // The per-hart RISC-V INTC (cpu-intc) is the arch root and is not itself a device.
-    super::driver::probe_dtb(dtb, soc);
+    // Devices under /proc are probed first, any nested devices are to be recursively probed by appropriate drivers.
+    super::driver::probe_dtb(soc);
 }
