@@ -11,15 +11,15 @@
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
+use dtb::DtbNode;
+
 use crate::{
     bindings::error::{EResult, Errno},
     cpu::PhysCpuID,
     dev2::{
+        Device, DeviceBase,
         bus::mmio::MmioMapping,
-        device::{
-            Device, DeviceBase,
-            class::irqctl::{IrqCtlDevice, IrqCtlDeviceBase},
-        },
+        class::irqctl::{IrqCtlDevice, IrqCtlDeviceBase},
         driver::{Driver, ProbeContext},
     },
     kernel::smp,
@@ -30,6 +30,7 @@ use crate::{
 const RISCV_INT_EXT: u32 = 9;
 
 // PLIC register offsets (see the RISC-V PLIC spec).
+
 /// Per-source priority: `PLIC_PRIO_OFF + source * 4`.
 const PLIC_PRIO_OFF: usize = 0x0000;
 /// Per-context enable bitmap base.
@@ -143,32 +144,22 @@ impl Driver for RiscvPlicDriver {
         "riscv-plic"
     }
 
-    fn matches(&self, node: &crate::device::dtb::DtbNode) -> bool {
+    fn matches(&self, node: &DtbNode) -> bool {
         node.is_compatible_any(&["riscv,plic0", "sifive,plic-1.0.0"])
     }
 
-    fn probe(&self, ctx: &ProbeContext) -> EResult<Arc<dyn Device>> {
+    unsafe fn probe(&self, ctx: &ProbeContext) -> EResult<Arc<dyn Device>> {
         // Map the whole PLIC register window.
         let reg = ctx.reg()?;
         let region = reg.first().ok_or(Errno::EINVAL)?;
         let mapping = MmioMapping::new(region.start, region.end - region.start)?;
 
         // PLIC interrupt specifiers are a single cell (the source number).
-        let icells = ctx
-            .node
-            .props
-            .get("#interrupt-cells")
-            .and_then(|p| p.read_cell(0))
-            .ok_or(Errno::EINVAL)?;
+        let icells = ctx.node.prop_u32("#interrupt-cells").ok_or(Errno::EINVAL)?;
         if icells != 1 {
             return Err(Errno::EINVAL);
         }
-        let ndev = ctx
-            .node
-            .props
-            .get("riscv,ndev")
-            .and_then(|p| p.read_uint())
-            .ok_or(Errno::EINVAL)? as u32;
+        let ndev = ctx.node.prop_u32("riscv,ndev").ok_or(Errno::EINVAL)?;
 
         // Map each PLIC context (an `interrupts-extended` entry) to an SMP index.
         // Entry order defines the context number; only supervisor-external outputs are used.
@@ -183,11 +174,7 @@ impl Driver for RiscvPlicDriver {
             }
             // entry.parent is the cpu-intc node; its parent is the cpu node (reg = hartid).
             let cpu_node = entry.parent.parent().ok_or(Errno::EINVAL)?;
-            let hartid = cpu_node
-                .props
-                .get("reg")
-                .and_then(|p| p.read_uint())
-                .ok_or(Errno::EINVAL)? as PhysCpuID;
+            let hartid = cpu_node.prop_uint("reg").ok_or(Errno::EINVAL)? as PhysCpuID;
             if let Some(smp_idx) = smp::by_phys_id(hartid)
                 && let Some(slot) = ctx_by_cpu.get_mut(smp_idx as usize)
             {
@@ -212,7 +199,8 @@ impl Driver for RiscvPlicDriver {
         // `sie` bit is already enabled per hart at boot (see `arch_cpu_spinup`).
         for (smp_idx, slot) in plic.ctx_by_cpu.iter().enumerate() {
             if slot.is_some() {
-                smp::register_ext_irqctl(smp_idx as u32, plic.clone())?;
+                smp::register_ext_irqctl(smp_idx as u32, plic.clone())
+                    .expect("Failed to register PLIC as interrupt controller");
             }
         }
 

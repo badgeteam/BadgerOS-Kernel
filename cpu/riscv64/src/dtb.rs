@@ -2,9 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use crate::{
-    bindings::device::dtb::DtbNode, cpu::CpuFeatures, device, mem::vmm::physmap::PAGING_LEVELS,
-};
+use crate::{bindings::device::dtb::DtbNode, cpu::CpuFeatures, mem::vmm::physmap::PAGING_LEVELS};
 
 #[derive(Debug, Default, Clone, Copy)]
 struct IsaSpec {
@@ -106,7 +104,7 @@ pub fn is_usable(cpu: &DtbNode) -> Option<CpuFeatures> {
 }
 
 /// Determine whether a CPU is usable by its DTB node.
-pub fn is_usable2(cpu: &device::dtb::DtbNode) -> Option<CpuFeatures> {
+pub fn is_usable2(cpu: &dtb::DtbNode) -> Option<CpuFeatures> {
     let isa_prop = cpu.props.get("riscv,isa")?;
     let mmu_prop = cpu.props.get("mmu-type")?;
     let isa: &[u8] = &isa_prop.blob;

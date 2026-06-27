@@ -52,6 +52,7 @@ pub mod misc;
 #[macro_use]
 pub mod ktest;
 pub mod dev2;
+pub mod driver2;
 pub mod kernel;
 pub mod kparam;
 pub mod mem;

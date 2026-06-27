@@ -13,11 +13,12 @@ use crate::{
     badgelib::fifo::{BlockingFifo, Fifo},
     bindings::error::EResult,
     dev2::{
+        Device, DeviceBase,
         bus::{
             Bus,
             mmio::{MmioBus, MmioStruct},
         },
-        device::{Device, DeviceBase, class::char::CharDevice},
+        class::char::CharDevice,
     },
     kernel::sync::{spinlock::Spinlock, waitlist::Waitlist},
     process::{

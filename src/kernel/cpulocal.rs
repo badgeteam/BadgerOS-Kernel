@@ -12,7 +12,7 @@ use crate::{
         raw::device_t,
     },
     cpu::{CpuFeatures, PhysCpuID, cpulocal::ArchCpuLocal},
-    dev2::device::class::irqctl::IrqCtlDevice,
+    dev2::class::irqctl::IrqCtlDevice,
     kernel::sched::{Scheduler, Thread},
 };
 

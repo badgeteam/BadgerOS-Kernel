@@ -2,11 +2,10 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::any::Any;
-
 use alloc::sync::Arc;
+use dtb::DtbNode;
 
-use crate::{bindings::error::EResult, dev2::device::Device, device::dtb::DtbNode};
+use crate::{bindings::error::EResult, dev2::Device};
 
 pub mod mmio;
 
@@ -14,7 +13,7 @@ pub mod mmio;
 /// Buses may exist on their own (e.g. MMIO) or as part of another device (e.g. AHCI ports).
 /// Most of the logic for buses depends on their specific types, this trait serves mostly to register buses.
 /// A single bus usually supports multiple devices.
-pub trait Bus: Any + Send + Sync {
+pub trait Bus: Send + Sync + 'static {
     /// Which device provided this bus, if any.
     fn parent_device(&self) -> Option<Arc<dyn Device>>;
 

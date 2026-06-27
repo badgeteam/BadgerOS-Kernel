@@ -8,10 +8,13 @@ use core::{
     sync::atomic::{AtomicU32, AtomicUsize, Ordering},
 };
 
-use alloc::{boxed::Box, collections::btree_map::BTreeMap};
+use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc};
 
 #[cfg(feature = "dtb")]
-use crate::{bindings::device::dtb::DtbNode, device};
+use crate::bindings::device::dtb::DtbNode;
+#[cfg(feature = "dtb")]
+use dtb;
+
 use crate::{
     bindings::{
         error::{EResult, Errno},
@@ -23,6 +26,7 @@ use crate::{
         self, PhysCpuID,
         spinup::{arch_cpu_spinup, limine_trampoline_1},
     },
+    dev2::class::irqctl::IrqCtlDevice,
     kernel::{
         cpulocal::CpuLocal,
         sched::{Scheduler, thread_yield},
@@ -164,7 +168,7 @@ pub fn init_dtb(cpus_node: &DtbNode) {
 
 /// Initialize the SMP subsystem from DTB.
 #[cfg(feature = "dtb")]
-pub fn init_dtb2(cpus_node: &device::dtb::DtbNode) {
+pub fn init_dtb2(cpus_node: &dtb::DtbNode) {
     let bsp_cpuid: PhysCpuID;
     unsafe {
         if SMP_REQ.response.is_null() {
@@ -185,8 +189,7 @@ pub fn init_dtb2(cpus_node: &device::dtb::DtbNode) {
     for cpu in cpus_node.nodes.values() {
         let _ = try {
             let features = cpu::dtb::is_usable2(cpu)?;
-            let reg = cpu.props.get("reg")?;
-            let cpuid: PhysCpuID = reg.read_uint()? as PhysCpuID;
+            let cpuid: PhysCpuID = cpu.prop_uint("reg")? as PhysCpuID;
 
             let smp_index: u32;
             let power;
@@ -235,10 +238,7 @@ pub fn by_phys_id(cpuid: PhysCpuID) -> Option<u32> {
 /// The arch trap handler dispatches external interrupts to all controllers registered here.
 ///
 /// Must be called before the target hart is taking external interrupts from this controller.
-pub fn register_ext_irqctl(
-    smp_index: u32,
-    ctl: alloc::sync::Arc<dyn crate::dev2::device::class::irqctl::IrqCtlDevice>,
-) -> EResult<()> {
+pub fn register_ext_irqctl(smp_index: u32, ctl: Arc<dyn IrqCtlDevice>) -> EResult<()> {
     let mut maps = SMP_MAPS.unintr_lock();
     let status = maps.by_index.get_mut(&smp_index).ok_or(Errno::ENOENT)?;
     status.cpulocal.dev2_ext_irqctls.try_reserve(1)?;

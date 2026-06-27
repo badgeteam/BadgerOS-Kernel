@@ -2,58 +2,100 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use crate::kernel::smp;
+use alloc::sync::Arc;
+use core::num::NonZeroU32;
 
-#[cfg(feature = "dtb")]
-use crate::{
-    bindings::log::LogLevel,
-    device::dtb::{Dtb, DtbNode, FdtHeader},
-};
-
-#[cfg(feature = "dtb")]
-use alloc::boxed::Box;
-
+#[cfg(feature = "acpi")]
+pub mod acpi;
 pub mod bus;
-pub mod device;
-#[cfg(feature = "dtb")]
+pub mod class;
 pub mod driver;
+#[cfg(feature = "dtb")]
+pub mod dtb;
+pub mod init;
 pub mod registry;
 
-/// Get the closest interrup parent for a node.
-#[cfg(feature = "dtb")]
-pub(crate) fn irq_parent<'a>(dtb: &'a Dtb, node: &DtbNode) -> Option<&'a DtbNode> {
-    let irq_parent = node.props.get("interrupt-parent")?;
-    if irq_parent.blob.len() != 4 {
-        logkf!(LogLevel::Error, "{}: interrupt-parent malformed", node);
-        return None;
-    }
-    let phandle = irq_parent.read_cell(0).unwrap();
-    let res = dtb.node_by_phandle(phandle);
-    if res.is_none() {
-        logkf!(
-            LogLevel::Error,
-            "{}: interrupt-parent {} not found",
-            node,
-            phandle
-        );
-    }
-    res
+use class::{char::CharDevice, irqctl::IrqCtlDevice};
+
+/// Base device struct; intended for use by implementers of [`Device`].
+pub struct DeviceBase {
+    /// ID assigned by the device registry.
+    id: NonZeroU32,
 }
 
-/// Initialize the device subsystem on DTB systems.
-#[cfg(feature = "dtb")]
-pub unsafe fn init_dtb(fdt: *const FdtHeader) {
-    // Leak the parsed device tree so its nodes are `'static` for the lifetime of the kernel.
-    let dtb: &'static Dtb = Box::leak(Box::new(unsafe { Dtb::parse(fdt) }));
+impl DeviceBase {
+    /// Create a new device base with a freshly allocated unique ID.
+    pub fn new() -> Self {
+        Self {
+            id: registry::alloc_id(),
+        }
+    }
 
-    let soc = dtb.root().nodes.get("soc").expect("Missing DTB /soc");
-    let cpus = dtb.root().nodes.get("cpus").expect("Missing DTB /cpus");
+    /// ID assigned to this device.
+    pub fn id(&self) -> NonZeroU32 {
+        self.id
+    }
+}
 
-    // Discover CPUs; this sets up the per-hart CpuLocal state used for interrupt routing.
-    smp::init_dtb2(cpus);
+impl Default for DeviceBase {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-    // Probe all devices under /soc. Interrupt controllers (PLICs) probe first and register
-    // themselves with the arch root; leaf devices then bind to them via deferred probing.
-    // The per-hart RISC-V INTC (cpu-intc) is the arch root and is not itself a device.
-    driver::probe_all(dtb, soc);
+/// List of device coercions.
+macro_rules! dev_coercions {
+    ($x:ident) => {
+        $x!(char: CharDevice);
+        $x!(irqctl: IrqCtlDevice);
+    };
+}
+
+/// Helper for the ref coercion functions.
+macro_rules! dev_ref_coercion {
+    ($name:ident : $Type:ident) => {
+        #[doc = concat!("Coerce this device into [`", stringify!($Type), "`]")]
+        fn ${concat(as_, $name, _ref)} (&self) -> Option<&dyn $Type> { None }
+    };
+}
+
+/// Helper for the [`Arc`] coercion functions.
+macro_rules! dev_arc_coercion {
+    ($name:ident : $Type:ident) => {
+        #[doc = concat!("Coerce this device into [`", stringify!($Type), "`]")]
+        pub fn ${concat(as_, $name)} (self: Arc<dyn Device>) -> Option<Arc<dyn $Type>> {
+            unsafe {
+                let ptr = Arc::into_raw(self);
+                if let Some(coerced) = (*ptr).${concat(as_, $name, _ref)}() {
+                    Some(Arc::from_raw(coerced))
+                } else {
+                    drop(Arc::from_raw(ptr));
+                    None
+                }
+            }
+        }
+    };
+}
+
+/// An abstract device.
+/// While some common logic is enforced for all devices, most of the logic depends on their specific types.
+pub trait Device: Send + Sync + 'static {
+    /// Get the base device struct.
+    fn base(&self) -> &DeviceBase;
+
+    /// Device interrupt handler; runs with interrupts disabled.
+    /// Returns whether the interrupt was handled.
+    fn interrupt(&self, id: u128) -> bool;
+
+    dev_coercions!(dev_ref_coercion);
+}
+
+impl dyn Device {
+    /// ID assigned by the device registry.
+    /// The ID is unique to this device, even if not discoverable through the registry.
+    pub fn id(&self) -> NonZeroU32 {
+        self.base().id
+    }
+
+    dev_coercions!(dev_arc_coercion);
 }

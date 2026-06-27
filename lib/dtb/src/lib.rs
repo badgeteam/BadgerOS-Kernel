@@ -2,21 +2,39 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
+#![no_std]
+#![feature(allocator_api)]
+
+extern crate alloc;
+extern crate core;
+
 use core::{
-    ffi::CStr,
-    fmt::{Display, Write},
+    error::Error,
+    fmt::{Debug, Display, Write},
     ops::{Deref, Range},
     ptr::null,
 };
 
-use alloc::{boxed::Box, collections::btree_map::BTreeMap, string::String};
-use lex::*;
+use alloc::{boxed::Box, collections::btree_map::BTreeMap, string::String, vec::Vec};
 
-use crate::bindings::log::LogLevel;
+pub mod spec;
+use spec::*;
 
-mod lex;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DtbError {
+    // Invalid FDT.
+    Invalid,
+    // Out of memory.
+    NoMemory,
+}
 
-pub type FdtHeader = lex::FdtHeader;
+impl Display for DtbError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        <Self as Debug>::fmt(self, f)
+    }
+}
+
+impl Error for DtbError {}
 
 /// Loaded device tree structure.
 pub struct Dtb {
@@ -159,6 +177,26 @@ impl DtbNode {
     pub fn is_compatible_any(&self, want: &[&str]) -> bool {
         want.iter().any(|w| self.is_compatible(w))
     }
+
+    /// Get a property of this node by name.
+    pub fn prop(&self, name: &str) -> Option<&DtbProp> {
+        self.props.get(name)
+    }
+
+    /// Read a named property as one u32.
+    pub fn prop_u32(&self, name: &str) -> Option<u32> {
+        self.props.get(name)?.read_u32()
+    }
+
+    /// Read a named property as one u64.
+    pub fn prop_u64(&self, name: &str) -> Option<u64> {
+        self.props.get(name)?.read_u64()
+    }
+
+    /// Read a named property as some integer.
+    pub fn prop_uint(&self, name: &str) -> Option<u128> {
+        self.props.get(name)?.read_uint()
+    }
 }
 
 impl Display for DtbNode {
@@ -223,17 +261,21 @@ impl DtbProp {
         self.read_uint_cells(cell..cell + 1).map(|x| x as u32)
     }
 
+    /// Read `count` cells starting at cell index `start` into a boxed slice.
+    pub fn read_cells(&self, start: usize, count: usize) -> Result<Box<[u32]>, DtbError> {
+        let mut v = Vec::new();
+        v.try_reserve(count).map_err(|_| DtbError::NoMemory)?;
+        for c in 0..count {
+            v.push(self.read_cell(start + c).ok_or(DtbError::Invalid)?);
+        }
+        Ok(v.into_boxed_slice())
+    }
+
     /// Read this prop as some integer.
     pub fn read_uint_cells(&self, cells: Range<usize>) -> Option<u128> {
         debug_assert!(cells.len() <= 4);
         if self.blob.len() / 4 < cells.end {
-            logkf!(
-                LogLevel::Warning,
-                "DTB prop {} expected to have at least {} cells but has {}",
-                self,
-                cells.end,
-                self.blob.len() / 4
-            );
+            return None;
         }
         let mut value = 0u128;
         for cell in cells {
@@ -250,11 +292,25 @@ impl DtbProp {
     pub fn read_uint(&self) -> Option<u128> {
         self.read_uint_cells(0..self.blob.len().div_ceil(4))
     }
+
+    /// Read this prop as one u32.
+    pub fn read_u32(&self) -> Option<u32> {
+        (self.blob.len() == 4)
+            .then(|| self.read_uint_cells(0..1))?
+            .map(|x| x as u32)
+    }
+
+    /// Read this prop as one u64.
+    pub fn read_u64(&self) -> Option<u64> {
+        (self.blob.len() == 8)
+            .then(|| self.read_uint_cells(0..2))?
+            .map(|x| x as u64)
+    }
 }
 
 impl Display for DtbProp {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        self.parent().fmt(f)?;
+        Display::fmt(self.parent(), f)?;
         f.write_str(" prop ")?;
         f.write_str(&self.name)?;
         Ok(())

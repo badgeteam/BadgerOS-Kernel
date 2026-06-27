@@ -11,7 +11,7 @@ use alloc::{collections::btree_map::BTreeMap, sync::Arc};
 
 use crate::{bindings::error::EResult, kernel::sync::mutex::Mutex};
 
-use super::device::Device;
+use super::Device;
 
 /// The actual storage of the registry.
 static DEVICES: Mutex<BTreeMap<NonZeroU32, Arc<dyn Device>>> = Mutex::new(BTreeMap::new());

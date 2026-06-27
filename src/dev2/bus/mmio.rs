@@ -9,6 +9,7 @@ use core::{
 };
 
 use alloc::{boxed::Box, sync::Arc};
+use dtb::DtbNode;
 
 use crate::{
     bindings::{
@@ -16,11 +17,7 @@ use crate::{
         log::LogLevel,
     },
     config::PAGE_SIZE,
-    dev2::{
-        bus::Bus,
-        device::{Device, class::irqctl::IrqCtlDevice},
-    },
-    device::dtb::DtbNode,
+    dev2::{Device, bus::Bus, class::irqctl::IrqCtlDevice},
     mem::{
         pmm::PAddrr,
         vmm::{

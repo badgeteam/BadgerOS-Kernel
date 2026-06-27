@@ -5,7 +5,7 @@
 use alloc::{collections::btree_map::BTreeMap, vec::Vec};
 
 use crate::{
-    badgelib::irq::IrqGuard, bindings::error::EResult, cpu::irq, dev2::device::Device,
+    badgelib::irq::IrqGuard, bindings::error::EResult, cpu::irq, dev2::Device,
     kernel::sync::spinlock::Spinlock,
 };
 
@@ -80,7 +80,12 @@ impl IrqCtlDeviceBase {
     ///
     /// # Safety
     /// The caller promises that the handler is a valid [`Device`] object.
-    pub(crate) unsafe fn uninstall_irq(&self, irq_id: u128, dev_irq: u128, device: *const dyn Device) {
+    pub(crate) unsafe fn uninstall_irq(
+        &self,
+        irq_id: u128,
+        dev_irq: u128,
+        device: *const dyn Device,
+    ) {
         let irq_id = irq_id & self.mask;
         let _noirq = IrqGuard::new();
         let mut handlers = self.handlers.lock();

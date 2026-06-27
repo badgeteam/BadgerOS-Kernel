@@ -1,6 +1,7 @@
 use core::{error::Error, fmt::Display, str};
 
 use alloc::{alloc::AllocError, collections::TryReserveError};
+use dtb::DtbError;
 
 use super::raw;
 
@@ -325,6 +326,15 @@ impl From<AllocError> for Errno {
 impl From<TryReserveError> for Errno {
     fn from(_: TryReserveError) -> Self {
         Errno::ENOMEM
+    }
+}
+
+impl From<DtbError> for Errno {
+    fn from(value: DtbError) -> Self {
+        match value {
+            DtbError::Invalid => Errno::EINVAL,
+            DtbError::NoMemory => Errno::ENOMEM,
+        }
     }
 }
 

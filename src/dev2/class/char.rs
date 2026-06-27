@@ -4,7 +4,7 @@
 
 use crate::{
     bindings::error::EResult,
-    dev2::device::Device,
+    dev2::Device,
     kernel::sync::waitlist::Waitlist,
     process::usercopy::{UserSlice, UserSliceMut},
 };

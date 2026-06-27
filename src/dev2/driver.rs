@@ -6,24 +6,19 @@
 //! section, and [`probe_all`] walks the device tree binding drivers to nodes by
 //! their `compatible` string, with deferred probing for dependency ordering.
 
-use core::ops::Range;
-
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc, vec::Vec};
+use core::ops::Range;
+use dtb::{Dtb, DtbNode};
 
 use crate::{
     bindings::{
         error::{EResult, Errno},
         log::LogLevel,
     },
-    device::dtb::{Dtb, DtbNode},
     mem::pmm::PAddrr,
 };
 
-use super::{
-    bus::mmio::MmioBus,
-    device::{Device, class::irqctl::IrqCtlDevice},
-    registry,
-};
+use super::{Device, bus::mmio::MmioBus, class::irqctl::IrqCtlDevice, registry};
 
 /// A driver that can bind to device-tree nodes.
 pub trait Driver: Sync {
@@ -36,7 +31,10 @@ pub trait Driver: Sync {
     /// Instantiate the device for `node`.
     /// Return [`Errno::EAGAIN`] to defer until a later pass (e.g. when an interrupt
     /// parent has not been probed yet).
-    fn probe(&self, ctx: &ProbeContext) -> EResult<Arc<dyn Device>>;
+    ///
+    /// # Safety
+    /// Misleading the driver about the device could cause invalid accesses and undefined behavior.
+    unsafe fn probe(&self, ctx: &ProbeContext) -> EResult<Arc<dyn Device>>;
 }
 
 /// Reference to a registered driver, as stored in the `.dev2_drivers` linker section.
@@ -124,7 +122,7 @@ impl ProbeContext<'_> {
                 i += 1;
                 let parent = self.dtb.node_by_phandle(phandle).ok_or(Errno::EINVAL)?;
                 let icells = cells(parent, "#interrupt-cells")?;
-                let entry = read_cells(ext, i, icells)?;
+                let entry = ext.read_cells(i, icells)?;
                 i += icells;
                 out.try_reserve(1)?;
                 out.push(IrqEntry {
@@ -133,14 +131,14 @@ impl ProbeContext<'_> {
                 });
             }
         } else if let Some(ints) = self.node.props.get("interrupts") {
-            let parent = super::irq_parent(self.dtb, self.node).ok_or(Errno::EINVAL)?;
+            let parent = super::dtb::irq_parent(self.dtb, self.node).ok_or(Errno::EINVAL)?;
             let icells = cells(parent, "#interrupt-cells")?;
             if icells == 0 {
                 return Err(Errno::EINVAL);
             }
             let count = ints.cell_count().ok_or(Errno::EINVAL)? / icells;
             for i in 0..count {
-                let entry = read_cells(ints, i * icells, icells)?;
+                let entry = ints.read_cells(i * icells, icells)?;
                 out.try_reserve(1)?;
                 out.push(IrqEntry {
                     parent,
@@ -185,45 +183,20 @@ impl ProbeContext<'_> {
 }
 
 /// Read a `#address-cells`-style count property as a small `usize`.
+#[cfg(feature = "dtb")]
 fn cells(node: &DtbNode, name: &str) -> EResult<usize> {
-    node.props
-        .get(name)
-        .and_then(|p| p.read_cell(0))
-        .map(|x| x as usize)
-        .ok_or(Errno::EINVAL)
-}
-
-/// Read `count` cells starting at cell index `start` from a prop into a boxed slice.
-fn read_cells(
-    prop: &crate::device::dtb::DtbProp,
-    start: usize,
-    count: usize,
-) -> EResult<Box<[u32]>> {
-    let mut v = Vec::new();
-    v.try_reserve(count)?;
-    for c in 0..count {
-        v.push(prop.read_cell(start + c).ok_or(Errno::EINVAL)?);
-    }
-    Ok(v.into_boxed_slice())
-}
-
-/// Recursively collect all descendant nodes of `root` (depth-first, parents before children).
-fn collect_nodes(root: &'static DtbNode, out: &mut Vec<&'static DtbNode>) {
-    for child in root.nodes.values() {
-        out.push(child);
-        collect_nodes(child, out);
-    }
+    node.prop_u32(name).map(|x| x as usize).ok_or(Errno::EINVAL)
 }
 
 /// Walk the device tree under `root`, binding registered drivers to matching nodes.
 /// Uses deferred probing: a driver returning [`Errno::EAGAIN`] is retried on a later
 /// pass, until a full pass makes no progress.
-pub fn probe_all(dtb: &'static Dtb, root: &'static DtbNode) {
+#[cfg(feature = "dtb")]
+pub fn probe_dtb(dtb: &'static Dtb, children_of: &'static DtbNode) {
     let drivers = registered_drivers();
     let mut phandle_irqctls: BTreeMap<u32, Arc<dyn IrqCtlDevice>> = BTreeMap::new();
 
-    let mut worklist = Vec::new();
-    collect_nodes(root, &mut worklist);
+    let mut worklist: Vec<_> = children_of.nodes.values().collect();
 
     loop {
         let mut progressed = false;
@@ -237,7 +210,8 @@ pub fn probe_all(dtb: &'static Dtb, root: &'static DtbNode) {
                 node,
                 phandle_irqctls: &phandle_irqctls,
             };
-            match driver.probe(&ctx) {
+            // SAFETY: We can do no better than hope that the FDT passed by the bootloader is correct.
+            match unsafe { driver.probe(&ctx) } {
                 Ok(device) => {
                     progressed = true;
                     if let Some(phandle) = node.phandle
