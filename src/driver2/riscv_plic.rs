@@ -9,21 +9,25 @@
 //! the claimed source to the leaf device's handler. CLINT (timer/IPI) is arch-managed and
 //! never reaches here. More than one PLIC may exist; each owns its harts' contexts.
 
+use core::any::Any;
+
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
-use dtb::DtbNode;
-
 use crate::{
-    bindings::error::{EResult, Errno},
-    cpu::PhysCpuID,
+    bindings::{
+        error::{EResult, Errno},
+        log::LogLevel,
+    },
     dev2::{
         Device, DeviceBase,
-        bus::mmio::MmioMapping,
+        bus::{
+            Bus,
+            soc::{MmioMapping, SocBus, SocIrqParent},
+        },
         class::irqctl::{IrqCtlDevice, IrqCtlDeviceBase},
-        driver::{Driver, ProbeContext},
+        driver::Driver,
     },
     kernel::smp,
-    register_driver,
 };
 
 /// Supervisor external interrupt cause number (PLIC output to a hart).
@@ -56,6 +60,8 @@ pub struct RiscvPlic {
     ndev: u32,
     /// PLIC context number to use per SMP index, if this PLIC serves that hart.
     ctx_by_cpu: Box<[Option<u32>]>,
+    /// Bus reservation.
+    bus: Arc<SocBus>,
 }
 
 impl RiscvPlic {
@@ -137,29 +143,37 @@ impl IrqCtlDevice for RiscvPlic {
 }
 
 /// The PLIC driver, registered into the dev2 driver table.
-struct RiscvPlicDriver;
+pub struct RiscvPlicDriver;
 
 impl Driver for RiscvPlicDriver {
     fn name(&self) -> &str {
         "riscv-plic"
     }
 
-    fn matches(&self, node: &DtbNode) -> bool {
+    fn match_(&self, bus: &dyn Bus) -> bool {
+        if (bus as &dyn Any).downcast_ref::<SocBus>().is_none() {
+            return false;
+        }
+        let Some(node) = bus.dtb_node() else {
+            return false;
+        };
         node.is_compatible_any(&["riscv,plic0", "sifive,plic-1.0.0"])
     }
 
-    unsafe fn probe(&self, ctx: &ProbeContext) -> EResult<Arc<dyn Device>> {
+    unsafe fn probe(&self, bus: Arc<dyn Bus>) -> EResult<Arc<dyn Device>> {
+        let bus = Arc::downcast::<SocBus>(bus).unwrap();
+        let node = bus.dtb_node().unwrap();
+        let base = DeviceBase::new();
+
         // Map the whole PLIC register window.
-        let reg = ctx.reg()?;
-        let region = reg.first().ok_or(Errno::EINVAL)?;
-        let mapping = MmioMapping::new(region.start, region.end - region.start)?;
+        let mapping = bus.map(0)?;
 
         // PLIC interrupt specifiers are a single cell (the source number).
-        let icells = ctx.node.prop_u32("#interrupt-cells").ok_or(Errno::EINVAL)?;
-        if icells != 1 {
+        if node.irq_cells != Some(1) {
+            logkf!(LogLevel::Error, "{}: #interrupt-cells must be 1", node);
             return Err(Errno::EINVAL);
         }
-        let ndev = ctx.node.prop_u32("riscv,ndev").ok_or(Errno::EINVAL)?;
+        let ndev = node.prop_u32("riscv,ndev").ok_or(Errno::EINVAL)?;
 
         // Map each PLIC context (an `interrupts-extended` entry) to an SMP index.
         // Entry order defines the context number; only supervisor-external outputs are used.
@@ -168,27 +182,27 @@ impl Driver for RiscvPlicDriver {
         ctx_by_cpu.try_reserve(ncpu)?;
         ctx_by_cpu.resize(ncpu, None);
 
-        for (ctx_no, entry) in ctx.interrupts()?.iter().enumerate() {
-            if entry.cells.first().copied() != Some(RISCV_INT_EXT) {
+        for (ctx_no, entry) in bus.irq_ext().iter().enumerate() {
+            // Only care about S-mode external interrupts here.
+            if entry.vector != RISCV_INT_EXT as u128 {
                 continue;
             }
-            // entry.parent is the cpu-intc node; its parent is the cpu node (reg = hartid).
-            let cpu_node = entry.parent.parent().ok_or(Errno::EINVAL)?;
-            let hartid = cpu_node.prop_uint("reg").ok_or(Errno::EINVAL)? as PhysCpuID;
-            if let Some(smp_idx) = smp::by_phys_id(hartid)
-                && let Some(slot) = ctx_by_cpu.get_mut(smp_idx as usize)
+            if let SocIrqParent::Cpu(idx) = &entry.irqctl
+                && let Some(slot) = ctx_by_cpu.get_mut(*idx as usize)
             {
                 *slot = Some(ctx_no as u32);
             }
         }
 
         let plic = Arc::try_new(RiscvPlic {
-            base: DeviceBase::new(),
-            irqctl: IrqCtlDeviceBase::new(!0)?,
+            base,
+            irqctl: IrqCtlDeviceBase::new(u128::MAX)?,
             mapping,
             ndev,
             ctx_by_cpu: ctx_by_cpu.into_boxed_slice(),
+            bus: bus.clone(),
         })?;
+        bus.claim(Arc::<RiscvPlic>::downgrade(&plic))?;
 
         // Mask nothing (threshold 0) on each used context; sources are enabled lazily.
         for ctx_no in plic.ctx_by_cpu.iter().flatten() {
@@ -207,5 +221,3 @@ impl Driver for RiscvPlicDriver {
         Ok(plic)
     }
 }
-
-register_driver!(RiscvPlicDriver);

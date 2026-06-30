@@ -22,9 +22,9 @@ use spec::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DtbError {
-    // Invalid FDT.
+    /// Invalid FDT.
     Invalid,
-    // Out of memory.
+    /// Out of memory.
     NoMemory,
 }
 
@@ -105,6 +105,12 @@ pub struct DtbNode {
     parent: *const DtbNode,
     /// Cached phandle, if any.
     pub phandle: Option<u32>,
+    /// Cached #size-cells, if any.
+    pub size_cells: Option<u32>,
+    /// Cached #address-cells, if any.
+    pub addr_cells: Option<u32>,
+    /// Cached #interrupt-cells, if any.
+    pub irq_cells: Option<u32>,
     /// Child nodes.
     pub nodes: BTreeMap<String, Box<DtbNode>>,
     /// Child props.
@@ -124,9 +130,19 @@ impl DtbNode {
             name: name.into(),
             parent,
             phandle: None,
+            size_cells: None,
+            addr_cells: None,
+            irq_cells: None,
             nodes: BTreeMap::new(),
             props: BTreeMap::new(),
         });
+        if !parent.is_null() {
+            unsafe {
+                this.size_cells = (*parent).size_cells;
+                this.addr_cells = (*parent).addr_cells;
+                this.irq_cells = (*parent).irq_cells;
+            }
+        }
 
         loop {
             match tkn.next().expect("Unexpected FDT_END") {
@@ -147,7 +163,28 @@ impl DtbNode {
         }
 
         this.phandle = this.props.get("phandle").map(|prop| {
-            assert!(prop.cell_count() == Some(1));
+            assert!(prop.cell_count() == Some(1), "phandle must have one cell");
+            prop.read_cell(0).unwrap()
+        });
+        this.size_cells = this.props.get("#size-cells").map(|prop| {
+            assert!(
+                prop.cell_count() == Some(1),
+                "#size-cells must have one cell"
+            );
+            prop.read_cell(0).unwrap()
+        });
+        this.addr_cells = this.props.get("#address-cells").map(|prop| {
+            assert!(
+                prop.cell_count() == Some(1),
+                "#size-cells must have one cell"
+            );
+            prop.read_cell(0).unwrap()
+        });
+        this.irq_cells = this.props.get("#interrupt-cells").map(|prop| {
+            assert!(
+                prop.cell_count() == Some(1),
+                "#size-cells must have one cell"
+            );
             prop.read_cell(0).unwrap()
         });
 

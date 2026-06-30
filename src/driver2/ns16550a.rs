@@ -16,7 +16,7 @@ use crate::{
         Device, DeviceBase,
         bus::{
             Bus,
-            mmio::{MmioBus, MmioStruct},
+            soc::{MmioStruct, SocBus},
         },
         class::char::CharDevice,
     },
@@ -149,7 +149,7 @@ register_structs! {
 /// Driver for an NS16550A-compatible device.
 pub struct Ns16550aDevice {
     base: DeviceBase,
-    bus: Arc<MmioBus>,
+    bus: Arc<SocBus>,
     regs: Spinlock<MmioStruct<Ns16550a>>,
     txfifo: BlockingFifo,
     rxfifo: BlockingFifo,
@@ -159,7 +159,7 @@ pub struct Ns16550aDevice {
 impl Ns16550aDevice {
     /// # Safety
     /// The caller must guarantee that the bus points to a valid NS16550A-compatible device.
-    pub unsafe fn new(base: DeviceBase, bus: Arc<MmioBus>) -> EResult<Arc<Self>> {
+    pub unsafe fn new(base: DeviceBase, bus: Arc<SocBus>) -> EResult<Arc<Self>> {
         let regs = unsafe { MmioStruct::new(bus.map(0)?) }?;
 
         let this = Arc::try_new(Self {

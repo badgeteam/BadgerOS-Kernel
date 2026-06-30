@@ -29,30 +29,48 @@ use crate::{
     },
 };
 
-/// Memory-mapped I/O bus.
-pub struct MmioBus {
+use super::BusBase;
+
+#[derive(Clone)]
+pub enum SocIrqParent {
+    /// Parent interrupt controller is the CPU interrupt controller.
+    Cpu(u32),
+    /// Parent interrupt controller is a device.
+    Device(Arc<dyn IrqCtlDevice>),
+}
+
+/// Interrupt route for [`MmioBus`].
+#[derive(Clone)]
+pub struct SocIrqExt {
+    /// Parent inerrupt controller.
+    pub irqctl: SocIrqParent,
+    /// Interrupt vector of the interrupt controller.
+    pub vector: u128,
+}
+
+/// System-on-chip memory-mapped I/O bus.
+pub struct SocBus {
+    /// Base bus struct.
+    base: BusBase,
     /// Associated DTB node, if any.
     dtb_node: Option<&'static DtbNode>,
     /// Physical addresses in this MMIO bus.
     paddr: Box<[Range<PAddrr>]>,
-    /// Parent interrupt controller.
-    irqctl: Option<Arc<dyn IrqCtlDevice>>,
-    /// Controller input line for each device-local interrupt index.
-    irq_lines: Box<[u128]>,
+    /// Extended interrupts map.
+    irq_ext: Box<[SocIrqExt]>,
 }
 
-impl MmioBus {
+impl SocBus {
     pub fn new(
         dtb_node: Option<&'static DtbNode>,
         paddr: Box<[Range<PAddrr>]>,
-        irqctl: Option<Arc<dyn IrqCtlDevice>>,
-        irq_lines: Box<[u128]>,
+        irq_ext: Box<[SocIrqExt]>,
     ) -> Self {
         Self {
+            base: BusBase::new(),
             dtb_node,
             paddr,
-            irqctl,
-            irq_lines,
+            irq_ext,
         }
     }
 
@@ -63,9 +81,21 @@ impl MmioBus {
     pub fn map(&self, slot: usize) -> EResult<MmioMapping> {
         MmioMapping::new(self.paddr[slot].start, self.paddr[slot].len())
     }
+
+    pub fn paddr(&self) -> &[Range<PAddrr>] {
+        &self.paddr
+    }
+
+    pub fn irq_ext(&self) -> &[SocIrqExt] {
+        &self.irq_ext
+    }
 }
 
-impl Bus for MmioBus {
+impl Bus for SocBus {
+    fn base(&self) -> &BusBase {
+        &self.base
+    }
+
     fn parent_device(&self) -> Option<Arc<dyn Device>> {
         None
     }
@@ -75,23 +105,46 @@ impl Bus for MmioBus {
     }
 
     unsafe fn install_irq(&self, dev_irq: u128, handler: *const dyn Device) -> EResult<()> {
-        let ctl = self.irqctl.as_ref().ok_or(Errno::ENODEV)?;
-        let line = *self.irq_lines.get(dev_irq as usize).ok_or(Errno::EINVAL)?;
+        if dev_irq >= self.irq_ext.len() as u128 {
+            return Err(Errno::EINVAL);
+        }
+
+        let irq = &self.irq_ext[dev_irq as usize];
+        let SocIrqParent::Device(irqctl) = &irq.irqctl else {
+            // For various reasons, installing an IRQ directly is not technically feasible.
+            // In addition, on most platforms, all devices connect through a platform-level interrupt controller first anyway.
+            logkf!(
+                LogLevel::Error,
+                "Cannot install IRQ directly on CPU interrupt controller"
+            );
+            return Err(Errno::EINVAL);
+        };
         // SAFETY: forwarded from the caller of `Bus::install_irq`, same contract.
-        unsafe { ctl.irqctl_base().install_irq(line, dev_irq, handler)? };
-        ctl.set_irq_in_enabled(line, true)
+        unsafe {
+            irqctl
+                .irqctl_base()
+                .install_irq(irq.vector, dev_irq, handler)?
+        };
+        irqctl.set_irq_in_enabled(irq.vector, true)
     }
 
     unsafe fn uninstall_irq(&self, dev_irq: u128, handler: *const dyn Device) {
-        let Some(ctl) = self.irqctl.as_ref() else {
+        if dev_irq >= self.irq_ext.len() as u128 {
             return;
+        }
+
+        let irq = &self.irq_ext[dev_irq as usize];
+        let SocIrqParent::Device(irqctl) = &irq.irqctl else {
+            // We shouldn't even be able to get here, since you can't install interrupts like this.
+            unreachable!();
         };
-        let Some(&line) = self.irq_lines.get(dev_irq as usize) else {
-            return;
-        };
-        let _ = ctl.set_irq_in_enabled(line, false);
         // SAFETY: forwarded from the caller of `Bus::uninstall_irq`, same contract.
-        unsafe { ctl.irqctl_base().uninstall_irq(line, dev_irq, handler) };
+        unsafe {
+            irqctl
+                .irqctl_base()
+                .uninstall_irq(irq.vector, dev_irq, handler);
+        };
+        irqctl.set_irq_in_enabled(irq.vector, false);
     }
 }
 

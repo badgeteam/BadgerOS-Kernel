@@ -12,7 +12,6 @@ pub mod class;
 pub mod driver;
 #[cfg(feature = "dtb")]
 pub mod dtb;
-pub mod init;
 pub mod registry;
 
 use class::{char::CharDevice, irqctl::IrqCtlDevice};
@@ -27,19 +26,19 @@ impl DeviceBase {
     /// Create a new device base with a freshly allocated unique ID.
     pub fn new() -> Self {
         Self {
-            id: registry::alloc_id(),
+            id: registry::alloc_device_id(),
         }
     }
 
-    /// ID assigned to this device.
+    /// ID assigned by the device registry.
     pub fn id(&self) -> NonZeroU32 {
         self.id
     }
 }
 
-impl Default for DeviceBase {
-    fn default() -> Self {
-        Self::new()
+impl Drop for DeviceBase {
+    fn drop(&mut self) {
+        registry::dealloc_device_id(self.id);
     }
 }
 
