@@ -118,6 +118,7 @@ pub fn register_driver(driver: &'static dyn Driver) -> EResult<()> {
 
     drivers.try_reserve(1)?;
     drivers.push(driver);
+    logkf!(LogLevel::Info, "Register driver \"{}\"", driver.name());
 
     Ok(())
 }
