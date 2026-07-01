@@ -12,6 +12,7 @@ pub mod class;
 pub mod driver;
 #[cfg(feature = "dtb")]
 pub mod dtb;
+pub mod probe;
 pub mod registry;
 
 use class::{char::CharDevice, irqctl::IrqCtlDevice};

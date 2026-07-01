@@ -42,6 +42,8 @@ pub struct Dtb {
     root: Box<DtbNode>,
     /// Map from phandle to node.
     by_phandle: BTreeMap<u32, *const DtbNode>,
+    /// DTB path aliases.
+    pub aliases: BTreeMap<String, String>,
 }
 unsafe impl Send for Dtb {}
 unsafe impl Sync for Dtb {}
@@ -52,7 +54,10 @@ impl Dtb {
 
     /// Parse DTB from an FDT pointer.
     /// # Panics
-    /// - If the FDT is malformed.
+    /// - If the FDT is malformed
+    /// - If a `phandle`, `#address-cells`, `#size-cells` or `#interrupt-cells` property is not exactly one cell
+    /// - If a name is not valid UTF-8
+    /// - If an alias is not valid UTF-8
     pub unsafe fn parse(fdt: *const FdtHeader) -> Self {
         let header = FdtHeader::from_be(unsafe { *fdt });
         assert!(header.magic == FdtHeader::MAGIC, "Invalid FDT magic");
@@ -82,7 +87,19 @@ impl Dtb {
         let root = unsafe { DtbNode::parse(&mut tkn, &mut by_phandle, null(), "") };
         assert!(tkn.next().is_none(), "Unexpected extra data in FDT");
 
-        Self { root, by_phandle }
+        let mut aliases = BTreeMap::new();
+        if let Some(node) = root.node("aliases") {
+            for prop in node.props.values() {
+                let string = prop.as_string().expect("Alias must be one valid string");
+                aliases.insert(prop.name.clone(), string.into());
+            }
+        }
+
+        Self {
+            root,
+            by_phandle,
+            aliases,
+        }
     }
 
     /// DTB root node.
@@ -110,6 +127,7 @@ impl Dtb {
     }
 
     fn display_impl_prop(
+        &self,
         prop: &DtbProp,
         depth: usize,
         f: &mut core::fmt::Formatter<'_>,
@@ -186,19 +204,21 @@ impl Dtb {
     }
 
     fn display_impl_node(
+        &self,
+        name: &str,
         node: &DtbNode,
         depth: usize,
         f: &mut core::fmt::Formatter<'_>,
     ) -> core::fmt::Result {
         Self::pindent(depth, f)?;
-        f.write_str(&node.name)?;
+        f.write_str(name)?;
         f.write_str(" {\n")?;
 
         for prop in node.props.values() {
-            Self::display_impl_prop(prop, depth + 1, f)?;
+            self.display_impl_prop(prop, depth + 1, f)?;
         }
         for child in node.nodes.values() {
-            Self::display_impl_node(child, depth + 1, f)?;
+            self.display_impl_node(&child.name, child, depth + 1, f)?;
         }
 
         Self::pindent(depth, f)?;
@@ -210,9 +230,7 @@ impl Dtb {
 
 impl Display for Dtb {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        for node in self.root.nodes.values() {
-            Self::display_impl_node(node, 0, f)?;
-        }
+        self.display_impl_node("/", &self.root, 0, f)?;
         Ok(())
     }
 }
@@ -297,14 +315,14 @@ impl DtbNode {
         this.addr_cells = this.props.get("#address-cells").map(|prop| {
             assert!(
                 prop.cell_count() == Some(1),
-                "#size-cells must have one cell"
+                "#address-cells must have one cell"
             );
             prop.read_cell(0).unwrap()
         });
         this.irq_cells = this.props.get("#interrupt-cells").map(|prop| {
             assert!(
                 prop.cell_count() == Some(1),
-                "#size-cells must have one cell"
+                "#interrupt-cells must have one cell"
             );
             prop.read_cell(0).unwrap()
         });
@@ -339,6 +357,19 @@ impl DtbNode {
     /// Get a child of this node by name.
     pub fn node(&self, name: &str) -> Option<&DtbNode> {
         self.nodes.get(name).map(AsRef::as_ref)
+    }
+
+    /// Get a property from this node or its direct parent.
+    pub fn inherit_prop(&self, name: &str) -> Option<&DtbProp> {
+        if let Some(prop) = self.props.get(name) {
+            return Some(prop);
+        }
+        if let Some(parent) = self.parent()
+            && let Some(prop) = parent.props.get(name)
+        {
+            return Some(prop);
+        }
+        None
     }
 
     /// Get a property of this node by name.
@@ -410,6 +441,14 @@ impl DtbProp {
     /// Number of `<u32>` cells in this prop.
     pub fn cell_count(&self) -> Option<usize> {
         (self.blob.len() % 4 == 0).then_some(self.blob.len() / 4)
+    }
+
+    /// Read as one NUL-terminated string.
+    pub fn as_string(&self) -> Option<&str> {
+        if self.blob.last() != Some(&0) {
+            return None;
+        }
+        str::from_utf8(&self.blob[..self.blob.len() - 1]).ok()
     }
 
     /// Iterate the NUL-separated strings in this prop (e.g. a `compatible` list).

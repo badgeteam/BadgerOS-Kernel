@@ -105,11 +105,12 @@ pub fn is_usable(cpu: &DtbNode) -> Option<CpuFeatures> {
 
 /// Determine whether a CPU is usable by its DTB node.
 pub fn is_usable2(cpu: &dtb::DtbNode) -> Option<CpuFeatures> {
-    let isa_prop = cpu.props.get("riscv,isa")?;
-    let mmu_prop = cpu.props.get("mmu-type")?;
-    let isa: &[u8] = &isa_prop.blob;
-    let mmu: &[u8] = &mmu_prop.blob;
+    // We will be reading the RISC-V ISA specification to check for required and optional features.
+    let isa = cpu.inherit_prop("riscv,isa")?.blob.as_ref();
+    // Assert core has an MMU.
+    let mmu = cpu.inherit_prop("mmu-type")?.blob.as_ref();
 
+    // Assert core MMU is capable of at least as many paging levels as currently active.
     let supported_levels = if mmu.eq(b"riscv,sv39\0") {
         3
     } else if mmu.eq(b"riscv,sv48\0") {
@@ -123,10 +124,10 @@ pub fn is_usable2(cpu: &dtb::DtbNode) -> Option<CpuFeatures> {
         return None;
     }
 
+    // Parse the ISA before determining whether it is usable.
     let spec = parse_isa_str(isa)?;
-    if !spec.i {
-        return None;
-    }
+
+    // Assert core is same bitness as kernel.
     #[cfg(target_arch = "riscv64")]
     if !spec.rv64 {
         return None;
@@ -135,8 +136,16 @@ pub fn is_usable2(cpu: &dtb::DtbNode) -> Option<CpuFeatures> {
     if spec.rv64 {
         return None;
     }
+
+    // Assert that at least the CPU features BadgerOS was compiled with exist.
+    if !spec.i {
+        return None;
+    }
     #[cfg(target_feature = "m")]
     if !spec.m {
+        return None;
+    }
+    if !spec.a {
         return None;
     }
     #[cfg(target_feature = "c")]
@@ -144,6 +153,7 @@ pub fn is_usable2(cpu: &dtb::DtbNode) -> Option<CpuFeatures> {
         return None;
     }
 
+    // The core is usable, note its extra features.
     Some(CpuFeatures {
         f32: spec.f,
         f64: spec.d,
