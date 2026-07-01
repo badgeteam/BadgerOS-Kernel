@@ -90,9 +90,130 @@ impl Dtb {
         &self.root
     }
 
+    /// Get a DTB node from the root by name.
+    pub fn node(&self, name: &str) -> Option<&DtbNode> {
+        self.root.node(name)
+    }
+
     /// Get a node by its phandle.
     pub fn node_by_phandle(&self, phandle: u32) -> Option<&DtbNode> {
         self.by_phandle.get(&phandle).map(|x| unsafe { &**x })
+    }
+}
+
+impl Dtb {
+    fn pindent(depth: usize, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for _ in 0..depth {
+            f.write_str("    ")?;
+        }
+        Ok(())
+    }
+
+    fn display_impl_prop(
+        prop: &DtbProp,
+        depth: usize,
+        f: &mut core::fmt::Formatter<'_>,
+    ) -> core::fmt::Result {
+        Self::pindent(depth, f)?;
+        f.write_str(&prop.name)?;
+        if prop.name.starts_with("#")
+            && prop.name.ends_with("-cells")
+            && let Some(value) = prop.read_u32()
+        {
+            f.write_fmt(format_args!(" = <{}>;\n", value))?;
+            return Ok(());
+        } else if prop.blob.is_empty() {
+            f.write_str(";\n")?;
+            return Ok(());
+        }
+
+        f.write_str(" = ")?;
+
+        let mut is_strings = true;
+        let mut prev = 0u8;
+        for &c in &prop.blob {
+            if c == 0 {
+                if prev == 0 {
+                    is_strings = false;
+                    break;
+                }
+            } else if c < 0x20 || c > 0x7f {
+                is_strings = false;
+                break;
+            }
+            prev = c;
+        }
+        is_strings &= prop.blob.last() == Some(&0);
+
+        if is_strings {
+            f.write_char('\"')?;
+            let strings = prop.blob[..prop.blob.len() - 1].split(|&x| x == 0);
+            let mut sep = false;
+            for string in strings {
+                if sep {
+                    f.write_str("\", \"")?;
+                }
+                // SAFETY: ASCII is a strict subset of UTF-8.
+                f.write_str(unsafe { str::from_utf8_unchecked(string) })?;
+                sep = true;
+            }
+            f.write_char('\"')?;
+        } else if let Ok(cells) = bytemuck::try_cast_slice::<u8, u32>(&prop.blob) {
+            // Cells.
+            f.write_char('<')?;
+            for i in 0..cells.len() {
+                if i > 0 {
+                    f.write_char(' ')?;
+                }
+                f.write_fmt(format_args!("0x{:08x}", u32::from_be(cells[i])))?;
+            }
+            f.write_char('>')?;
+        } else {
+            // Plain bytes.
+            f.write_char('[')?;
+            for i in 0..prop.blob.len() {
+                if i > 0 {
+                    f.write_char(' ')?;
+                }
+                f.write_fmt(format_args!("0x{:02x}", prop.blob[i]))?;
+            }
+            f.write_char(']')?;
+        }
+
+        f.write_str(";\n")?;
+
+        Ok(())
+    }
+
+    fn display_impl_node(
+        node: &DtbNode,
+        depth: usize,
+        f: &mut core::fmt::Formatter<'_>,
+    ) -> core::fmt::Result {
+        Self::pindent(depth, f)?;
+        f.write_str(&node.name)?;
+        f.write_str(" {\n")?;
+
+        for prop in node.props.values() {
+            Self::display_impl_prop(prop, depth + 1, f)?;
+        }
+        for child in node.nodes.values() {
+            Self::display_impl_node(child, depth + 1, f)?;
+        }
+
+        Self::pindent(depth, f)?;
+        f.write_str("}\n")?;
+
+        Ok(())
+    }
+}
+
+impl Display for Dtb {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for node in self.root.nodes.values() {
+            Self::display_impl_node(node, 0, f)?;
+        }
+        Ok(())
     }
 }
 
@@ -215,6 +336,11 @@ impl DtbNode {
         want.iter().any(|w| self.is_compatible(w))
     }
 
+    /// Get a child of this node by name.
+    pub fn node(&self, name: &str) -> Option<&DtbNode> {
+        self.nodes.get(name).map(AsRef::as_ref)
+    }
+
     /// Get a property of this node by name.
     pub fn prop(&self, name: &str) -> Option<&DtbProp> {
         self.props.get(name)
@@ -247,6 +373,7 @@ impl Display for DtbNode {
         }
 
         // Iteratively walk down so the path is printed in proper order.
+        f.write_char('/')?;
         for x in (1..depth).rev() {
             let mut cur = self;
             for _ in 0..x {
