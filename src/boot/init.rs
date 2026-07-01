@@ -2,7 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::ffi::CStr;
+use core::{ffi::CStr, num::NonZero};
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
@@ -15,7 +15,7 @@ use crate::{
         },
     },
     cpu::{self, spinup::arch_cpu_spinup},
-    dev2,
+    dev2::{self, Device, class::char::CharDevice},
     filesystem::mount_root::mount_root_fs,
     kernel::{
         cpulocal::CpuLocal,
@@ -24,7 +24,7 @@ use crate::{
     },
     ktest::{KTestWhen, ktests_runlevel},
     mem::vmm,
-    process::Process,
+    process::{Process, usercopy::UserSlice},
     util::version,
 };
 
@@ -99,6 +99,17 @@ unsafe fn general_init() {
             static bootp_dtb_req: limine_dtb_request;
         }
         dev2::dtb::init((*bootp_dtb_req.response).dtb_ptr as _);
+
+        logkf!(LogLevel::Info, "Doing an NS16550 test");
+
+        let uart: Arc<dyn CharDevice> = dev2::registry::device_by_id(NonZero::new(2).unwrap())
+            .expect("Missing dev 2")
+            .try_as_arc()
+            .expect("Dev 2 is not CharDevice");
+
+        uart.write_raw(UserSlice::new_kernel(b"Test message\n"), true)
+            .expect("UART write failed");
+
         logkf!(LogLevel::Info, "Finished");
 
         // After this is old device and init.

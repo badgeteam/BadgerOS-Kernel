@@ -6,6 +6,8 @@ pub mod ns16550a;
 pub mod riscv_plic;
 
 fn register_drivers() {
+    registry::register_driver(&ns16550a::Ns16550aDriver);
+
     #[cfg(all(target_arch = "riscv64", feature = "dtb"))]
     registry::register_driver(&riscv_plic::RiscvPlicDriver);
 }

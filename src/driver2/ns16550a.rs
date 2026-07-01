@@ -2,6 +2,8 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
+use core::any::Any;
+
 use alloc::sync::Arc;
 use tock_registers::{
     interfaces::{Readable, Writeable},
@@ -10,7 +12,10 @@ use tock_registers::{
 };
 
 use crate::{
-    badgelib::fifo::{BlockingFifo, Fifo},
+    badgelib::{
+        fifo::{BlockingFifo, Fifo},
+        irq::IrqGuard,
+    },
     bindings::error::EResult,
     dev2::{
         Device, DeviceBase,
@@ -19,6 +24,7 @@ use crate::{
             soc::{MmioStruct, SocBus},
         },
         class::char::CharDevice,
+        driver::Driver,
     },
     device_get_trait_vtable,
     kernel::sync::{spinlock::Spinlock, waitlist::Waitlist},
@@ -264,4 +270,31 @@ impl Device for Ns16550aDevice {
     }
 
     device_get_trait_vtable!(CharDevice);
+}
+
+/// The NS16550A driver, registered into the dev2 driver table.
+pub struct Ns16550aDriver;
+
+impl Driver for Ns16550aDriver {
+    fn name(&self) -> &str {
+        "ns16550a"
+    }
+
+    fn match_(&self, bus: &dyn Bus) -> bool {
+        if (bus as &dyn Any).downcast_ref::<SocBus>().is_none() {
+            return false;
+        }
+        let Some(node) = bus.dtb_node() else {
+            return false;
+        };
+        node.is_compatible_any(&["ns16550a"])
+    }
+
+    unsafe fn probe(&self, bus: Arc<dyn Bus>) -> EResult<Arc<dyn Device>> {
+        let bus = Arc::downcast::<SocBus>(bus).unwrap();
+        // SAFETY: The bus was matched as an NS16550A-compatible device.
+        let device = unsafe { Ns16550aDevice::new(DeviceBase::new(), bus.clone())? };
+        bus.claim(Arc::<Ns16550aDevice>::downgrade(&device))?;
+        Ok(device)
+    }
 }

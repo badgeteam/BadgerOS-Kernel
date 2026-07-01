@@ -4,6 +4,7 @@
 
 use core::{
     num::NonZeroU32,
+    ptr::{DynMetadata, Pointee},
     sync::atomic::{AtomicU32, Ordering},
 };
 
@@ -60,6 +61,27 @@ pub fn remove_device(device: &dyn Device) {
 /// Get a device by ID.
 pub fn device_by_id(id: NonZeroU32) -> Option<Arc<dyn Device>> {
     DEVICES.unintr_lock_shared().get(&id).cloned()
+}
+
+/// Get all devices.
+pub fn devices() -> SharedMutexGuard<'static, BTreeMap<NonZeroU32, Arc<dyn Device>>> {
+    DEVICES.unintr_lock_shared()
+}
+
+/// Filter devices by trait implementation.
+pub fn devices_by_trait<T: ?Sized + Pointee<Metadata = DynMetadata<T>> + 'static>()
+-> EResult<Vec<Arc<T>>> {
+    let devices = DEVICES.unintr_lock_shared();
+    let mut res = Vec::new();
+
+    for device in devices.values() {
+        if let Some(x) = device.clone().try_as_arc() {
+            res.try_reserve(1)?;
+            res.push(x);
+        }
+    }
+
+    Ok(res)
 }
 
 // endregion:devices
@@ -129,6 +151,26 @@ pub fn bus_by_node(node: &'static DtbNode) -> Option<Arc<dyn Bus>> {
         .unintr_lock_shared()
         .get(&(node as *const DtbNode))?;
     bus_by_id(id)
+}
+
+/// Get all buses.
+pub fn buses() -> SharedMutexGuard<'static, BTreeMap<NonZeroU32, Arc<dyn Bus>>> {
+    BUSES.unintr_lock_shared()
+}
+
+/// Filter all buses by concete type.
+pub fn buses_by_type<T: Bus>() -> EResult<Vec<Arc<T>>> {
+    let buses = BUSES.unintr_lock_shared();
+    let mut res = Vec::new();
+
+    for bus in buses.values() {
+        if let Ok(x) = Arc::downcast(bus.clone()) {
+            res.try_reserve(1)?;
+            res.push(x);
+        }
+    }
+
+    Ok(res)
 }
 
 // endregion:buses
