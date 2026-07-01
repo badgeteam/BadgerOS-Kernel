@@ -12,10 +12,7 @@ use alloc::{collections::btree_map::BTreeMap, sync::Arc, vec::Vec};
 use dtb::DtbNode;
 
 use crate::{
-    bindings::{
-        error::{EResult, Errno},
-        log::LogLevel,
-    },
+    bindings::{error::EResult, log::LogLevel},
     kernel::sync::mutex::{Mutex, SharedMutexGuard},
 };
 
@@ -142,7 +139,7 @@ pub fn bus_by_node(node: &'static DtbNode) -> Option<Arc<dyn Bus>> {
 static DRIVERS: Mutex<Vec<&'static dyn Driver>> = Mutex::new(Vec::new());
 
 /// Register a new driver.
-pub fn register_driver(driver: &'static dyn Driver) -> EResult<()> {
+pub fn register_driver(driver: &'static dyn Driver) {
     let mut drivers = DRIVERS.unintr_lock();
 
     if drivers.iter().any(|x| core::ptr::addr_eq(x, driver)) {
@@ -151,14 +148,11 @@ pub fn register_driver(driver: &'static dyn Driver) -> EResult<()> {
             "Driver \"{}\" is already registered",
             driver.name()
         );
-        return Err(Errno::EEXIST);
+        return;
     }
 
-    drivers.try_reserve(1)?;
     drivers.push(driver);
     logkf!(LogLevel::Info, "Register driver \"{}\"", driver.name());
-
-    Ok(())
 }
 
 /// Get all drivers.

@@ -20,6 +20,7 @@ use crate::{
         },
         class::char::CharDevice,
     },
+    device_get_trait_vtable,
     kernel::sync::{spinlock::Spinlock, waitlist::Waitlist},
     process::{
         uapi::termios,
@@ -262,7 +263,5 @@ impl Device for Ns16550aDevice {
         true
     }
 
-    fn as_char_ref(&self) -> Option<&dyn CharDevice> {
-        Some(self)
-    }
+    device_get_trait_vtable!(CharDevice);
 }

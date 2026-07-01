@@ -225,7 +225,7 @@ pub unsafe fn probe_soc_factory(node: DeviceNode) -> EResult<Arc<dyn Bus>> {
         } else if let Some(irq_bus) = registry::bus_by_node(node) {
             // This node is a DTB device.
             if let Some(device) = irq_bus.owner() {
-                if let Some(irqctl) = device.as_irqctl() {
+                if let Some(irqctl) = device.try_as_arc() {
                     Ok(Some(SocIrqParent::Device(irqctl)))
                 } else {
                     Err(Errno::EINVAL)

@@ -3,7 +3,11 @@
 // SPDX-License-Identifier: MIT
 
 use alloc::sync::Arc;
-use core::num::NonZeroU32;
+use core::{
+    any::{Any, TypeId},
+    num::NonZeroU32,
+    ptr::{DynMetadata, NonNull, Pointee},
+};
 
 #[cfg(feature = "acpi")]
 pub mod acpi;
@@ -15,7 +19,36 @@ pub mod dtb;
 pub mod probe;
 pub mod registry;
 
-use class::{char::CharDevice, irqctl::IrqCtlDevice};
+/// Wrapper struct so that [`Device::get_trait_vtable()`] needs an `unsafe` to implement non-stub.
+pub struct DevDynMetadata(NonNull<()>);
+
+impl DevDynMetadata {
+    /// # Safety
+    /// This type is trusted by [`Device::get_trait_vtable()`], so it must be given the correct reference to take the vtable from.
+    pub const unsafe fn new<T: ?Sized + Pointee<Metadata = DynMetadata<T>> + 'static>(
+        ptr: &T,
+    ) -> Self {
+        unsafe { core::mem::transmute(core::ptr::metadata(ptr)) }
+    }
+}
+
+/// Helper macro to implement [`Device::get_trait_vtable()`].
+/// Place this inside the `impl Device for T` block.
+#[macro_export]
+macro_rules! device_get_trait_vtable {
+    ($($traits: path), *) => {
+        fn get_trait_vtable(&self, trait_: core::any::TypeId) -> Option<crate::dev2::DevDynMetadata> {
+            $(
+                if core::any::TypeId::of::<dyn $traits>() == trait_ {
+                    unsafe {
+                        return Some(crate::dev2::DevDynMetadata::new::<dyn $traits>(self));
+                    }
+                }
+            )*
+            None
+        }
+    };
+}
 
 /// Base device struct; intended for use by implementers of [`Device`].
 pub struct DeviceBase {
@@ -43,43 +76,9 @@ impl Drop for DeviceBase {
     }
 }
 
-/// List of device coercions.
-macro_rules! dev_coercions {
-    ($x:ident) => {
-        $x!(char: CharDevice);
-        $x!(irqctl: IrqCtlDevice);
-    };
-}
-
-/// Helper for the ref coercion functions.
-macro_rules! dev_ref_coercion {
-    ($name:ident : $Type:ident) => {
-        #[doc = concat!("Coerce this device into [`", stringify!($Type), "`]")]
-        fn ${concat(as_, $name, _ref)} (&self) -> Option<&dyn $Type> { None }
-    };
-}
-
-/// Helper for the [`Arc`] coercion functions.
-macro_rules! dev_arc_coercion {
-    ($name:ident : $Type:ident) => {
-        #[doc = concat!("Coerce this device into [`", stringify!($Type), "`]")]
-        pub fn ${concat(as_, $name)} (self: Arc<dyn Device>) -> Option<Arc<dyn $Type>> {
-            unsafe {
-                let ptr = Arc::into_raw(self);
-                if let Some(coerced) = (*ptr).${concat(as_, $name, _ref)}() {
-                    Some(Arc::from_raw(coerced))
-                } else {
-                    drop(Arc::from_raw(ptr));
-                    None
-                }
-            }
-        }
-    };
-}
-
 /// An abstract device.
 /// While some common logic is enforced for all devices, most of the logic depends on their specific types.
-pub trait Device: Send + Sync + 'static {
+pub trait Device: Any + Send + Sync + 'static {
     /// Get the base device struct.
     fn base(&self) -> &DeviceBase;
 
@@ -87,7 +86,9 @@ pub trait Device: Send + Sync + 'static {
     /// Returns whether the interrupt was handled.
     fn interrupt(&self, id: u128) -> bool;
 
-    dev_coercions!(dev_ref_coercion);
+    /// Test whether this device implements a trait and get its metadata if so.
+    /// Should not be used directly.
+    fn get_trait_vtable(&self, trait_: TypeId) -> Option<DevDynMetadata>;
 }
 
 impl dyn Device {
@@ -97,5 +98,32 @@ impl dyn Device {
         self.base().id
     }
 
-    dev_coercions!(dev_arc_coercion);
+    /// Try to get as given trait.
+    pub fn try_as_ref<T: ?Sized + Pointee<Metadata = DynMetadata<T>> + 'static>(
+        &self,
+    ) -> Option<&T> {
+        let meta = self.get_trait_vtable(TypeId::of::<T>())?;
+        unsafe {
+            let ptr: *const T = core::ptr::from_raw_parts(
+                self as *const dyn Device as *const (),
+                core::mem::transmute(meta),
+            );
+            Some(&*ptr)
+        }
+    }
+
+    /// Try to get as given trait.
+    pub fn try_as_arc<T: ?Sized + Pointee<Metadata = DynMetadata<T>> + 'static>(
+        self: Arc<Self>,
+    ) -> Option<Arc<T>> {
+        let meta = self.get_trait_vtable(TypeId::of::<T>())?;
+        unsafe {
+            let this = Arc::into_raw(self);
+            let ptr: *const T = core::ptr::from_raw_parts(
+                this as *const dyn Device as *const (),
+                core::mem::transmute(meta),
+            );
+            Some(Arc::from_raw(ptr))
+        }
+    }
 }

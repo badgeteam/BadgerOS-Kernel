@@ -27,6 +27,7 @@ use crate::{
         class::irqctl::{IrqCtlDevice, IrqCtlDeviceBase},
         driver::Driver,
     },
+    device_get_trait_vtable,
     kernel::smp,
 };
 
@@ -98,9 +99,7 @@ impl Device for RiscvPlic {
         handled
     }
 
-    fn as_irqctl_ref(&self) -> Option<&dyn IrqCtlDevice> {
-        Some(self)
-    }
+    device_get_trait_vtable!(IrqCtlDevice);
 }
 
 impl IrqCtlDevice for RiscvPlic {

@@ -32,6 +32,10 @@ impl Device for DummyDevice {
     fn interrupt(&self, _id: u128) -> bool {
         unreachable!()
     }
+
+    fn get_trait_vtable(&self, _trait: core::any::TypeId) -> Option<super::DevDynMetadata> {
+        unreachable!()
+    }
 }
 
 /// Base bus struct; intended for use by implementers of [`Bus`].
