@@ -12,10 +12,7 @@ use tock_registers::{
 };
 
 use crate::{
-    badgelib::{
-        fifo::{BlockingFifo, Fifo},
-        irq::IrqGuard,
-    },
+    badgelib::fifo::{BlockingFifo, Fifo},
     bindings::error::EResult,
     dev2::{
         Device, DeviceBase,

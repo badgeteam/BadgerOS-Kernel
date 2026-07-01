@@ -120,12 +120,7 @@ impl Bus for SocBus {
             return Err(Errno::EINVAL);
         };
         // SAFETY: forwarded from the caller of `Bus::install_irq`, same contract.
-        unsafe {
-            irqctl
-                .irqctl_base()
-                .install_irq(irq.vector, dev_irq, handler)?
-        };
-        irqctl.set_irq_in_enabled(irq.vector, true)
+        unsafe { irqctl.install_irq(irq.vector, dev_irq, handler) }
     }
 
     unsafe fn uninstall_irq(&self, dev_irq: u128, handler: *const dyn Device) {
@@ -139,12 +134,7 @@ impl Bus for SocBus {
             unreachable!();
         };
         // SAFETY: forwarded from the caller of `Bus::uninstall_irq`, same contract.
-        unsafe {
-            irqctl
-                .irqctl_base()
-                .uninstall_irq(irq.vector, dev_irq, handler);
-        };
-        irqctl.set_irq_in_enabled(irq.vector, false);
+        unsafe { irqctl.uninstall_irq(irq.vector, dev_irq, handler) };
     }
 }
 

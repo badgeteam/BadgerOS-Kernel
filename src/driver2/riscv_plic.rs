@@ -93,7 +93,7 @@ impl Device for RiscvPlic {
             // Spurious, or already claimed/handled by another hart.
             return true;
         }
-        let handled = self.irqctl.run_handlers(claim as u128);
+        let handled = (self as &dyn IrqCtlDevice).run_handlers(claim as u128);
         // Complete the interrupt regardless so the PLIC can re-arm the source.
         self.write32(claim_off(ctx_no), claim);
         handled

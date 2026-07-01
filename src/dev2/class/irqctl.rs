@@ -5,7 +5,10 @@
 use alloc::{collections::btree_map::BTreeMap, vec::Vec};
 
 use crate::{
-    badgelib::irq::IrqGuard, bindings::error::EResult, cpu::irq, dev2::Device,
+    badgelib::irq::IrqGuard,
+    bindings::{error::EResult, log::LogLevel},
+    cpu::irq,
+    dev2::Device,
     kernel::sync::spinlock::Spinlock,
 };
 
@@ -42,33 +45,28 @@ pub trait IrqCtlDevice: Device {
     fn set_irq_in_enabled(&self, in_irq: u128, enable: bool) -> EResult<()>;
 }
 
-impl IrqCtlDeviceBase {
-    pub fn new(mask: u128) -> EResult<Self> {
-        Ok(Self {
-            mask,
-            handlers: Spinlock::new(BTreeMap::new()),
-        })
-    }
-
+impl dyn IrqCtlDevice {
     /// Install the handler for an interrupt.
     ///
     /// # Safety
-    /// The caller promises to remove the handler with [`Bus::remove_irq`] before it becomes invalid.
+    /// The caller promises to remove the handler with [`Self::uninstall_irq()`] before it becomes invalid.
     pub(crate) unsafe fn install_irq(
         &self,
         irq_id: u128,
         dev_irq: u128,
         device: *const dyn Device,
     ) -> EResult<()> {
-        let irq_id = irq_id & self.mask;
+        let mut vec = Vec::try_with_capacity(1)?;
+        let base = self.irqctl_base();
+
+        let irq_id = irq_id & base.mask;
         let _noirq = IrqGuard::new();
-        let mut handlers = self.handlers.lock();
+        let mut handlers = base.handlers.lock();
 
         if let Some(irq) = handlers.get_mut(&irq_id) {
             irq.try_reserve(1)?;
             irq.push((dev_irq, device));
         } else {
-            let mut vec = Vec::try_with_capacity(1)?;
             vec.push((dev_irq, device));
             handlers.insert(irq_id, vec);
         }
@@ -86,23 +84,38 @@ impl IrqCtlDeviceBase {
         dev_irq: u128,
         device: *const dyn Device,
     ) {
-        let irq_id = irq_id & self.mask;
-        let _noirq = IrqGuard::new();
-        let mut handlers = self.handlers.lock();
+        let base = self.irqctl_base();
+
+        let irq_id = irq_id & base.mask;
+        let noirq = IrqGuard::new();
+        let mut handlers = base.handlers.lock();
 
         if let Some(irq) = handlers.get_mut(&irq_id) {
             irq.retain(|x| x.0 != dev_irq || !core::ptr::addr_eq(x.1, device));
+            if irq.is_empty() {
+                if let Err(x) = self.set_irq_in_enabled(irq_id, false) {
+                    drop(noirq);
+                    logkf!(
+                        LogLevel::Error,
+                        "device {}: set_irq_in_enabled failed after uninstall_irq: {}",
+                        (self as &dyn Device).id(),
+                        x
+                    );
+                }
+            }
         }
     }
 
     /// Run the handler(s) for an interrupt.
     /// Returns whether the interrupt was handled.
-    pub(crate) fn run_handlers(&self, irq_id: u128) -> bool {
-        let irq_id = irq_id & self.mask;
+    pub fn run_handlers(&self, irq_id: u128) -> bool {
+        let base = self.irqctl_base();
+
+        let irq_id = irq_id & base.mask;
         debug_assert!(!irq::is_enabled());
 
         let mut handled = false;
-        let handlers = self.handlers.lock_shared();
+        let handlers = base.handlers.lock_shared();
         if let Some(irq) = handlers.get(&irq_id) {
             for &(dev_irq, device) in irq {
                 // SAFETY: The device promises to uninstall its interrupts before it becomes invalid.
@@ -111,5 +124,14 @@ impl IrqCtlDeviceBase {
         }
 
         handled
+    }
+}
+
+impl IrqCtlDeviceBase {
+    pub fn new(mask: u128) -> EResult<Self> {
+        Ok(Self {
+            mask,
+            handlers: Spinlock::new(BTreeMap::new()),
+        })
     }
 }
