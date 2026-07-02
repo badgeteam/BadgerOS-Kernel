@@ -2,7 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::{any::Any, num::NonZeroU32};
+use core::{any::Any, cmp::Ordering, fmt::Display, num::NonZeroU32};
 
 use alloc::sync::{Arc, Weak};
 use dtb::DtbNode;
@@ -12,12 +12,13 @@ use crate::{
         error::{EResult, Errno},
         log::LogLevel,
     },
-    dev2::Device,
+    dev2::{Device, probe},
     kernel::sync::mutex::Mutex,
 };
 
 use super::registry;
 
+pub mod pci;
 pub mod soc;
 
 /// Used to provide a concrete type for [`Weak::new`] to work for a `Weak<dyn Device>`.
@@ -38,6 +39,12 @@ impl Device for DummyDevice {
     }
 }
 
+impl Display for DummyDevice {
+    fn fmt(&self, _f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        unreachable!()
+    }
+}
+
 /// Base bus struct; intended for use by implementers of [`Bus`].
 pub struct BusBase {
     /// ID assigned by the device registry.
@@ -54,51 +61,6 @@ impl BusBase {
             reservation: Mutex::new(Weak::<DummyDevice>::new()),
         }
     }
-
-    /// ID assigned by the device registry.
-    pub fn id(&self) -> NonZeroU32 {
-        self.id
-    }
-
-    /// Try to claim this bus for a given device.
-    /// If the device becomes unreferenced, the bus is released automatically.
-    ///
-    /// Using a bus without claiming it will usually work, but multiple drivers contending for one bus
-    /// will likely cause unintended behaviour.
-    pub fn claim(&self, device: Weak<dyn Device>) -> EResult<()> {
-        if device.strong_count() == 0 {
-            logkf!(LogLevel::Warning, "Bus::claim with empty device");
-            return Err(Errno::ENOENT);
-        }
-
-        let mut guard = self.reservation.unintr_lock();
-        if guard.strong_count() != 0 {
-            // Bus is still in use.
-            return Err(Errno::EADDRNOTAVAIL);
-        }
-        // Bus is available.
-        *guard = device;
-
-        Ok(())
-    }
-
-    /// Release the claim on this bus.
-    pub fn release(&self, device: &dyn Device) {
-        let mut guard = self.reservation.unintr_lock();
-        if !core::ptr::addr_eq(guard.as_ptr(), device) {
-            logkf!(
-                LogLevel::Warning,
-                "Bus::release by device that did not own it"
-            );
-            return;
-        }
-        *guard = Weak::<DummyDevice>::new();
-    }
-
-    /// Check which device currently owns this bus.
-    pub fn owner(&self) -> Option<Arc<dyn Device>> {
-        self.reservation.unintr_lock_shared().upgrade()
-    }
 }
 
 impl Drop for BusBase {
@@ -111,7 +73,7 @@ impl Drop for BusBase {
 /// Buses may exist on their own (e.g. MMIO) or as part of another device (e.g. AHCI ports).
 /// Most of the logic for buses depends on their specific types, this trait serves mostly to register buses.
 /// A single bus usually supports multiple devices.
-pub trait Bus: Any + Send + Sync + 'static {
+pub trait Bus: Display + Any + Send + Sync + 'static {
     /// Get the base bus struct.
     fn base(&self) -> &BusBase;
 
@@ -121,7 +83,7 @@ pub trait Bus: Any + Send + Sync + 'static {
     /// Install the handler for an interrupt.
     ///
     /// # Safety
-    /// The caller promises to remove the handler with [`Bus::uninstall_irq`] before it becomes invalid.
+    /// The caller promises to remove the handler with [`Self::uninstall_irq()`] before it becomes invalid.
     ///
     /// The caller promises that the handler is a valid [`Device`] object.
     unsafe fn install_irq(&self, irq_id: u128, device: *const dyn Device) -> EResult<()>;
@@ -140,23 +102,65 @@ pub trait Bus: Any + Send + Sync + 'static {
     fn id(&self) -> NonZeroU32 {
         self.base().id
     }
+}
 
+impl dyn Bus {
     /// Try to claim this bus for a given device.
     /// If the device becomes unreferenced, the bus is released automatically.
     ///
     /// Using a bus without claiming it will usually work, but multiple drivers contending for one bus
     /// will likely cause unintended behaviour.
-    fn claim(&self, device: Weak<dyn Device>) -> EResult<()> {
-        self.base().claim(device)
+    pub fn claim(&self, device: Weak<dyn Device>) -> EResult<()> {
+        if device.strong_count() == 0 {
+            logkf!(LogLevel::Warning, "Bus::claim with empty device");
+            return Err(Errno::ENOENT);
+        }
+
+        let mut guard = self.base().reservation.unintr_lock();
+        if guard.strong_count() != 0 {
+            // Bus is still in use.
+            return Err(Errno::EADDRNOTAVAIL);
+        }
+        // Bus is available.
+        *guard = device;
+
+        Ok(())
     }
 
     /// Release the claim on this bus.
-    fn release(&self, device: &dyn Device) {
-        self.base().release(device);
+    pub fn release(self: &Arc<Self>, device: &dyn Device) {
+        let mut guard = self.base().reservation.unintr_lock();
+        if !core::ptr::addr_eq(guard.as_ptr(), device) {
+            logkf!(
+                LogLevel::Warning,
+                "Bus::release by device that did not own it"
+            );
+            return;
+        }
+        *guard = Weak::<DummyDevice>::new();
+        probe::BUS_PROBE_LIST.unintr_lock().insert(self.clone());
     }
 
     /// Check which device currently owns this bus.
-    fn owner(&self) -> Option<Arc<dyn Device>> {
-        self.base().owner()
+    pub fn owner(&self) -> Option<Arc<dyn Device>> {
+        self.base().reservation.unintr_lock_shared().upgrade()
+    }
+}
+
+impl PartialEq for dyn Bus {
+    fn eq(&self, other: &Self) -> bool {
+        self.id() == other.id()
+    }
+}
+impl Eq for dyn Bus {}
+
+impl PartialOrd for dyn Bus {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for dyn Bus {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.id().cmp(&other.id())
     }
 }

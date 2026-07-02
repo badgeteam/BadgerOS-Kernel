@@ -11,7 +11,7 @@ extern crate core;
 use core::{
     error::Error,
     fmt::{Debug, Display, Write},
-    ops::{Deref, Range},
+    ops::Deref,
     ptr::null,
 };
 
@@ -461,7 +461,7 @@ impl DtbProp {
 
     /// Read a cell in this prop.
     pub fn read_cell(&self, cell: usize) -> Option<u32> {
-        self.read_uint_cells(cell..cell + 1).map(|x| x as u32)
+        self.read_uint_cells(cell, 1).map(|x| x as u32)
     }
 
     /// Read `count` cells starting at cell index `start` into a boxed slice.
@@ -475,13 +475,13 @@ impl DtbProp {
     }
 
     /// Read this prop as some integer.
-    pub fn read_uint_cells(&self, cells: Range<usize>) -> Option<u128> {
-        debug_assert!(cells.len() <= 4);
-        if self.blob.len() / 4 < cells.end {
+    pub fn read_uint_cells(&self, start: usize, count: usize) -> Option<u128> {
+        debug_assert!(count <= 4);
+        if self.blob.len() / 4 < start + count {
             return None;
         }
         let mut value = 0u128;
-        for cell in cells {
+        for cell in start..start + count {
             value <<= 32;
             value |= (self.blob[cell * 4 + 3] as u128) << 0;
             value |= (self.blob[cell * 4 + 2] as u128) << 8;
@@ -493,20 +493,20 @@ impl DtbProp {
 
     /// Read this prop as some integer.
     pub fn read_uint(&self) -> Option<u128> {
-        self.read_uint_cells(0..self.blob.len().div_ceil(4))
+        self.read_uint_cells(0, self.blob.len().div_ceil(4))
     }
 
     /// Read this prop as one u32.
     pub fn read_u32(&self) -> Option<u32> {
         (self.blob.len() == 4)
-            .then(|| self.read_uint_cells(0..1))?
+            .then(|| self.read_uint_cells(0, 1))?
             .map(|x| x as u32)
     }
 
     /// Read this prop as one u64.
     pub fn read_u64(&self) -> Option<u64> {
         (self.blob.len() == 8)
-            .then(|| self.read_uint_cells(0..2))?
+            .then(|| self.read_uint_cells(0, 2))?
             .map(|x| x as u64)
     }
 }

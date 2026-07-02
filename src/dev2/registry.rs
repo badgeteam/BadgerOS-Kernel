@@ -14,6 +14,7 @@ use dtb::DtbNode;
 
 use crate::{
     bindings::{error::EResult, log::LogLevel},
+    dev2::probe,
     kernel::sync::mutex::{Mutex, SharedMutexGuard},
 };
 
@@ -119,14 +120,17 @@ pub fn register_bus(bus: Arc<dyn Bus>) -> EResult<()> {
         let exist = BUS_BY_DTB.unintr_lock().insert(node, id);
         debug_assert!(exist.is_none());
     }
-    let exist = BUSES.unintr_lock().insert(id, bus);
+    let mut buses = BUSES.unintr_lock();
+    let exist = buses.insert(id, bus.clone());
     debug_assert!(exist.is_none());
+    probe::BUS_PROBE_LIST.unintr_lock().insert(bus);
     Ok(())
 }
 
 /// Remove a bus, preventing driver probing on it.
 pub fn remove_bus(bus: &dyn Bus) {
-    if BUSES.unintr_lock().remove(&bus.id()).is_none() {
+    let mut buses = BUSES.unintr_lock();
+    if buses.remove(&bus.id()).is_none() {
         logkf!(
             LogLevel::Warning,
             "Cannot remove unregistered bus {}",
@@ -134,6 +138,7 @@ pub fn remove_bus(bus: &dyn Bus) {
         );
         return;
     }
+    probe::BUS_PROBE_LIST.unintr_lock().remove(bus);
     #[cfg(feature = "dtb")]
     if let Some(node) = bus.dtb_node() {
         BUS_BY_DTB.unintr_lock().remove(&(node as *const DtbNode));
@@ -187,14 +192,17 @@ pub fn register_driver(driver: &'static dyn Driver) {
     if drivers.iter().any(|x| core::ptr::addr_eq(x, driver)) {
         logkf!(
             LogLevel::Warning,
-            "Driver \"{}\" is already registered",
+            "Driver '{}' is already registered",
             driver.name()
         );
         return;
     }
 
     drivers.push(driver);
-    logkf!(LogLevel::Info, "Register driver \"{}\"", driver.name());
+    if !BUSES.unintr_lock_shared().is_empty() {
+        probe::DRIVER_PROBE_LIST.unintr_lock().push(driver);
+    }
+    logkf!(LogLevel::Info, "Register driver '{}'", driver.name());
 }
 
 /// Get all drivers.

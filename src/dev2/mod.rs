@@ -5,6 +5,8 @@
 use alloc::sync::Arc;
 use core::{
     any::{Any, TypeId},
+    cmp::Ordering,
+    fmt::Display,
     num::NonZeroU32,
     ptr::{DynMetadata, NonNull, Pointee},
 };
@@ -78,7 +80,7 @@ impl Drop for DeviceBase {
 
 /// An abstract device.
 /// While some common logic is enforced for all devices, most of the logic depends on their specific types.
-pub trait Device: Any + Send + Sync + 'static {
+pub trait Device: Display + Any + Send + Sync + 'static {
     /// Get the base device struct.
     fn base(&self) -> &DeviceBase;
 
@@ -125,5 +127,23 @@ impl dyn Device {
             );
             Some(Arc::from_raw(ptr))
         }
+    }
+}
+
+impl PartialEq for dyn Device {
+    fn eq(&self, other: &Self) -> bool {
+        self.id() == other.id()
+    }
+}
+impl Eq for dyn Device {}
+
+impl PartialOrd for dyn Device {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for dyn Device {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.id().cmp(&other.id())
     }
 }

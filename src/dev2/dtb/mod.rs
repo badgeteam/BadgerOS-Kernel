@@ -12,16 +12,11 @@ use crate::{
         error::{EResult, Errno},
         log::LogLevel,
     },
-    cpu::PhysCpuID,
-    dev2::{bus::soc::SocIrqParent, probe, registry},
-    kernel::{self, smp},
-    mem::pmm::PAddrr,
+    dev2::{probe, registry},
+    kernel::{self},
 };
 
-use super::bus::{
-    Bus,
-    soc::{SocBus, SocIrqExt},
-};
+use super::bus::{Bus, soc::SocBus};
 
 /// The device tree.
 static mut DTB: Option<Dtb> = None;
@@ -32,7 +27,7 @@ pub fn get() -> &'static Dtb {
 }
 
 /// Get the closest interrupt parent for a node.
-pub fn irq_parent<'a>(node: &'a DtbNode) -> Option<&'a DtbNode> {
+pub fn irq_parent(node: &'static DtbNode) -> Option<&'static DtbNode> {
     let dtb = get();
     let irq_parent = node.prop("interrupt-parent")?;
     let Some(phandle) = irq_parent.read_u32() else {
@@ -52,9 +47,30 @@ pub fn irq_parent<'a>(node: &'a DtbNode) -> Option<&'a DtbNode> {
 }
 
 /// Outgoing DTB interrupt connection.
-pub struct DtbInterrupt {
+pub struct DtbIrq {
     pub parent: &'static DtbNode,
     pub vector: u128,
+}
+
+/// DTB interrupt map.
+pub struct DtbIrqMap {
+    pub addr_mask: u128,
+    pub vector_mask: u128,
+    pub map: Box<[DtbIrqMapEntry]>,
+}
+
+/// A single entry in a [`DtbIrqMap`].
+pub struct DtbIrqMapEntry {
+    pub addr: u128,
+    pub irq: u128,
+    pub target: DtbIrq,
+}
+
+/// An address-mapping range.
+pub struct DtbRange {
+    pub child_addr: u128,
+    pub parent_addr: u128,
+    pub size: u128,
 }
 
 /// Parses an interrupt specifier given an interrupt parent.
@@ -63,16 +79,16 @@ fn parse_irq_spec(
     parent: &'static DtbNode,
     prop: &'static DtbProp,
     index: &mut usize,
-) -> EResult<DtbInterrupt> {
+) -> EResult<DtbIrq> {
     let Some(irq_cells) = parent.irq_cells else {
         logkf!(LogLevel::Error, "{}: missing #interrupt-cells", parent);
         return Err(Errno::EINVAL);
     };
 
-    match prop.read_uint_cells(*index..*index + irq_cells as usize) {
+    match prop.read_uint_cells(*index, irq_cells as usize) {
         Some(vector) => {
             *index += irq_cells as usize;
-            Ok(DtbInterrupt { parent, vector })
+            Ok(DtbIrq { parent, vector })
         }
         None => {
             logkf!(
@@ -87,11 +103,11 @@ fn parse_irq_spec(
 }
 
 /// Parse the `interrupts` property of a DTB node.
-pub fn parse_interrupts(node: &'static DtbNode) -> EResult<Box<[DtbInterrupt]>> {
+pub fn parse_interrupts(node: &'static DtbNode) -> EResult<Box<[DtbIrq]>> {
     let mut res = Vec::new();
     if let Some(irqext_prop) = node.prop("interrupts-extended") {
         let Some(n_cell) = irqext_prop.cell_count() else {
-            logkf!(LogLevel::Error, "{}: malformed interrups-extended", node);
+            logkf!(LogLevel::Error, "{}: malformed interrupts-extended", node);
             return Err(Errno::EINVAL);
         };
 
@@ -111,7 +127,7 @@ pub fn parse_interrupts(node: &'static DtbNode) -> EResult<Box<[DtbInterrupt]>> 
         }
     } else if let Some(irq_prop) = node.prop("interrupts") {
         let Some(n_cell) = irq_prop.cell_count() else {
-            logkf!(LogLevel::Error, "{}: malformed interrups", node);
+            logkf!(LogLevel::Error, "{}: malformed interrupts", node);
             return Err(Errno::EINVAL);
         };
         let Some(parent) = irq_parent(node) else {
@@ -131,8 +147,66 @@ pub fn parse_interrupts(node: &'static DtbNode) -> EResult<Box<[DtbInterrupt]>> 
     Ok(res.into_boxed_slice())
 }
 
+/// Parse the `interrupt-map` propery of a DTB node.
+pub fn parse_interrupt_map(node: &'static DtbNode) -> EResult<DtbIrqMap> {
+    let addr_cells = node.addr_cells.ok_or(Errno::EINVAL)? as usize;
+    let irq_cells = node.irq_cells.ok_or(Errno::EINVAL)? as usize;
+
+    let Some(map_prop) = node.prop("interrupt-map") else {
+        logkf!(LogLevel::Error, "{}: missing interrupt-map", node);
+        return Err(Errno::EINVAL);
+    };
+    let Some(mask_prop) = node.prop("interrupt-map-mask") else {
+        logkf!(LogLevel::Error, "{}: missing interrupt-map-mask", node);
+        return Err(Errno::EINVAL);
+    };
+    if mask_prop.cell_count() != Some(addr_cells + irq_cells) {
+        logkf!(LogLevel::Error, "{}: malformed interrupt-map-mask", node);
+        return Err(Errno::EINVAL);
+    }
+    let addr_mask = mask_prop.read_uint_cells(0, addr_cells).unwrap();
+    let vector_mask = mask_prop.read_uint_cells(addr_cells, irq_cells).unwrap();
+
+    let map_cells = map_prop.cell_count().ok_or(Errno::EINVAL)?;
+
+    let mut map = Vec::new();
+    let mut i = 0;
+    while i < map_cells {
+        if map_cells < i + addr_cells + irq_cells + 1 {
+            logkf!(LogLevel::Error, "{}: malformed interrupt-map", node);
+            return Err(Errno::EINVAL);
+        }
+
+        let addr = map_prop.read_uint_cells(i, addr_cells).unwrap();
+        i += addr_cells;
+        let irq = map_prop.read_uint_cells(i, irq_cells).unwrap();
+        i += irq_cells;
+
+        let phandle = map_prop.read_cell(i).unwrap();
+        i += 1;
+        let Some(parent) = get().node_by_phandle(phandle) else {
+            logkf!(LogLevel::Error, "phandle {} not found", phandle);
+            return Err(Errno::EINVAL);
+        };
+        let parent_irq = parse_irq_spec(node, parent, map_prop, &mut i)?;
+
+        map.try_reserve(1)?;
+        map.push(DtbIrqMapEntry {
+            addr,
+            irq,
+            target: parent_irq,
+        });
+    }
+
+    Ok(DtbIrqMap {
+        addr_mask,
+        vector_mask,
+        map: map.into_boxed_slice(),
+    })
+}
+
 /// Parse the `reg` property of a DTB node.
-pub fn parse_reg(node: &DtbNode) -> EResult<Box<[Range<u128>]>> {
+pub fn parse_reg(node: &'static DtbNode) -> EResult<Box<[Range<u128>]>> {
     let parent = node.parent().ok_or(Errno::EINVAL)?;
     let Some(addr_cells) = parent.addr_cells else {
         logkf!(LogLevel::Error, "{}: missing #address-cells", parent);
@@ -155,18 +229,57 @@ pub fn parse_reg(node: &DtbNode) -> EResult<Box<[Range<u128>]>> {
     let mut res = Vec::new();
     res.try_reserve_exact(cell_count / entry_cells)?;
     for i in 0..cell_count / entry_cells {
-        let addr = prop
-            .read_uint_cells(i * entry_cells..i * entry_cells + addr_cells)
-            .unwrap();
+        let addr = prop.read_uint_cells(i * entry_cells, addr_cells).unwrap();
         let size = prop
-            .read_uint_cells(
-                i * entry_cells + addr_cells..i * entry_cells + addr_cells + size_cells,
-            )
+            .read_uint_cells(i * entry_cells + addr_cells, size_cells)
             .unwrap();
         res.push(addr..addr + size);
     }
 
     Ok(res.into_boxed_slice())
+}
+
+/// Parse the `ranges` property of a DTB node.
+pub fn parse_ranges(node: &'static DtbNode) -> EResult<Box<[DtbRange]>> {
+    let Some(ranges_prop) = node.prop("ranges") else {
+        logkf!(LogLevel::Error, "{}: missing ranges", node);
+        return Err(Errno::EINVAL);
+    };
+    let Some(parent_addr_cells) = node.parent().ok_or(Errno::EINVAL)?.addr_cells else {
+        logkf!(LogLevel::Error, "{}: missing #address-cells", node);
+        return Err(Errno::EINVAL);
+    };
+    let Some(addr_cells) = node.addr_cells else {
+        logkf!(LogLevel::Error, "{}: missing #address-cells", node);
+        return Err(Errno::EINVAL);
+    };
+    let parent_addr_cells = parent_addr_cells as usize;
+    let addr_cells = addr_cells as usize;
+    let size_cells = node.size_cells.unwrap_or(1) as usize;
+
+    let entry_cells = parent_addr_cells + addr_cells + size_cells;
+    let entry_count = ranges_prop.blob.len() / (4 * entry_cells);
+    if ranges_prop.blob.len() % (4 * entry_cells) != 0 {
+        logkf!(LogLevel::Error, "{}: malformed ranges", node);
+        return Err(Errno::EINVAL);
+    }
+
+    let mut ranges = Vec::try_with_capacity(entry_count)?;
+    for i in 0..entry_count {
+        ranges.push(DtbRange {
+            child_addr: ranges_prop
+                .read_uint_cells(i * entry_cells, addr_cells)
+                .unwrap(),
+            parent_addr: ranges_prop
+                .read_uint_cells(i * entry_cells + addr_cells, parent_addr_cells)
+                .unwrap(),
+            size: ranges_prop
+                .read_uint_cells(i * entry_cells + addr_cells + parent_addr_cells, size_cells)
+                .unwrap(),
+        });
+    }
+
+    Ok(ranges.into_boxed_slice())
 }
 
 /// Initialize the device subsystem on DTB systems.
@@ -191,7 +304,7 @@ pub unsafe fn init(fdt: *const FdtHeader) {
 
     // Devices under /proc are probed first, any nested devices are to be recursively probed by appropriate drivers.
     unsafe {
-        probe(soc, &(probe_soc_factory as _));
+        probe(soc, &(SocBus::factory as _));
     }
 }
 
@@ -202,66 +315,9 @@ pub struct DeviceNode {
     /// Value of the `reg` property.
     pub reg: Box<[Range<u128>]>,
     /// Decoded value of the `interrupts` or `interrupts-extended` property.
-    pub irq: Box<[DtbInterrupt]>,
-}
-
-/// Bus factory for [`probe()`] the generates [`SocBus`] instances.
-pub unsafe fn probe_soc_factory(node: DeviceNode) -> EResult<Arc<dyn Bus>> {
-    fn get_parent(node: &'static DtbNode) -> EResult<Option<SocIrqParent>> {
-        let cpus = get().node("cpus").unwrap();
-
-        if let Some(cpu) = node.parent()
-            && let Some(cpu_parent) = cpu.parent()
-            && core::ptr::addr_eq(cpu_parent, cpus)
-        {
-            // This node is a CPU interrupt controller.
-            let cpuid = cpu.prop_uint("reg").ok_or(Errno::ENOENT)? as PhysCpuID;
-            if let Some(idx) = smp::by_phys_id(cpuid) {
-                Ok(Some(SocIrqParent::Cpu(idx)))
-            } else {
-                // Non-usable CPU; ignored.
-                Ok(None)
-            }
-        } else if let Some(irq_bus) = registry::bus_by_node(node) {
-            // This node is a DTB device.
-            if let Some(device) = irq_bus.owner() {
-                if let Some(irqctl) = device.try_as_arc() {
-                    Ok(Some(SocIrqParent::Device(irqctl)))
-                } else {
-                    Err(Errno::EINVAL)
-                }
-            } else {
-                Err(Errno::EAGAIN)
-            }
-        } else {
-            // Cannot find this device.
-            Err(Errno::ENOENT)
-        }
-    }
-
-    // Resolve interrupt parents.
-    let mut irq_ext = Vec::new();
-    for dtb_irq in node.irq.into_iter() {
-        match get_parent(dtb_irq.parent) {
-            Ok(Some(irqctl)) => irq_ext.push(SocIrqExt {
-                irqctl,
-                vector: dtb_irq.vector,
-            }),
-            Ok(None) => (),
-            Err(x) => return Err(x),
-        }
-    }
-
-    let bus = Arc::try_new(SocBus::new(
-        Some(node.node),
-        node.reg
-            .into_iter()
-            .map(|x| x.start as PAddrr..x.end as PAddrr)
-            .collect(),
-        irq_ext.into_boxed_slice(),
-    ))?;
-
-    Ok(bus)
+    pub irq: Box<[DtbIrq]>,
+    /// Decoded value of the `interrupt-map` property.
+    pub irq_map: Option<DtbIrqMap>,
 }
 
 /// Probe for devices by iterating direct child nodes of `parent`.
@@ -285,8 +341,19 @@ pub unsafe fn probe(
             let res = try {
                 let reg = parse_reg(node)?;
                 let irq = parse_interrupts(node)?;
+                let irq_map;
+                if let Some(_) = node.prop("interrupt-map") {
+                    irq_map = Some(parse_interrupt_map(node)?);
+                } else {
+                    irq_map = None;
+                }
                 unsafe {
-                    let bus = bus_factory(DeviceNode { node, reg, irq })?;
+                    let bus = bus_factory(DeviceNode {
+                        node,
+                        reg,
+                        irq,
+                        irq_map,
+                    })?;
                     registry::register_bus(bus.clone())?;
                     logkf!(
                         LogLevel::Info,
@@ -297,9 +364,7 @@ pub unsafe fn probe(
                     for str in compatible.strings() {
                         logkf!(LogLevel::Info, "  -> \"{}\"", str);
                     }
-                    if let Some(driver) = probe::probe_bus(bus) {
-                        logkf!(LogLevel::Info, "  Probed driver \"{}\"", driver.name());
-                    }
+                    probe::probe_bus(bus);
                 }
             };
 

@@ -4,10 +4,13 @@
 
 use core::{
     any::type_name,
+    fmt::{Debug, Display},
     marker::PhantomData,
     ops::{Deref, DerefMut, Range},
 };
 
+#[cfg(feature = "dtb")]
+use alloc::vec::Vec;
 use alloc::{boxed::Box, sync::Arc};
 use dtb::DtbNode;
 
@@ -28,6 +31,12 @@ use crate::{
         },
     },
 };
+#[cfg(feature = "dtb")]
+use crate::{
+    cpu::PhysCpuID,
+    dev2::{self, dtb::DeviceNode, registry},
+    kernel::smp,
+};
 
 use super::BusBase;
 
@@ -39,13 +48,28 @@ pub enum SocIrqParent {
     Device(Arc<dyn IrqCtlDevice>),
 }
 
-/// Interrupt route for [`MmioBus`].
+/// Interrupt route for [`SocBus`].
 #[derive(Clone)]
 pub struct SocIrqExt {
     /// Parent inerrupt controller.
     pub irqctl: SocIrqParent,
     /// Interrupt vector of the interrupt controller.
     pub vector: u128,
+}
+
+/// Interrupt mapentry for [`SocIrqMap`].
+pub struct SocIrqMapEntry {
+    pub dev_addr: u128,
+    pub dev_irq: u128,
+    pub target: Arc<dyn IrqCtlDevice>,
+    pub target_irq: u128,
+}
+
+/// Interrupt map for [`SocBus`].
+pub struct SocIrqMap {
+    pub addr_mask: u128,
+    pub vector_mask: u128,
+    pub map: Box<[SocIrqMapEntry]>,
 }
 
 /// System-on-chip memory-mapped I/O bus.
@@ -56,8 +80,10 @@ pub struct SocBus {
     dtb_node: Option<&'static DtbNode>,
     /// Physical addresses in this MMIO bus.
     paddr: Box<[Range<PAddrr>]>,
-    /// Extended interrupts map.
+    /// Extended interrupts.
     irq_ext: Box<[SocIrqExt]>,
+    /// Interrupt map.
+    irq_map: Option<SocIrqMap>,
 }
 
 impl SocBus {
@@ -65,12 +91,14 @@ impl SocBus {
         dtb_node: Option<&'static DtbNode>,
         paddr: Box<[Range<PAddrr>]>,
         irq_ext: Box<[SocIrqExt]>,
+        irq_map: Option<SocIrqMap>,
     ) -> Self {
         Self {
             base: BusBase::new(),
             dtb_node,
             paddr,
             irq_ext,
+            irq_map,
         }
     }
 
@@ -88,6 +116,71 @@ impl SocBus {
 
     pub fn irq_ext(&self) -> &[SocIrqExt] {
         &self.irq_ext
+    }
+
+    pub fn irq_map(&self) -> Option<&SocIrqMap> {
+        self.irq_map.as_ref()
+    }
+
+    /// Install the given child device interrupt on the parent interrupt controller.
+    ///
+    /// # Safety
+    /// The caller promises to remove the handler with [`Self::map_uninstall_irq()`] before it becomes invalid.
+    ///
+    /// The caller promises that the handler is a valid [`Device`] object.
+    pub unsafe fn map_install_irq(
+        &self,
+        dev_addr: u128,
+        dev_irq: u128,
+        handler: *const dyn Device,
+    ) -> EResult<()> {
+        let Some(map) = &self.irq_map else {
+            return Err(Errno::EINVAL);
+        };
+        let addr = dev_addr & map.addr_mask;
+        let irq = dev_irq & map.vector_mask;
+
+        for entry in &map.map {
+            if entry.dev_addr == addr && entry.dev_irq == irq {
+                // SAFETY: Same preconditions.
+                unsafe {
+                    entry
+                        .target
+                        .install_irq(entry.target_irq, dev_irq, handler)?
+                };
+                return Ok(());
+            }
+        }
+
+        Err(Errno::ENOENT)
+    }
+
+    /// Uninstall the given child device interrupt from the parent interrupt controller.
+    ///
+    /// # Safety
+    /// The caller promises that the handler is a valid [`Device`] object.
+    pub unsafe fn map_uninstall_irq(
+        &self,
+        dev_addr: u128,
+        dev_irq: u128,
+        handler: *const dyn Device,
+    ) {
+        let Some(map) = &self.irq_map else {
+            return;
+        };
+        let dev_addr = dev_addr & map.addr_mask;
+
+        for entry in &map.map {
+            if entry.dev_addr == dev_addr && entry.dev_irq == dev_irq {
+                // SAFETY: Same preconditions.
+                unsafe {
+                    entry
+                        .target
+                        .uninstall_irq(entry.target_irq, dev_irq, handler)
+                };
+                return;
+            }
+        }
     }
 }
 
@@ -138,7 +231,106 @@ impl Bus for SocBus {
     }
 }
 
-/// A mapped range from an [`MmioBus`].
+impl Display for SocBus {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if let Some(node) = self.dtb_node {
+            Display::fmt(node, f)
+        } else {
+            f.write_fmt(format_args!("SocBus {}", self.id()))
+        }
+    }
+}
+
+#[cfg(feature = "dtb")]
+impl SocBus {
+    /// Bus factory for [`dev2::dtb::probe()`] the generates [`SocBus`] instances.
+    pub unsafe fn factory(node: DeviceNode) -> EResult<Arc<dyn Bus>> {
+        fn get_parent(node: &'static DtbNode) -> EResult<Option<SocIrqParent>> {
+            let cpus = dev2::dtb::get().node("cpus").unwrap();
+
+            if let Some(cpu) = node.parent()
+                && let Some(cpu_parent) = cpu.parent()
+                && core::ptr::addr_eq(cpu_parent, cpus)
+            {
+                // This node is a CPU interrupt controller.
+                let cpuid = cpu.prop_uint("reg").ok_or(Errno::ENOENT)? as PhysCpuID;
+                if let Some(idx) = smp::by_phys_id(cpuid) {
+                    Ok(Some(SocIrqParent::Cpu(idx)))
+                } else {
+                    // Non-usable CPU; ignored.
+                    Ok(None)
+                }
+            } else if let Some(irq_bus) = dev2::registry::bus_by_node(node) {
+                // This node is a DTB device.
+                if let Some(device) = irq_bus.owner() {
+                    if let Some(irqctl) = device.try_as_arc() {
+                        Ok(Some(SocIrqParent::Device(irqctl)))
+                    } else {
+                        Err(Errno::EINVAL)
+                    }
+                } else {
+                    Err(Errno::EAGAIN)
+                }
+            } else {
+                // Cannot find this device.
+                Err(Errno::ENOENT)
+            }
+        }
+
+        // Resolve interrupt parents.
+        let mut irq_ext = Vec::new();
+        for dtb_irq in node.irq.into_iter() {
+            match get_parent(dtb_irq.parent) {
+                Ok(Some(irqctl)) => irq_ext.push(SocIrqExt {
+                    irqctl,
+                    vector: dtb_irq.vector,
+                }),
+                Ok(None) => (),
+                Err(x) => return Err(x),
+            }
+        }
+
+        let irq_map;
+        if let Some(raw) = node.irq_map {
+            let mut map = Vec::new();
+            for entry in raw.map {
+                map.try_reserve(1)?;
+                map.push(SocIrqMapEntry {
+                    dev_addr: entry.addr,
+                    dev_irq: entry.irq,
+                    target: registry::bus_by_node(entry.target.parent)
+                        .ok_or(Errno::EAGAIN)?
+                        .owner()
+                        .ok_or(Errno::EINVAL)?
+                        .try_as_arc()
+                        .ok_or(Errno::EINVAL)?,
+                    target_irq: entry.target.vector,
+                });
+            }
+            irq_map = Some(SocIrqMap {
+                addr_mask: raw.addr_mask,
+                vector_mask: raw.vector_mask,
+                map: map.into_boxed_slice(),
+            });
+        } else {
+            irq_map = None;
+        }
+
+        let bus = Arc::try_new(SocBus::new(
+            Some(node.node),
+            node.reg
+                .into_iter()
+                .map(|x| x.start as PAddrr..x.end as PAddrr)
+                .collect(),
+            irq_ext.into_boxed_slice(),
+            irq_map,
+        ))?;
+
+        Ok(bus)
+    }
+}
+
+/// A mapped range from an [`SocBus`].
 pub struct MmioMapping {
     vaddr: usize,
     size: usize,

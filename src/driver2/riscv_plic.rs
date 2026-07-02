@@ -9,7 +9,7 @@
 //! the claimed source to the leaf device's handler. CLINT (timer/IPI) is arch-managed and
 //! never reaches here. More than one PLIC may exist; each owns its harts' contexts.
 
-use core::any::Any;
+use core::{any::Any, fmt::Display};
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
@@ -141,6 +141,12 @@ impl IrqCtlDevice for RiscvPlic {
     }
 }
 
+impl Display for RiscvPlic {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.bus.fmt(f)
+    }
+}
+
 /// The PLIC driver, registered into the dev2 driver table.
 pub struct RiscvPlicDriver;
 
@@ -201,7 +207,7 @@ impl Driver for RiscvPlicDriver {
             ctx_by_cpu: ctx_by_cpu.into_boxed_slice(),
             bus: bus.clone(),
         })?;
-        bus.claim(Arc::<RiscvPlic>::downgrade(&plic))?;
+        <dyn Bus>::claim(&*bus, Arc::<RiscvPlic>::downgrade(&plic))?;
 
         // Mask nothing (threshold 0) on each used context; sources are enabled lazily.
         for ctx_no in plic.ctx_by_cpu.iter().flatten() {

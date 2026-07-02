@@ -2,7 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::any::Any;
+use core::{any::Any, fmt::Display};
 
 use alloc::sync::Arc;
 use tock_registers::{
@@ -151,7 +151,7 @@ register_structs! {
 }
 
 /// Driver for an NS16550A-compatible device.
-pub struct Ns16550aDevice {
+pub struct Ns16550 {
     base: DeviceBase,
     bus: Arc<SocBus>,
     regs: Spinlock<MmioStruct<Ns16550a>>,
@@ -160,7 +160,7 @@ pub struct Ns16550aDevice {
     attr: Spinlock<termios::termios>,
 }
 
-impl Ns16550aDevice {
+impl Ns16550 {
     /// # Safety
     /// The caller must guarantee that the bus points to a valid NS16550A-compatible device.
     pub unsafe fn new(base: DeviceBase, bus: Arc<SocBus>) -> EResult<Arc<Self>> {
@@ -174,6 +174,7 @@ impl Ns16550aDevice {
             rxfifo: BlockingFifo::new(Fifo::DEFAULT_SIZE)?,
             attr: Spinlock::new(Default::default()),
         })?;
+        <dyn Bus>::claim(&*bus, Arc::<Ns16550>::downgrade(&this))?;
         // SAFETY: Cleaned up in `impl Drop`.
         unsafe { bus.install_irq(0, this.as_ref())? };
         this.check_fifos();
@@ -225,7 +226,7 @@ impl Ns16550aDevice {
     }
 }
 
-impl CharDevice for Ns16550aDevice {
+impl CharDevice for Ns16550 {
     fn read_waitlist(&self) -> Option<&Waitlist> {
         Some(self.rxfifo.read_waitlist())
     }
@@ -249,14 +250,14 @@ impl CharDevice for Ns16550aDevice {
     }
 }
 
-impl Drop for Ns16550aDevice {
+impl Drop for Ns16550 {
     fn drop(&mut self) {
         // Cleaning up the `Bus::install_irq` from `Self::new`.
         unsafe { self.bus.uninstall_irq(0, self) };
     }
 }
 
-impl Device for Ns16550aDevice {
+impl Device for Ns16550 {
     fn base(&self) -> &DeviceBase {
         &self.base
     }
@@ -269,12 +270,18 @@ impl Device for Ns16550aDevice {
     device_get_trait_vtable!(CharDevice);
 }
 
-/// The NS16550A driver, registered into the dev2 driver table.
-pub struct Ns16550aDriver;
+impl Display for Ns16550 {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.bus.fmt(f)
+    }
+}
 
-impl Driver for Ns16550aDriver {
+/// The NS16550A driver, registered into the dev2 driver table.
+pub struct Ns16550Driver;
+
+impl Driver for Ns16550Driver {
     fn name(&self) -> &str {
-        "ns16550a"
+        "ns16550"
     }
 
     fn match_(&self, bus: &dyn Bus) -> bool {
@@ -290,8 +297,7 @@ impl Driver for Ns16550aDriver {
     unsafe fn probe(&self, bus: Arc<dyn Bus>) -> EResult<Arc<dyn Device>> {
         let bus = Arc::downcast::<SocBus>(bus).unwrap();
         // SAFETY: The bus was matched as an NS16550A-compatible device.
-        let device = unsafe { Ns16550aDevice::new(DeviceBase::new(), bus.clone())? };
-        bus.claim(Arc::<Ns16550aDevice>::downgrade(&device))?;
+        let device = unsafe { Ns16550::new(DeviceBase::new(), bus)? };
         Ok(device)
     }
 }
