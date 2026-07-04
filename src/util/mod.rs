@@ -7,6 +7,7 @@ use crate::bindings::error::EResult;
 
 pub mod atomic_bitset;
 pub mod bitset;
+pub mod id_alloc;
 pub mod list;
 pub mod rtree;
 
