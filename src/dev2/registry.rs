@@ -5,7 +5,6 @@
 use core::{
     num::NonZeroU32,
     ptr::{DynMetadata, Pointee},
-    sync::atomic::{AtomicU32, Ordering},
 };
 
 use alloc::{collections::btree_map::BTreeMap, sync::Arc, vec::Vec};
@@ -16,29 +15,51 @@ use crate::{
     bindings::{error::EResult, log::LogLevel},
     dev2::probe,
     kernel::sync::mutex::{Mutex, SharedMutexGuard},
+    util::id_alloc::IdAlloc,
 };
 
 use super::{Device, bus::Bus, driver::Driver};
+
+/// ID allocator for devices.
+static DEV_ID_ALLOC: Mutex<Option<IdAlloc>> = Mutex::new(None);
+/// ID allocator for buses.
+static BUS_ID_ALLOC: Mutex<Option<IdAlloc>> = Mutex::new(None);
+/// ID allocator for bus reservations.
+static RESV_ID_ALLOC: Mutex<Option<IdAlloc>> = Mutex::new(None);
+
+/// Initialize the ID allocators.
+pub fn init() {
+    let mut dev_id_alloc = DEV_ID_ALLOC.unintr_lock();
+    let mut bus_id_alloc = BUS_ID_ALLOC.unintr_lock();
+    let mut resv_id_alloc = RESV_ID_ALLOC.unintr_lock();
+    assert!(dev_id_alloc.is_none());
+    assert!(bus_id_alloc.is_none());
+    assert!(resv_id_alloc.is_none());
+    *dev_id_alloc = Some(IdAlloc::new().expect("Out of memory"));
+    *bus_id_alloc = Some(IdAlloc::new().expect("Out of memory"));
+    *resv_id_alloc = Some(IdAlloc::new().expect("Out of memory"));
+}
 
 // region:devices
 
 /// Map of all devices by ID.
 static DEVICES: Mutex<BTreeMap<NonZeroU32, Arc<dyn Device>>> = Mutex::new(BTreeMap::new());
 
-/// Next device ID to hand out.
-static NEXT_DEV_ID: AtomicU32 = AtomicU32::new(1);
-
 /// Allocate a new unique device ID.
 /// Every device is given an ID even if it is never inserted into the registry.
 pub(super) fn alloc_device_id() -> NonZeroU32 {
-    let id = NEXT_DEV_ID.fetch_add(1, Ordering::Relaxed);
-    NonZeroU32::new(id).expect("Device ID counter overflow")
+    DEV_ID_ALLOC
+        .unintr_lock()
+        .as_mut()
+        .unwrap()
+        .alloc()
+        .unwrap()
 }
 
-/// Deallocate a device id.
+/// Deallocate a device ID.
 pub(super) fn dealloc_device_id(id: NonZeroU32) {
     debug_assert!(device_by_id(id).is_none());
-    // TODO.
+    DEV_ID_ALLOC.unintr_lock().as_mut().unwrap().dealloc(id);
 }
 
 /// Register a new device.
@@ -96,20 +117,36 @@ static BUSES: Mutex<BTreeMap<NonZeroU32, Arc<dyn Bus>>> = Mutex::new(BTreeMap::n
 #[cfg(feature = "dtb")]
 static BUS_BY_DTB: Mutex<BTreeMap<*const DtbNode, NonZeroU32>> = Mutex::new(BTreeMap::new());
 
-/// Next bus ID to hand out.
-static NEXT_BUS_ID: AtomicU32 = AtomicU32::new(1);
-
 /// Allocate a new unique bus ID.
 /// Every bus is given an ID even if it is never inserted into the registry.
 pub(super) fn alloc_bus_id() -> NonZeroU32 {
-    let id = NEXT_BUS_ID.fetch_add(1, Ordering::Relaxed);
-    NonZeroU32::new(id).expect("Bus ID counter overflow")
+    BUS_ID_ALLOC
+        .unintr_lock()
+        .as_mut()
+        .unwrap()
+        .alloc()
+        .unwrap()
 }
 
-/// Deallocate a device id.
+/// Deallocate a bus ID.
 pub(super) fn dealloc_bus_id(id: NonZeroU32) {
     debug_assert!(bus_by_id(id).is_none());
-    // TODO.
+    BUS_ID_ALLOC.unintr_lock().as_mut().unwrap().dealloc(id);
+}
+
+/// Allocate a new unique bus reservation ID.
+pub(super) fn alloc_resv_id() -> NonZeroU32 {
+    RESV_ID_ALLOC
+        .unintr_lock()
+        .as_mut()
+        .unwrap()
+        .alloc()
+        .unwrap()
+}
+
+/// Deallocate a bus reservation ID.
+pub(super) fn dealloc_resv_id(id: NonZeroU32) {
+    RESV_ID_ALLOC.unintr_lock().as_mut().unwrap().dealloc(id);
 }
 
 /// Register a new bus, making it discoverable to driver probing.

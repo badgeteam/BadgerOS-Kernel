@@ -37,6 +37,7 @@
 #![feature(unsize)]
 #![feature(macro_metavar_expr_concat)]
 #![feature(iter_collect_into)]
+#![feature(downcast_unchecked)]
 
 #[macro_use]
 extern crate alloc;

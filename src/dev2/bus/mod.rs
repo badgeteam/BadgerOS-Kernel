@@ -2,7 +2,14 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::{any::Any, cmp::Ordering, fmt::Display, num::NonZeroU32};
+use core::{
+    any::Any,
+    cmp,
+    fmt::{Debug, Display},
+    num::NonZeroU32,
+    ops::Deref,
+    sync::atomic::{self, AtomicU32},
+};
 
 use alloc::sync::{Arc, Weak};
 use dtb::DtbNode;
@@ -10,10 +17,10 @@ use dtb::DtbNode;
 use crate::{
     bindings::{
         error::{EResult, Errno},
-        log::LogLevel,
+        raw::timestamp_us_t,
     },
-    dev2::{Device, probe},
-    kernel::sync::mutex::Mutex,
+    dev2::Device,
+    kernel::sync::{mutex::Mutex, waitlist::Waitlist},
 };
 
 use super::registry;
@@ -21,28 +28,9 @@ use super::registry;
 pub mod pci;
 pub mod soc;
 
-/// Used to provide a concrete type for [`Weak::new`] to work for a `Weak<dyn Device>`.
-/// You shouldn't instantiate a proper device with this, so all functions are `unreachable!()`.
-struct DummyDevice;
-
-impl Device for DummyDevice {
-    fn base(&self) -> &super::DeviceBase {
-        unreachable!()
-    }
-
-    fn interrupt(&self, _id: u128) -> bool {
-        unreachable!()
-    }
-
-    fn get_trait_vtable(&self, _trait: core::any::TypeId) -> Option<super::DevDynMetadata> {
-        unreachable!()
-    }
-}
-
-impl Display for DummyDevice {
-    fn fmt(&self, _f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        unreachable!()
-    }
+pub(super) struct BusBaseResv {
+    pub(super) resv_id: Option<NonZeroU32>,
+    pub(super) device: Option<Weak<dyn Device>>,
 }
 
 /// Base bus struct; intended for use by implementers of [`Bus`].
@@ -50,7 +38,12 @@ pub struct BusBase {
     /// ID assigned by the device registry.
     id: NonZeroU32,
     /// For what device this bus is currently in use, if any.
-    reservation: Mutex<Weak<dyn Device>>,
+    pub(super) reservation: Mutex<BusBaseResv>,
+    /// How many exclusive calls are in flight.
+    /// Some calls (e.g. [`Bus::dtb_node()`]) don't require a reservation and so do not increment this.
+    inflight: AtomicU32,
+    /// Waiting list for bus reservation cancellation.
+    waitlist: Waitlist,
 }
 
 impl BusBase {
@@ -58,7 +51,12 @@ impl BusBase {
     pub fn new() -> Self {
         Self {
             id: registry::alloc_bus_id(),
-            reservation: Mutex::new(Weak::<DummyDevice>::new()),
+            reservation: Mutex::new(BusBaseResv {
+                resv_id: None,
+                device: None,
+            }),
+            inflight: AtomicU32::new(0),
+            waitlist: Waitlist::new(),
         }
     }
 }
@@ -110,40 +108,64 @@ impl dyn Bus {
     ///
     /// Using a bus without claiming it will usually work, but multiple drivers contending for one bus
     /// will likely cause unintended behaviour.
-    pub fn claim(&self, device: Weak<dyn Device>) -> EResult<()> {
-        if device.strong_count() == 0 {
-            logkf!(LogLevel::Warning, "Bus::claim with empty device");
-            return Err(Errno::ENOENT);
+    pub fn claim(self: &Arc<Self>) -> EResult<BusResv<dyn Bus>> {
+        let base = self.base();
+        let mut guard = base.reservation.unintr_lock();
+        if guard.resv_id.is_some() {
+            return Err(Errno::EADDRINUSE);
         }
 
-        let mut guard = self.base().reservation.unintr_lock();
-        if guard.strong_count() != 0 {
-            // Bus is still in use.
-            return Err(Errno::EADDRNOTAVAIL);
+        // Wait for in-flight calls from a potential previous reservation to finish.
+        while base.inflight.load(atomic::Ordering::Relaxed) != 0 {
+            base.waitlist.unintr_block(timestamp_us_t::MAX, || {
+                base.inflight.load(atomic::Ordering::Relaxed) != 0
+            });
         }
-        // Bus is available.
-        *guard = device;
 
-        Ok(())
+        // Allocate new ID for this reservation.
+        let resv_id = registry::alloc_resv_id();
+        guard.resv_id = Some(resv_id);
+        Ok(BusResv(BusResvInner {
+            bus: self.clone(),
+            dyn_bus: self.clone(),
+            resv_id,
+        }))
     }
 
-    /// Release the claim on this bus.
-    pub fn release(self: &Arc<Self>, device: &dyn Device) {
-        let mut guard = self.base().reservation.unintr_lock();
-        if !core::ptr::addr_eq(guard.as_ptr(), device) {
-            logkf!(
-                LogLevel::Warning,
-                "Bus::release by device that did not own it"
-            );
+    /// Common implementation of [`Self::cancel_resv()`] and [`BusResv::cancel_resv()`].
+    fn cancel_resv_from(&self, id: Option<NonZeroU32>) {
+        let base = self.base();
+        let mut guard = base.reservation.unintr_lock();
+        if guard.resv_id.is_none() {
             return;
         }
-        *guard = Weak::<DummyDevice>::new();
-        probe::BUS_PROBE_LIST.unintr_lock().insert(self.clone());
+        if let Some(id) = id
+            && let Some(id2) = guard.resv_id
+            && id != id2
+        {
+            return;
+        }
+
+        guard.device = None;
+        guard.resv_id = None;
+
+        drop(guard);
+    }
+
+    /// Cancel the reservation on this bus.
+    /// After this, remaining exclusive calls on the bus will fail with [`Errno::ENODEV`].
+    pub fn cancel_resv(&self) {
+        self.cancel_resv_from(None);
     }
 
     /// Check which device currently owns this bus.
     pub fn owner(&self) -> Option<Arc<dyn Device>> {
-        self.base().reservation.unintr_lock_shared().upgrade()
+        self.base()
+            .reservation
+            .unintr_lock_shared()
+            .device
+            .as_ref()?
+            .upgrade()
     }
 }
 
@@ -155,12 +177,147 @@ impl PartialEq for dyn Bus {
 impl Eq for dyn Bus {}
 
 impl PartialOrd for dyn Bus {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 impl Ord for dyn Bus {
-    fn cmp(&self, other: &Self) -> Ordering {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
         self.id().cmp(&other.id())
+    }
+}
+
+/// In-flight operation on a [`BusResv`].
+pub struct BusInflight<'a, T: ?Sized + Bus>(&'a T);
+
+impl<'a, T: ?Sized + Bus> Deref for BusInflight<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.0
+    }
+}
+
+impl<'a, T: ?Sized + Bus> Drop for BusInflight<'a, T> {
+    fn drop(&mut self) {
+        let base = self.0.base();
+        if base.inflight.fetch_sub(1, atomic::Ordering::Relaxed) == 1 {
+            base.waitlist.notify_all();
+        }
+    }
+}
+
+/// Reservation on a [`Bus`]; allows buses to be dynamically detached from devices.
+#[repr(transparent)]
+pub struct BusResv<T: ?Sized + Bus>(BusResvInner<T>);
+
+struct BusResvInner<T: ?Sized + Bus> {
+    bus: Arc<T>,
+    dyn_bus: Arc<dyn Bus>,
+    resv_id: NonZeroU32,
+}
+
+impl<T: ?Sized + Bus> Debug for BusResv<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        Display::fmt(&self.0.dyn_bus, f)
+    }
+}
+
+impl<T: ?Sized + Bus> Drop for BusResv<T> {
+    fn drop(&mut self) {
+        self.cancel_resv();
+        registry::dealloc_resv_id(self.0.resv_id);
+    }
+}
+
+impl<T: Bus> BusResv<T> {
+    /// Convert a specialized bus reservation back into a generic one.
+    pub fn into_dyn(self) -> BusResv<dyn Bus> {
+        let this: BusResvInner<T> = unsafe { core::mem::transmute(self) };
+        BusResv(BusResvInner {
+            bus: this.bus,
+            dyn_bus: this.dyn_bus,
+            resv_id: this.resv_id,
+        })
+    }
+}
+
+impl<T: ?Sized + Bus> BusResv<T> {
+    /// Cancel the reservation on this bus.
+    /// After this, remaining exclusive calls on the bus will fail with [`Errno::ENODEV`].
+    pub fn cancel_resv(&self) {
+        self.0.dyn_bus.cancel_resv_from(Some(self.0.resv_id));
+    }
+
+    /// Get the bus without checking whether it is still claimed.
+    ///
+    /// # Safety
+    /// The caller promises not to run operations that could interfere with other drivers.
+    pub unsafe fn take_unchecked(&self) -> &T {
+        &self.0.bus
+    }
+
+    /// Run an operation on the bus if it is still claimed.
+    #[inline]
+    pub fn take<'a>(&'a self) -> EResult<BusInflight<'a, T>> {
+        let base = self.0.dyn_bus.base();
+        let guard = base.reservation.unintr_lock_shared();
+        if guard.resv_id != Some(self.0.resv_id) {
+            return Err(Errno::ENODEV);
+        }
+        base.inflight.fetch_add(1, atomic::Ordering::Relaxed);
+        Ok(BusInflight(&self.0.bus))
+    }
+
+    /// Install the handler for an interrupt.
+    ///
+    /// # Safety
+    /// The caller promises to remove the handler with [`Self::uninstall_irq()`] before it becomes invalid.
+    ///
+    /// The caller promises that the handler is a valid [`Device`] object.
+    pub unsafe fn install_irq(&self, irq_id: u128, device: *const dyn Device) -> EResult<()> {
+        unsafe { self.take()?.install_irq(irq_id, device) }
+    }
+
+    /// Remove the handler for an interrupt.
+    ///
+    /// # Safety
+    /// The caller promises that the handler is a valid [`Device`] object.
+    pub unsafe fn uninstall_irq(&self, irq_id: u128, device: *const dyn Device) {
+        // We allow uninstalling IRQs even if the device no longer holds the reservation.
+        unsafe { self.0.bus.uninstall_irq(irq_id, device) };
+    }
+
+    /// Associated DTB node, if any.
+    pub fn dtb_node(&self) -> Option<&'static DtbNode> {
+        self.0.bus.dtb_node()
+    }
+
+    /// ID assigned by the device registry.
+    /// The ID is unique to this bus, even if not discoverable through the registry.
+    pub fn id(&self) -> NonZeroU32 {
+        self.0.bus.id()
+    }
+}
+
+impl BusResv<dyn Bus> {
+    /// Try to downcast a generic bus reservation into a specialized one.
+    pub fn downcast<T: Bus>(self) -> Result<BusResv<T>, Self> {
+        let this: BusResvInner<dyn Bus> = unsafe { core::mem::transmute(self) };
+        if !(&*this.bus as &dyn Any).is::<T>() {
+            return Err(Self(this));
+        } else {
+            return Ok(BusResv(BusResvInner {
+                bus: unsafe { Arc::downcast_unchecked(this.bus) },
+                dyn_bus: this.dyn_bus,
+                resv_id: this.resv_id,
+            }));
+        }
+    }
+}
+
+impl<T: Bus> Display for BusResv<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0.bus.fmt(f)
     }
 }

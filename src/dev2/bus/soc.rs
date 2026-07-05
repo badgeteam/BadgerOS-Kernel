@@ -4,7 +4,7 @@
 
 use core::{
     any::type_name,
-    fmt::{Debug, Display},
+    fmt::Display,
     marker::PhantomData,
     ops::{Deref, DerefMut, Range},
 };
@@ -301,7 +301,7 @@ impl SocBus {
                     target: registry::bus_by_node(entry.target.parent)
                         .ok_or(Errno::EAGAIN)?
                         .owner()
-                        .ok_or(Errno::EINVAL)?
+                        .ok_or(Errno::ENODEV)?
                         .try_as_arc()
                         .ok_or(Errno::EINVAL)?,
                     target_irq: entry.target.vector,

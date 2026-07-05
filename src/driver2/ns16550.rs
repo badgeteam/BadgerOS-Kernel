@@ -17,7 +17,7 @@ use crate::{
     dev2::{
         Device, DeviceBase,
         bus::{
-            Bus,
+            Bus, BusResv,
             soc::{MmioStruct, SocBus},
         },
         class::char::CharDevice,
@@ -153,7 +153,7 @@ register_structs! {
 /// Driver for an NS16550A-compatible device.
 pub struct Ns16550 {
     base: DeviceBase,
-    bus: Arc<SocBus>,
+    bus: BusResv<SocBus>,
     regs: Spinlock<MmioStruct<Ns16550a>>,
     txfifo: BlockingFifo,
     rxfifo: BlockingFifo,
@@ -163,20 +163,19 @@ pub struct Ns16550 {
 impl Ns16550 {
     /// # Safety
     /// The caller must guarantee that the bus points to a valid NS16550A-compatible device.
-    pub unsafe fn new(base: DeviceBase, bus: Arc<SocBus>) -> EResult<Arc<Self>> {
-        let regs = unsafe { MmioStruct::new(bus.map(0)?) }?;
+    pub unsafe fn new(base: DeviceBase, bus: BusResv<SocBus>) -> EResult<Arc<Self>> {
+        let regs = unsafe { MmioStruct::new(bus.take()?.map(0)?)? };
 
         let this = Arc::try_new(Self {
             base,
-            bus: bus.clone(),
+            bus,
             regs: Spinlock::new(regs),
             txfifo: BlockingFifo::new(Fifo::DEFAULT_SIZE)?,
             rxfifo: BlockingFifo::new(Fifo::DEFAULT_SIZE)?,
             attr: Spinlock::new(Default::default()),
         })?;
-        <dyn Bus>::claim(&*bus, Arc::<Ns16550>::downgrade(&this))?;
         // SAFETY: Cleaned up in `impl Drop`.
-        unsafe { bus.install_irq(0, this.as_ref())? };
+        unsafe { this.bus.install_irq(0, this.as_ref())? };
         this.check_fifos();
 
         Ok(this)
@@ -294,8 +293,8 @@ impl Driver for Ns16550Driver {
         node.is_compatible_any(&["ns16550a"])
     }
 
-    unsafe fn probe(&self, bus: Arc<dyn Bus>) -> EResult<Arc<dyn Device>> {
-        let bus = Arc::downcast::<SocBus>(bus).unwrap();
+    unsafe fn probe(&self, bus: BusResv<dyn Bus>) -> EResult<Arc<dyn Device>> {
+        let bus = BusResv::downcast::<SocBus>(bus).unwrap();
         // SAFETY: The bus was matched as an NS16550A-compatible device.
         let device = unsafe { Ns16550::new(DeviceBase::new(), bus)? };
         Ok(device)

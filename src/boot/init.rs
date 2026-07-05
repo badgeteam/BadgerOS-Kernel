@@ -95,6 +95,8 @@ unsafe fn general_init() {
             cur = cur.add(1);
         }
 
+        dev2::registry::init();
+
         unsafe extern "C" {
             static bootp_dtb_req: limine_dtb_request;
         }

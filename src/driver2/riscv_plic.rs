@@ -21,7 +21,7 @@ use crate::{
     dev2::{
         Device, DeviceBase,
         bus::{
-            Bus,
+            Bus, BusResv,
             soc::{MmioMapping, SocBus, SocIrqParent},
         },
         class::irqctl::{IrqCtlDevice, IrqCtlDeviceBase},
@@ -62,7 +62,7 @@ pub struct RiscvPlic {
     /// PLIC context number to use per SMP index, if this PLIC serves that hart.
     ctx_by_cpu: Box<[Option<u32>]>,
     /// Bus reservation.
-    bus: Arc<SocBus>,
+    bus: BusResv<SocBus>,
 }
 
 impl RiscvPlic {
@@ -165,13 +165,13 @@ impl Driver for RiscvPlicDriver {
         node.is_compatible_any(&["riscv,plic0", "sifive,plic-1.0.0"])
     }
 
-    unsafe fn probe(&self, bus: Arc<dyn Bus>) -> EResult<Arc<dyn Device>> {
-        let bus = Arc::downcast::<SocBus>(bus).unwrap();
+    unsafe fn probe(&self, bus: BusResv<dyn Bus>) -> EResult<Arc<dyn Device>> {
+        let bus = BusResv::downcast::<SocBus>(bus).unwrap();
         let node = bus.dtb_node().unwrap();
         let base = DeviceBase::new();
 
         // Map the whole PLIC register window.
-        let mapping = bus.map(0)?;
+        let mapping = bus.take()?.map(0)?;
 
         // PLIC interrupt specifiers are a single cell (the source number).
         if node.irq_cells != Some(1) {
@@ -187,7 +187,7 @@ impl Driver for RiscvPlicDriver {
         ctx_by_cpu.try_reserve(ncpu)?;
         ctx_by_cpu.resize(ncpu, None);
 
-        for (ctx_no, entry) in bus.irq_ext().iter().enumerate() {
+        for (ctx_no, entry) in bus.take()?.irq_ext().iter().enumerate() {
             // Only care about S-mode external interrupts here.
             if entry.vector != RISCV_INT_EXT as u128 {
                 continue;
@@ -199,30 +199,29 @@ impl Driver for RiscvPlicDriver {
             }
         }
 
-        let plic = Arc::try_new(RiscvPlic {
+        let this = Arc::try_new(RiscvPlic {
             base,
             irqctl: IrqCtlDeviceBase::new(u128::MAX)?,
             mapping,
             ndev,
             ctx_by_cpu: ctx_by_cpu.into_boxed_slice(),
-            bus: bus.clone(),
+            bus,
         })?;
-        <dyn Bus>::claim(&*bus, Arc::<RiscvPlic>::downgrade(&plic))?;
 
         // Mask nothing (threshold 0) on each used context; sources are enabled lazily.
-        for ctx_no in plic.ctx_by_cpu.iter().flatten() {
-            plic.write32(thresh_off(*ctx_no), 0);
+        for ctx_no in this.ctx_by_cpu.iter().flatten() {
+            this.write32(thresh_off(*ctx_no), 0);
         }
 
         // Attach to the arch root on each hart we serve. The supervisor external
         // `sie` bit is already enabled per hart at boot (see `arch_cpu_spinup`).
-        for (smp_idx, slot) in plic.ctx_by_cpu.iter().enumerate() {
+        for (smp_idx, slot) in this.ctx_by_cpu.iter().enumerate() {
             if slot.is_some() {
-                smp::register_ext_irqctl(smp_idx as u32, plic.clone())
+                smp::register_ext_irqctl(smp_idx as u32, this.clone())
                     .expect("Failed to register PLIC as interrupt controller");
             }
         }
 
-        Ok(plic)
+        Ok(this)
     }
 }

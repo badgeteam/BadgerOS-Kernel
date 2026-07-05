@@ -34,11 +34,12 @@ fn probe_driver_impl(driver: &'static dyn Driver) {
 
     for bus in driverless.into_iter() {
         if driver.match_(&*bus) {
-            let res = try {
-                let device = unsafe { driver.probe(bus.clone())? };
-                registry::register_device(device)?;
-            };
-            match res {
+            match try {
+                let resv = bus.claim()?;
+                let dev = unsafe { driver.probe(resv)? };
+                bus.base().reservation.unintr_lock().device = Some(Arc::downgrade(&dev));
+                registry::register_device(dev)?;
+            } {
                 Ok(()) => {
                     logkf!(
                         LogLevel::Info,
@@ -64,7 +65,12 @@ fn probe_driver_impl(driver: &'static dyn Driver) {
 fn probe_bus_impl(bus: Arc<dyn Bus>) {
     for &driver in &*all_drivers() {
         if driver.match_(&*bus) {
-            match try { registry::register_device(unsafe { driver.probe(bus.clone())? })? } {
+            match try {
+                let resv = bus.claim()?;
+                let dev = unsafe { driver.probe(resv)? };
+                bus.base().reservation.unintr_lock().device = Some(Arc::downgrade(&dev));
+                registry::register_device(dev)?;
+            } {
                 Ok(()) => logkf!(
                     LogLevel::Info,
                     "Probed driver '{}' for {}",

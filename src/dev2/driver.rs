@@ -6,7 +6,10 @@ use alloc::sync::Arc;
 
 use crate::{
     bindings::error::EResult,
-    dev2::{Device, bus::Bus},
+    dev2::{
+        Device,
+        bus::{Bus, BusResv},
+    },
 };
 
 pub trait Driver: Send + Sync + 'static {
@@ -22,5 +25,5 @@ pub trait Driver: Send + Sync + 'static {
     /// It is unsafe to mislead a driver as to what the device is.
     /// In practice, however, there is little we can do more than hoping
     /// the DTB/ACPI tables were correct.
-    unsafe fn probe(&self, bus: Arc<dyn Bus>) -> EResult<Arc<dyn Device>>;
+    unsafe fn probe(&self, bus: BusResv<dyn Bus>) -> EResult<Arc<dyn Device>>;
 }

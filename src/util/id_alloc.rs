@@ -16,7 +16,10 @@ pub enum IdAllocError {
 
 impl Display for IdAllocError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        Debug::fmt(self, f)
+        match self {
+            Self::NoId => f.write_str("ID allocator exhausted"),
+            Self::NoMem => f.write_str("Out of memory"),
+        }
     }
 }
 

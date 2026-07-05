@@ -12,7 +12,7 @@ use crate::{
     dev2::{
         self, Device, DeviceBase,
         bus::{
-            Bus,
+            Bus, BusResv,
             soc::{MmioMapping, SocBus},
         },
         class::pcictl::{
@@ -35,7 +35,7 @@ pub struct PciBarRange {
 
 pub struct PciCtlGeneric {
     base: DeviceBase,
-    bus: Arc<SocBus>,
+    bus: BusResv<SocBus>,
     ranges: Box<[PciBarRange]>,
     bus_start: u8,
     bus_end: u8,
@@ -46,13 +46,13 @@ pub struct PciCtlGeneric {
 impl PciCtlGeneric {
     pub unsafe fn new(
         base: DeviceBase,
-        bus: Arc<SocBus>,
+        bus: BusResv<SocBus>,
         ranges: Box<[PciBarRange]>,
         bus_start: u8,
         bus_end: u8,
         is_pcie: bool,
     ) -> EResult<Arc<Self>> {
-        let config = bus.map(0)?;
+        let config = bus.take()?.map(0)?;
         if is_pcie {
             if config.size() < 0x1000 * (bus_end as usize + 1) {
                 logkf!(LogLevel::Error, "PCIe configuration space is too small");
@@ -67,14 +67,13 @@ impl PciCtlGeneric {
 
         let this = Arc::try_new(Self {
             base,
-            bus: bus.clone(),
+            bus,
             ranges,
             bus_start,
             bus_end,
             config,
             is_pcie,
         })?;
-        <dyn Bus>::claim(&*bus, Arc::<PciCtlGeneric>::downgrade(&this))?;
 
         Ok(this)
     }
@@ -186,13 +185,22 @@ impl PciCtlDevice for PciCtlGeneric {
     ) -> EResult<()> {
         let dev_addr = PciPAddr::new_config(addr, 0).into();
         // SAFETY: Same preconditions.
-        unsafe { self.bus.map_install_irq(dev_addr, irq as u128, device) }
+        unsafe {
+            self.bus
+                .take()?
+                .map_install_irq(dev_addr, irq as u128, device)
+        }
     }
 
     unsafe fn uninstall_irq(&self, addr: PciAddr, irq: PciIrq, device: *const dyn Device) {
         let dev_addr = PciPAddr::new_config(addr, 0).into();
-        // SAFETY: Same preconditions.
-        unsafe { self.bus.map_uninstall_irq(dev_addr, irq as u128, device) }
+        unsafe {
+            self.bus
+                // SAFETY: Prefer to accidentally unmap something we don't own than leaving a dangling mapping.
+                .take_unchecked()
+                // SAFETY: Same preconditions.
+                .map_uninstall_irq(dev_addr, irq as u128, device)
+        }
     }
 }
 
@@ -217,11 +225,11 @@ impl Driver for PciGenericDriver {
         node.is_compatible_any(&["pci-host-ecam-generic", "pci-host-cam-generic"])
     }
 
-    unsafe fn probe(&self, bus: Arc<dyn Bus>) -> EResult<Arc<dyn Device>> {
+    unsafe fn probe(&self, bus: BusResv<dyn Bus>) -> EResult<Arc<dyn Device>> {
         let Some(node) = bus.dtb_node() else {
             return Err(Errno::EINVAL);
         };
-        let bus = Arc::downcast::<SocBus>(bus).unwrap();
+        let bus = BusResv::downcast::<SocBus>(bus).unwrap();
 
         let Some(bus_range_prop) = node.prop("bus-range") else {
             logkf!(LogLevel::Error, "{}: missing bus-range", node);
