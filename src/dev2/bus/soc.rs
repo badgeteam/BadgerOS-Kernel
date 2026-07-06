@@ -106,8 +106,8 @@ impl SocBus {
         self.paddr.len()
     }
 
-    pub fn map(&self, slot: usize) -> EResult<MmioMapping> {
-        MmioMapping::new(self.paddr[slot].start, self.paddr[slot].len())
+    pub fn map(&self, slot: usize, io: bool, nc: bool) -> EResult<MmioMapping> {
+        MmioMapping::new(self.paddr[slot].start, self.paddr[slot].len(), io, nc)
     }
 
     pub fn paddr(&self) -> &[Range<PAddrr>] {
@@ -344,7 +344,7 @@ impl MmioMapping {
     /// This type only serves to help map physical memory-mapped I/O.
     /// It would be unsafe to dereference the output [`Self::vaddr`] if the caller does not guarantee that the memory still exists.
     /// Therefor, this type should not be used directly for e.g. hot-swappable memory or devices.
-    pub fn new(paddr: usize, size: usize) -> EResult<Self> {
+    pub fn new(paddr: usize, size: usize, io: bool, nc: bool) -> EResult<Self> {
         let phys_page_start = paddr - paddr % PAGE_SIZE as usize;
         let phys_page_end = (paddr + size).div_ceil(PAGE_SIZE as usize) * PAGE_SIZE as usize;
         // SAFETY: See function documentation.
@@ -353,7 +353,7 @@ impl MmioMapping {
                 phys_page_end - phys_page_start,
                 0,
                 map::SHARED,
-                prot::IO | prot::READ | prot::WRITE,
+                io as u8 * prot::IO + nc as u8 * prot::NC + prot::READ + prot::WRITE,
                 Some(Mapping {
                     offset: 0,
                     object: Arc::try_new(RawMemory::new(
@@ -419,11 +419,15 @@ impl<T: Sized, M: HasMmioMapping> MmioStruct<T, M> {
     /// Check the size and alignment and make a wrapper around `mapping` that implements [`Deref`].
     ///
     /// # Safety
+    /// Unlike [`Self::new()`], this function can succeed if `mapping` is not large enough.
+    /// Instead, the caller provides a `min_size` parameter to check against.
+    /// The caller then promises not to access the resulting value out of bounds.
+    ///
     /// Unlike [`MmioMapping`], this type implements [`Deref`] and because the pointer from [`MmioMapping`]
     /// is unchecked, it is unsafe to construct this type.
     /// The caller also promises that [`HasMmioMapping::mmio_mapping`] always returns the same borrow.
-    pub unsafe fn new(mapping: M) -> EResult<Self> {
-        if size_of::<T>() > mapping.mmio_mapping().size {
+    pub unsafe fn new_unsafe_size(mapping: M, min_size: usize) -> EResult<Self> {
+        if min_size > mapping.mmio_mapping().size {
             logkf!(
                 LogLevel::Error,
                 "Mapping ({} bytes) is too small for MmioStruct<{}> ({} bytes)",
@@ -446,6 +450,16 @@ impl<T: Sized, M: HasMmioMapping> MmioStruct<T, M> {
             mapping,
             marker: PhantomData,
         })
+    }
+
+    /// Check the size and alignment and make a wrapper around `mapping` that implements [`Deref`].
+    ///
+    /// # Safety
+    /// Unlike [`MmioMapping`], this type implements [`Deref`] and because the pointer from [`MmioMapping`]
+    /// is unchecked, it is unsafe to construct this type.
+    /// The caller also promises that [`HasMmioMapping::mmio_mapping`] always returns the same borrow.
+    pub unsafe fn new(mapping: M) -> EResult<Self> {
+        unsafe { Self::new_unsafe_size(mapping, size_of::<T>()) }
     }
 }
 

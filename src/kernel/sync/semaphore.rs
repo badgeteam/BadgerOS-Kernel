@@ -43,9 +43,7 @@ impl Semaphore {
         for _ in 0..50 {
             if self
                 .counter
-                .try_update(Ordering::Release, Ordering::Relaxed, |x| {
-                    (x > 0).then_some(x - 1)
-                })
+                .try_update(Ordering::Release, Ordering::Relaxed, |x| x.checked_sub(1))
                 .is_ok()
             {
                 return Ok(());
@@ -55,9 +53,7 @@ impl Semaphore {
         // Slow path.
         while !self
             .counter
-            .try_update(Ordering::Release, Ordering::Relaxed, |x| {
-                (x > 0).then_some(x - 1)
-            })
+            .try_update(Ordering::Release, Ordering::Relaxed, |x| x.checked_sub(1))
             .is_ok()
         {
             self.waitlist
@@ -65,6 +61,35 @@ impl Semaphore {
         }
 
         Ok(())
+    }
+
+    /// Await one post from the semaphore.
+    pub fn unintr_wait(&self) {
+        self.unintr_timed_wait(timestamp_us_t::MAX)
+    }
+
+    /// Await one post from the semaphore.
+    pub fn unintr_timed_wait(&self, timeout: timestamp_us_t) {
+        // Fast path.
+        for _ in 0..50 {
+            if self
+                .counter
+                .try_update(Ordering::Release, Ordering::Relaxed, |x| x.checked_sub(1))
+                .is_ok()
+            {
+                return;
+            }
+        }
+
+        // Slow path.
+        while !self
+            .counter
+            .try_update(Ordering::Release, Ordering::Relaxed, |x| x.checked_sub(1))
+            .is_ok()
+        {
+            self.waitlist
+                .unintr_block(timeout, || self.counter.load(Ordering::Relaxed) == 0);
+        }
     }
 }
 

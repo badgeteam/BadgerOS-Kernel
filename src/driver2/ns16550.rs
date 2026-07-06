@@ -164,7 +164,7 @@ impl Ns16550 {
     /// # Safety
     /// The caller must guarantee that the bus points to a valid NS16550A-compatible device.
     pub unsafe fn new(base: DeviceBase, bus: BusResv<SocBus>) -> EResult<Arc<Self>> {
-        let regs = unsafe { MmioStruct::new(bus.take()?.map(0)?)? };
+        let regs = unsafe { MmioStruct::new(bus.take()?.map(0, true, false)?)? };
 
         let this = Arc::try_new(Self {
             base,

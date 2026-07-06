@@ -184,7 +184,7 @@ char const *errno_get_desc(int errno) {
         case EDEADLK: return "Resource deadlock would occur";
         case ENAMETOOLONG: return "File name too long";
         case ENOLCK: return "No locks available";
-        case ENOSYS: return "Invalid system call number";
+        case ENOSYS: return "Function not implemented";
         case ENOTEMPTY: return "Directory not empty";
         case ELOOP: return "Too many symbolic links encountered";
         case ENOTSUP: return "Not supported";

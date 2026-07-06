@@ -4,6 +4,8 @@
 
 use core::fmt::Display;
 
+use super::bar::BarType;
+
 /// PCI interrupt number.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PciIrq {
@@ -59,6 +61,16 @@ pub enum PciSeg {
     Mem64 = 3,
 }
 
+impl From<BarType> for PciSeg {
+    fn from(value: BarType) -> Self {
+        match value {
+            BarType::IO => PciSeg::IO,
+            BarType::Mem32 => PciSeg::Mem32,
+            BarType::Mem64 => PciSeg::Mem64,
+        }
+    }
+}
+
 /// PCI physical address.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PciPAddr {
@@ -85,7 +97,7 @@ impl PciPAddr {
             high: (seg_addr >> 32) as u32,
             attr: regno as u32
                 | (dev_addr.0 as u32) << 8
-                | (seg as u32) << 16
+                | (seg as u32) << 24
                 | (aliased as u32) << 29
                 | (prefetch as u32) << 30
                 | (non_reloc as u32) << 31,
@@ -106,7 +118,7 @@ impl PciPAddr {
         PciAddr((self.attr >> 8) as u16)
     }
     pub const fn seg(&self) -> PciSeg {
-        match (self.attr >> 16) & 3 {
+        match (self.attr >> 24) & 3 {
             0 => PciSeg::Config,
             1 => PciSeg::IO,
             2 => PciSeg::Mem32,

@@ -13,13 +13,10 @@ use crate::{
         self, Device, DeviceBase,
         bus::{
             Bus, BusResv,
+            pci::addr::{PciAddr, PciIrq, PciPAddr, PciSeg},
             soc::{MmioMapping, SocBus},
         },
-        class::pcictl::{
-            PciCtlDevice,
-            addr::{PciAddr, PciIrq, PciPAddr, PciSeg},
-            cam_ecam_addr,
-        },
+        class::pcictl::{PciCtlDevice, cam_ecam_addr},
         driver::Driver,
     },
     device_get_trait_vtable,
@@ -52,7 +49,7 @@ impl PciCtlGeneric {
         bus_end: u8,
         is_pcie: bool,
     ) -> EResult<Arc<Self>> {
-        let config = bus.take()?.map(0)?;
+        let config = bus.take()?.map(0, true, false)?;
         if is_pcie {
             if config.size() < 0x1000 * (bus_end as usize + 1) {
                 logkf!(LogLevel::Error, "PCIe configuration space is too small");

@@ -6,20 +6,19 @@ use crate::{
     bindings::{error::EResult, log::LogLevel},
     dev2::{
         Device,
-        bus::{Bus, pci::PciBus},
-        class::pcictl::{
-            addr::PciPAddr,
-            cfg::{PciReg, PciRegInfo},
+        bus::{
+            Bus,
+            pci::{
+                PciBus,
+                addr::{PciAddr, PciIrq, PciPAddr},
+                cfg::{self, PciReg, PciRegInfo},
+            },
         },
         registry,
     },
     mem::pmm::PAddrr,
 };
 
-pub mod addr;
-pub mod cfg;
-
-use addr::{PciAddr, PciIrq};
 use alloc::sync::Arc;
 
 pub trait PciCtlDevice: Device {
@@ -94,13 +93,7 @@ impl dyn PciCtlDevice {
                     addr,
                     bus.id()
                 );
-                logkf!(
-                    LogLevel::Info,
-                    "  -> class {:02x}:{:02x}:{:02x}",
-                    bus.baseclass,
-                    bus.subclass,
-                    bus.progif
-                );
+                logkf!(LogLevel::Info, "  -> class {}", bus.classcode);
             }
         }
 
@@ -214,11 +207,11 @@ impl dyn PciCtlDevice {
 }
 
 pub const fn cam_addr(bdf: PciAddr, regno: u8) -> usize {
-    (bdf.0 as usize) << 8 | (regno as usize) << 4
+    (bdf.0 as usize) << 8 | (regno as usize) << 2
 }
 
 pub const fn ecam_addr(bdf: PciAddr, regno: u8) -> usize {
-    (bdf.0 as usize) << 12 | (regno as usize) << 4
+    (bdf.0 as usize) << 12 | (regno as usize) << 2
 }
 
 pub const fn cam_ecam_addr(bdf: PciAddr, regno: u8, is_ecam: bool) -> usize {

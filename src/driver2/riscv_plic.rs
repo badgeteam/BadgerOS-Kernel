@@ -171,7 +171,7 @@ impl Driver for RiscvPlicDriver {
         let base = DeviceBase::new();
 
         // Map the whole PLIC register window.
-        let mapping = bus.take()?.map(0)?;
+        let mapping = bus.take()?.map(0, true, false)?;
 
         // PLIC interrupt specifiers are a single cell (the source number).
         if node.irq_cells != Some(1) {

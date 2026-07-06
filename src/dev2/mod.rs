@@ -39,6 +39,7 @@ impl DevDynMetadata {
 #[macro_export]
 macro_rules! device_get_trait_vtable {
     ($($traits: path), *) => {
+        #[allow(unused)]
         fn get_trait_vtable(&self, trait_: core::any::TypeId) -> Option<crate::dev2::DevDynMetadata> {
             $(
                 if core::any::TypeId::of::<dyn $traits>() == trait_ {
@@ -78,6 +79,7 @@ impl Drop for DeviceBase {
     }
 }
 
+// TODO: Callback for removal/deregister, etc.
 /// An abstract device.
 /// While some common logic is enforced for all devices, most of the logic depends on their specific types.
 pub trait Device: Display + Any + Send + Sync + 'static {
