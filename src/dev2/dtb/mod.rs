@@ -12,6 +12,7 @@ use crate::{
         error::{EResult, Errno},
         log::LogLevel,
     },
+    cpu,
     dev2::{probe, registry},
     kernel::{self},
 };
@@ -299,6 +300,8 @@ pub unsafe fn init(fdt: *const FdtHeader) {
     let soc = dtb.root().nodes.get("soc").expect("Missing DTB /soc");
     let cpus = dtb.root().nodes.get("cpus").expect("Missing DTB /cpus");
 
+    // Set up the CPU-local timers.
+    cpu::timer::init_dtb2(cpus);
     // Discover CPUs; this sets up the per-hart CpuLocal state used for interrupt routing.
     kernel::smp::init_dtb2(cpus);
 

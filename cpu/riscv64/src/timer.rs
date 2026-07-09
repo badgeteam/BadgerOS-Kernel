@@ -2,6 +2,8 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
+#[cfg(feature = "dtb")]
+use crate::dev2;
 use crate::{
     bindings::{device::dtb::DtbNode, log::LogLevel},
     config,
@@ -77,6 +79,21 @@ pub extern "C" fn time_ns() -> u64 {
     let ratio = unsafe { NANOS_PER_TICK };
     let tmp = tick.widening_mul(ratio);
     (tmp.0 >> 32) | (tmp.1 << 32)
+}
+
+/// Inititalize CPU-local timers from DTB.
+#[cfg(feature = "dtb")]
+pub fn init_dtb2(cpus_node: &dtb::DtbNode) {
+    let timebase_freq = cpus_node
+        .prop("timebase-frequency")
+        .expect("Missing DTB prop /cpus/timebase-frequency");
+    // SAFETY: This value is only written to during initialization.
+    unsafe {
+        TICKS_PER_SEC = timebase_freq
+            .read_uint()
+            .expect("Malformed DTB prop /cpus/timebase-frequency") as u64
+    };
+    init_common();
 }
 
 /// Inititalize CPU-local timers from DTB.
