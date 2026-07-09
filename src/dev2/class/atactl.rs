@@ -5,6 +5,7 @@
 use crate::{
     bindings::error::EResult,
     dev2::{Device, bus::ata::Command},
+    mem::dma::DmaTarget,
     util::MaybeMut,
 };
 
@@ -18,6 +19,6 @@ pub trait AtaCtlDevice: Device {
         sec_count: u16,
         feature: u16,
         lba: u64,
-        data: Option<MaybeMut<'_, [u8]>>,
+        data: Option<&dyn DmaTarget>,
     ) -> EResult<()>;
 }

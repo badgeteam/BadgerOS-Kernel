@@ -49,7 +49,7 @@ impl<T: Sized> PhysBox<T> {
                 prot,
                 Some(Mapping { offset: 0, object }),
             )? as *mut T;
-            core::ptr::write_bytes(vaddr as *mut u8, 0, aligned_pages);
+            core::ptr::write_bytes(vaddr as *mut u8, 0, aligned_pages * PAGE_SIZE as usize);
         }
 
         Ok(Self { ptr, vaddr })

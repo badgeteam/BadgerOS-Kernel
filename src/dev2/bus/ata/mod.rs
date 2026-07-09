@@ -10,6 +10,7 @@ use dtb::DtbNode;
 use crate::{
     bindings::error::EResult,
     dev2::{Device, class::atactl::AtaCtlDevice},
+    mem::dma::DmaTarget,
     util::MaybeMut,
 };
 
@@ -57,7 +58,7 @@ impl AtaBus {
         sec_count: u16,
         feature: u16,
         lba: u64,
-        data: Option<MaybeMut<'_, [u8]>>,
+        data: Option<&dyn DmaTarget>,
     ) -> EResult<()> {
         self.ctrl
             .ata_cmd(self.port, cmd, ctrl, sec_count, feature, lba, data)

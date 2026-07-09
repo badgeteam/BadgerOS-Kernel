@@ -159,6 +159,7 @@ register_structs! {
 // Received FIS structure.
 register_structs! {
     /// Received FIS structure.
+    #[repr(align(0x100))]
     pub Received {
         /// DMA setup FIS.
         (0x000 => pub dsfis:        DmaSetup),

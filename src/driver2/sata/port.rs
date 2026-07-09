@@ -7,13 +7,14 @@ use core::{mem::offset_of, sync::atomic::AtomicU32};
 use super::*;
 
 use crate::{
+    badgelib::irq::IrqGuard,
     bindings::raw::timestamp_us_t,
-    dev2::bus::ata::AtaBus,
+    dev2::{bus::ata::AtaBus, registry},
     kernel::{
-        sched::thread_yield,
+        sched::{Thread, thread_yield},
         sync::{semaphore::Semaphore, spinlock::RawSpinlock, waitlist::Waitlist},
     },
-    mem::pmm::phys_box::PhysBox,
+    mem::{dma::DmaTarget, pmm::phys_box::PhysBox},
 };
 
 /// Number of commands per port.
@@ -24,6 +25,7 @@ const CMD_TABLE_SIZE: usize = 0x200;
 const PRDT_LIST_LEN: usize = (CMD_TABLE_SIZE - 0x80) / size_of::<hms::PRDT>();
 
 /// One command table.
+#[repr(C, align(0x80))]
 struct CmdTable {
     cmd_fis: fis::CmdFis,
     atapi_cmd: [u8; 0x10],
@@ -33,9 +35,11 @@ struct CmdTable {
 static_assertions::assert_eq_size!(CmdTable, [u8; CMD_TABLE_SIZE]);
 
 /// Host memory structures per port.
+#[repr(C, align(0x400))]
 struct PortHms {
-    cmd_tables: [CmdTable; CMDLIST_LEN],
+    // DO NOT REORDER: cmdlist needs to be sufficiently aligned.
     cmdlist: [hms::CmdHdr; CMDLIST_LEN],
+    cmd_tables: [CmdTable; CMDLIST_LEN],
     rfis: fis::Received,
 }
 
@@ -69,16 +73,45 @@ pub(super) struct Port {
 }
 
 impl Port {
-    pub(super) fn new(index: u8, reg: &reg::Port, cmdlist_len: usize) -> EResult<Self> {
+    pub(super) fn new(
+        index: u8,
+        supports_ss: bool,
+        reg: &reg::Port,
+        cmdlist_len: usize,
+    ) -> EResult<Self> {
         debug_assert!(index < 32);
         let hms = unsafe { PhysBox::<PortHms>::try_new(false, true)? };
         let cmdlist_len = cmdlist_len.min(CMDLIST_LEN);
 
         for i in 0..CMDLIST_LEN {
             let table_paddr =
-                hms.paddr() + offset_of!(PortHms, cmd_tables) + i * size_of::<hms::CmdHdr>();
+                hms.paddr() + offset_of!(PortHms, cmd_tables) + i * size_of::<CmdTable>();
             hms.cmdlist[i].cmd_addr_hi.set((table_paddr >> 32) as u32);
             hms.cmdlist[i].cmd_addr_lo.set(table_paddr as u32);
+        }
+
+        // Power on the port.
+        if supports_ss {
+            reg.cmd.modify(reg::PortCmd::spinup.val(1));
+        }
+        reg.cmd.modify(reg::PortCmd::if_comm_ctrl::ACTIVE);
+
+        // Stop DMA engine.
+        reg.cmd.modify(reg::PortCmd::cmd_start::CLEAR);
+        let lim = time_us() + 100000;
+        while reg.cmd.read(reg::PortCmd::cmd_running) != 0 {
+            if time_us() > lim {
+                return Err(Errno::ENAVAIL);
+            }
+            let _ = thread_sleep(5000);
+        }
+        reg.cmd.modify(reg::PortCmd::fis_en::CLEAR);
+        let lim = time_us() + 100000;
+        while reg.cmd.read(reg::PortCmd::fis_running) != 0 {
+            if time_us() > lim {
+                return Err(Errno::ENAVAIL);
+            }
+            let _ = thread_sleep(5000);
         }
 
         let cmdlist_paddr = hms.paddr() + offset_of!(PortHms, cmdlist);
@@ -89,13 +122,15 @@ impl Port {
         reg.fis_addr_hi.set((rfis_paddr >> 32) as u32);
         reg.fis_addr_lo.set(rfis_paddr as u32);
 
+        reg.cmd.modify(reg::PortCmd::fis_en::SET);
+
         Ok(Self {
             work_waitlist: Waitlist::new(),
             cmd_waitlist: [const { Waitlist::new() }; _],
             index,
             state: AtomicU32::new(0),
             cmd_avail_count: Semaphore::with_count(cmdlist_len as u32),
-            cmd_avail_map: AtomicU32::new((1u32 << cmdlist_len).wrapping_neg()),
+            cmd_avail_map: AtomicU32::new((1u32 << cmdlist_len) - 1),
             cmd_issue_map: AtomicU32::new(0),
             cmd_finish_map: AtomicU32::new(0),
             cmd_err_map: AtomicU32::new(0),
@@ -105,7 +140,7 @@ impl Port {
     }
 
     /// Create and start the driver thread.
-    pub(super) fn start(&self, dev: Arc<SataAhciCtrl>) -> EResult<()> {
+    pub(super) fn start(&self, dev: Arc<SataAhciCtl>) -> EResult<()> {
         self.state
             .compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed)
             .expect("AHCI port thread started twice");
@@ -123,28 +158,46 @@ impl Port {
     }
 
     /// Thread that handles interrupts on this port.
-    fn thread_main(&self, dev: Arc<SataAhciCtrl>) {
+    fn thread_main(&self, dev: Arc<SataAhciCtl>) {
         let reg = &dev.reg.port[self.index as usize];
 
         Self::restart_port(reg);
 
+        let bus = Arc::new(AtaBus::new(dev.clone(), self.index as u32));
+        let mut is_registered = false;
+        Self::check_conn(&mut is_registered, reg, &bus);
+
         let mut inflight_map = 0;
         while self.state.load(Ordering::Relaxed) == 1 {
+            {
+                let _noirq = IrqGuard::new();
+                let _guard = self.irqen_lock.lock();
+                reg.irq_enable.set(u32::MAX);
+            }
+
             // Wait for something to need attention.
             self.work_waitlist.unintr_block(timestamp_us_t::MAX, || {
                 if self.cmd_issue_map.load(Ordering::Relaxed) != 0 {
-                    return true;
+                    return false;
                 }
 
-                let stat = reg.irq_status.get();
-
-                reg::PortIrq::tf_err.is_set(stat)
-                    || reg::PortIrq::hb_fatal_err.is_set(stat)
-                    || reg::PortIrq::hb_data_err.is_set(stat)
-                    || reg::PortIrq::if_fatal.is_set(stat)
+                reg.irq_status.get() == 0
             });
 
             let stat = reg.irq_status.get();
+
+            // Check for connection status changes.
+            if reg::PortIrq::cold_status.is_set(stat)
+                || reg::PortIrq::phy_rdy.is_set(stat)
+                || reg::PortIrq::port_status.is_set(stat)
+            {
+                logkf!(
+                    LogLevel::Debug,
+                    "port {}: connection status changed",
+                    self.index
+                );
+                Self::check_conn(&mut is_registered, reg, &bus);
+            }
 
             // Check for fatal error interrupts.
             if reg::PortIrq::tf_err.is_set(stat)
@@ -154,6 +207,13 @@ impl Port {
             {
                 // Command caused a fatal error.
                 let culprit = reg.cmd.read(reg::PortCmd::cur_slot) as usize;
+                logkf!(
+                    LogLevel::Error,
+                    "{}: fatal error, culprit slot={}, irq_status=0x{:x}",
+                    &bus,
+                    culprit,
+                    stat
+                );
                 // Put unprocessed commands back in the queue.
                 let unproc_map = reg.cmd_issue.get() & !(1 << culprit);
                 self.cmd_issue_map.fetch_or(unproc_map, Ordering::Relaxed);
@@ -183,26 +243,28 @@ impl Port {
 
             // Clear processed interrupts.
             reg.irq_status.set(stat);
-
-            // We're interested in all fatal errors, and command completions.
-            // We can tell commands are completed by the D2H register FIS, SDB FIS and the completion of the final PRD for DMA accesses.
-            {
-                let _guard = self.irqen_lock.lock();
-                reg.irq_enable.write(
-                    reg::PortIrq::tf_err::SET
-                        + reg::PortIrq::hb_fatal_err::SET
-                        + reg::PortIrq::hb_data_err::SET
-                        + reg::PortIrq::if_fatal::SET
-                        + reg::PortIrq::set_dev_bits::SET
-                        + reg::PortIrq::d2h_reg_fis::SET
-                        + reg::PortIrq::prd_proc::SET,
-                );
-            }
         }
+
+        registry::remove_bus(&*bus);
 
         self.state
             .compare_exchange(2, 0, Ordering::Relaxed, Ordering::Relaxed)
             .expect("AHCI port thread stopped twice");
+    }
+
+    /// Check the connection status of the port and (un-)register the bus as appropriate.
+    fn check_conn(is_registered: &mut bool, reg: &reg::Port, bus: &Arc<AtaBus>) {
+        let detect = reg.sstatus.read(reg::PortSStatus::detect) == 3;
+        if !detect && *is_registered {
+            (&**bus as &dyn Bus).cancel_resv();
+            registry::remove_bus(&**bus);
+            *is_registered = false;
+        } else if detect && !*is_registered {
+            if registry::register_bus(bus.clone()).is_ok() {
+                logkf!(LogLevel::Info, "Added {} as bus {}", &bus, bus.id());
+            }
+            *is_registered = true;
+        }
     }
 
     /// (Re-)start the AHCI port.
@@ -231,7 +293,7 @@ impl Port {
     }
 
     /// Signal an interrupt to the driver thread.
-    pub(super) fn interrupt(&self, ctrl: &SataAhciCtrl) {
+    pub(super) fn interrupt(&self, ctrl: &SataAhciCtl) {
         let _guard = self.irqen_lock.lock();
         let reg = &ctrl.reg.port[self.index as usize];
 
@@ -277,15 +339,16 @@ impl Port {
     fn cmd_issue(&self, list: usize) -> EResult<()> {
         debug_assert!(list < CMDLIST_LEN);
         let mask = 1u32 << list;
-        let tmp = self.cmd_avail_map.fetch_or(mask, Ordering::Relaxed);
+        let tmp = self.cmd_issue_map.fetch_or(mask, Ordering::Relaxed);
         debug_assert!(tmp & mask == 0, "Command list issued twice");
+        self.work_waitlist.notify();
 
         loop {
             self.cmd_waitlist[list].unintr_block(timestamp_us_t::MAX, || {
                 (self.cmd_finish_map.load(Ordering::Relaxed)
                     | self.cmd_err_map.load(Ordering::Relaxed))
                     & mask
-                    != 0
+                    == 0
             });
 
             if self.cmd_finish_map.load(Ordering::Relaxed) & mask != 0 {
@@ -309,8 +372,73 @@ impl Port {
         sec_count: u16,
         feature: u16,
         lba: u64,
-        data: Option<MaybeMut<'_, [u8]>>,
+        data: Option<&dyn DmaTarget>,
     ) -> EResult<()> {
-        todo!()
+        let list = self.cmd_start();
+        let hdr = &self.hms.cmdlist[list];
+        let fis = unsafe { &self.hms.cmd_tables[list].cmd_fis.register };
+        let prdt = &self.hms.cmd_tables[list].prdt;
+
+        // Collect scatter-gather list.
+        if let Some(data) = data {
+            let dma_size = data.dma_size();
+            if dma_size == 0 || dma_size & 1 != 0 || dma_size >= u32::MAX as usize {
+                logkf!(LogLevel::Error, "Invalid DMA size {} for AHCI", dma_size);
+                return Err(Errno::EINVAL);
+            }
+            hdr.prd_len.set(dma_size as u32);
+
+            let mut index = 0;
+            data.collect(u32::MAX as usize - 1, &mut |entry| {
+                debug_assert!(entry.size <= u32::MAX as usize - 1);
+                if index >= PRDT_LIST_LEN {
+                    logkf!(LogLevel::Error, "Scatter-gather list too long");
+                    return Err(Errno::ENOMEM);
+                }
+                if (entry.paddr | entry.vaddr) & 1 != 0 {
+                    logkf!(LogLevel::Error, "Misaligned DMA buffer for AHCI");
+                    return Err(Errno::EINVAL);
+                }
+
+                prdt[index].dbc.set((entry.size - 1) as u32);
+                prdt[index].paddr.set(entry.paddr as u64);
+                index += 1;
+
+                Ok(())
+            })?;
+            debug_assert!(index > 0);
+
+            prdt[index - 1].dbc.modify(hms::DBC::irq_en::SET);
+            hdr.desc.write(
+                hms::CmdHdrDesc::fis_len.val(size_of::<fis::RegisterH2D>() as u32 / 4)
+                    + hms::CmdHdrDesc::prdtl.val(index as u32)
+                    + hms::CmdHdrDesc::write.val(!data.is_scatter() as u32)
+                    + hms::CmdHdrDesc::clr_busy.val(1),
+            );
+        } else {
+            hdr.desc.write(
+                hms::CmdHdrDesc::fis_len.val(size_of::<fis::RegisterH2D>() as u32 / 4)
+                    + hms::CmdHdrDesc::clr_busy.val(1),
+            );
+        }
+
+        // Set of the H2D register FIS.
+        let lba = lba.to_le_bytes();
+        fis.lba[0].set(lba[0]);
+        fis.lba[1].set(lba[1]);
+        fis.lba[2].set(lba[2]);
+        fis.lba_exp[0].set(lba[3]);
+        fis.lba_exp[1].set(lba[4]);
+        fis.lba_exp[2].set(lba[5]);
+        fis.fis_type.set(fis::Type::RegisterH2D as u8);
+        fis.command.set(cmd as u8);
+        fis.device.set(0x40);
+        fis.control.set(ctrl);
+        fis.features.set(feature as u8);
+        fis.features_exp.set((feature >> 8) as u8);
+        fis.pmc.write(fis::PMC::cmdr_xfer.val(1));
+        fis.sec_count.set(sec_count);
+
+        self.cmd_issue(list)
     }
 }

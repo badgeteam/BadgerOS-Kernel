@@ -80,7 +80,13 @@ impl PciBus {
     ///
     /// The caller promises that the handler is a valid [`Device`] object.
     pub unsafe fn install_pci_irq(&self, irq: PciIrq, device: *const dyn Device) -> EResult<()> {
-        unsafe { self.ctrl.install_irq(self.addr, irq, device) }
+        unsafe {
+            self.ctrl.install_irq(self.addr, irq, device)?;
+            self.ctrl
+                .config_write(self.addr, cfg::common::IRQ_PIN, irq as u8)?;
+
+            Ok(())
+        }
     }
 
     /// Remove the handler for an interrupt.
@@ -89,7 +95,13 @@ impl PciBus {
     /// # Safety
     /// The caller promises that the handler is a valid [`Device`] object.
     pub unsafe fn uninstall_pci_irq(&self, irq: PciIrq, device: *const dyn Device) {
-        unsafe { self.ctrl.uninstall_irq(self.addr, irq, device) }
+        unsafe {
+            // Must panic if this fails because otherwise we'd have an interrupt without a handler.
+            self.ctrl
+                .config_write(self.addr, cfg::common::IRQ_PIN, 0)
+                .expect("Failed to clear PCI IRQ_PIN");
+            self.ctrl.uninstall_irq(self.addr, irq, device);
+        }
     }
 
     /// Get information about this function's BARs.

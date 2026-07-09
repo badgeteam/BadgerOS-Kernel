@@ -2,7 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::ffi::CStr;
+use core::{arch::asm, ffi::CStr};
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
@@ -15,16 +15,20 @@ use crate::{
         },
     },
     cpu::{self, spinup::arch_cpu_spinup},
-    dev2::{self},
+    dev2::{
+        self,
+        bus::ata::{self, AtaBus},
+        class::char::CharDevice,
+    },
     filesystem::mount_root::mount_root_fs,
     kernel::{
         cpulocal::CpuLocal,
-        sched::{Scheduler, Thread},
+        sched::{Scheduler, Thread, thread_sleep, thread_yield},
         sync::mutex::Mutex,
     },
     ktest::{KTestWhen, ktests_runlevel},
-    mem::vmm,
-    process::Process,
+    mem::{dma::DmaFromRef, vmm},
+    process::{Process, usercopy::UserSlice},
     util::version,
 };
 
@@ -105,6 +109,52 @@ unsafe fn general_init() {
         dev2::probe::start_thread();
 
         logkf!(LogLevel::Info, "Finished");
+
+        loop {
+            let _ = thread_sleep(1000000);
+
+            logkf!(LogLevel::Debug, "Test ATA buses");
+            for bus in dev2::registry::buses_by_type::<AtaBus>().unwrap() {
+                logkf!(LogLevel::Debug, "Test ATA bus {}", &bus);
+
+                let mut id = [0u16; 256];
+                bus.ata_cmd(
+                    ata::Command::IdentDev,
+                    1 << 6,
+                    0,
+                    0,
+                    0,
+                    Some(DmaFromRef::from_mut(&mut id)),
+                )
+                .expect("ATA command failed");
+
+                let supports_48bit = id[83] & (1 << 10) != 0;
+                let block_size_exp;
+                if id[106] & (1 << 14) == 0 {
+                    block_size_exp = 9; // 512 bytes
+                } else {
+                    let block_size = id[117] as u64 + (id[118] as u64) << 16;
+                    if block_size == 0 {
+                        block_size_exp = 9; // 512 bytes
+                    } else {
+                        block_size_exp = block_size.trailing_zeros() as u8;
+                    }
+                }
+                let block_count = (id[100] as u64)
+                    + ((id[101] as u64) << 16)
+                    + ((id[102] as u64) << 32)
+                    + ((id[103] as u64) << 48);
+
+                logkf!(
+                    LogLevel::Debug,
+                    "{}: 48-bit: {}; sec. size: {}; sec. count: {}",
+                    &bus,
+                    if supports_48bit { 'y' } else { 'n' },
+                    1u64 << block_size_exp,
+                    block_count
+                );
+            }
+        }
 
         // After this is old device and init.
         return;

@@ -67,6 +67,7 @@ impl dyn IrqCtlDevice {
             irq.try_reserve(1)?;
             irq.push((dev_irq, device));
         } else {
+            self.set_irq_in_enabled(irq_id, true)?;
             vec.push((dev_irq, device));
             handlers.insert(irq_id, vec);
         }

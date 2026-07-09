@@ -4,6 +4,7 @@
 
 use core::sync::atomic::AtomicU32;
 
+pub mod dma;
 pub mod pmm;
 pub mod vmm;
 

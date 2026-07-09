@@ -18,7 +18,7 @@ use crate::{
         bus::{
             Bus, BusResv,
             ata::Command,
-            pci::{PciBus, bar::BarType, classcode},
+            pci::{PciBus, addr::PciIrq, bar::BarType, classcode},
             soc::{MmioMapping, MmioStruct},
         },
         class::atactl::AtaCtlDevice,
@@ -26,11 +26,8 @@ use crate::{
     },
     device_get_trait_vtable,
     driver2::sata::port::Port,
-    kernel::{
-        sched::{Thread, thread_sleep},
-        sync::spinlock::RawSpinlock,
-    },
-    util::MaybeMut,
+    kernel::{sched::thread_sleep, sync::spinlock::RawSpinlock},
+    mem::dma::DmaTarget,
 };
 
 mod fis;
@@ -39,7 +36,7 @@ mod port;
 mod reg;
 
 /// SATA AHCI controller.
-pub struct SataAhciCtrl {
+pub struct SataAhciCtl {
     base: DeviceBase,
     bus: BusResv<PciBus>,
     reg: MmioStruct<reg::Ctrl>,
@@ -47,9 +44,19 @@ pub struct SataAhciCtrl {
     /// Spinlock that guards the control registers.
     reg_lock: RawSpinlock,
 }
-unsafe impl Sync for SataAhciCtrl {}
+unsafe impl Sync for SataAhciCtl {}
 
-impl SataAhciCtrl {
+impl Drop for SataAhciCtl {
+    fn drop(&mut self) {
+        unsafe {
+            self.bus
+                .take_unchecked()
+                .uninstall_pci_irq(PciIrq::IntA, self)
+        };
+    }
+}
+
+impl SataAhciCtl {
     pub fn new(base: DeviceBase, bus: BusResv<PciBus>) -> EResult<Arc<Self>> {
         // Map BAR no. 5.
         let info = unsafe { bus.take()?.bar_info() }?;
@@ -61,6 +68,8 @@ impl SataAhciCtrl {
                 offset_of!(reg::Ctrl, port) + size_of::<reg::Port>(),
             )?
         };
+
+        let supports_ss = reg.ghc.cap.read(reg::HostCaps::supports_ss) != 0;
 
         // Perform BIOS/OS handoff (if required).
         if reg.ghc.cap2.read(reg::HostCapsExt::supports_bios_handoff) != 0 {
@@ -93,6 +102,8 @@ impl SataAhciCtrl {
         let cmdlist_max = reg.ghc.cap.read(reg::HostCaps::n_cmd_slots);
 
         // Reset all ports.
+        // TODO: If cold presence detection isn't supported,
+        // ports with no devices connected should be treated as not implemented.
         let ports_impl = reg.ghc.ports_impl.get();
         let mut port = [const { None }; 32];
         for i in 0..32 {
@@ -100,7 +111,7 @@ impl SataAhciCtrl {
                 // Just in case firmware forgot to properly stop this port.
                 reg.port[i].irq_enable.set(0);
 
-                match Port::new(i as u8, &reg.port[i], cmdlist_max as usize) {
+                match Port::new(i as u8, supports_ss, &reg.port[i], cmdlist_max as usize) {
                     Ok(it) => port[i] = Some(it),
                     Err(err) => logkf!(
                         LogLevel::Warning,
@@ -151,18 +162,24 @@ impl SataAhciCtrl {
         }
 
         // If all succeeded, install and enable interrupts.
+        unsafe {
+            this.bus
+                .take()?
+                .install_pci_irq(PciIrq::IntA, &*this as &dyn Device)?;
+            this.reg.ghc.ghc.modify(reg::HostCtrl::irq_en::SET);
+        };
 
         Ok(this)
     }
 }
 
-impl Display for SataAhciCtrl {
+impl Display for SataAhciCtl {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         Display::fmt(&self.bus, f)
     }
 }
 
-impl Device for SataAhciCtrl {
+impl Device for SataAhciCtl {
     fn base(&self) -> &DeviceBase {
         &self.base
     }
@@ -171,7 +188,8 @@ impl Device for SataAhciCtrl {
         let _guard = self.reg_lock.lock();
         let reg = &self.reg.ghc;
 
-        let mut stat = reg.irq_status.get();
+        let orig_stat = reg.irq_status.get();
+        let mut stat = orig_stat;
         while stat != 0 {
             let index = stat.trailing_zeros() as usize;
             if let Some(port) = &self.port[index] {
@@ -181,7 +199,7 @@ impl Device for SataAhciCtrl {
             }
             stat &= !(1 << index);
         }
-        reg.irq_status.set(stat);
+        reg.irq_status.set(orig_stat);
 
         true
     }
@@ -189,7 +207,7 @@ impl Device for SataAhciCtrl {
     device_get_trait_vtable!(AtaCtlDevice);
 }
 
-impl AtaCtlDevice for SataAhciCtrl {
+impl AtaCtlDevice for SataAhciCtl {
     fn ata_cmd(
         &self,
         port: u32,
@@ -198,7 +216,7 @@ impl AtaCtlDevice for SataAhciCtrl {
         sec_count: u16,
         feature: u16,
         lba: u64,
-        data: Option<MaybeMut<'_, [u8]>>,
+        data: Option<&dyn DmaTarget>,
     ) -> EResult<()> {
         self.port
             .get(port as usize)
@@ -226,7 +244,7 @@ impl Driver for SataDriver {
 
     unsafe fn probe(&self, bus: BusResv<dyn Bus>) -> EResult<Arc<dyn Device>> {
         let bus = bus.downcast().unwrap();
-        let dev = SataAhciCtrl::new(DeviceBase::new(), bus)?;
+        let dev = SataAhciCtl::new(DeviceBase::new(), bus)?;
         Ok(dev)
     }
 }

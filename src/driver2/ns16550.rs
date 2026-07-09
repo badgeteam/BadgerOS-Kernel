@@ -12,7 +12,10 @@ use tock_registers::{
 };
 
 use crate::{
-    badgelib::fifo::{BlockingFifo, Fifo},
+    badgelib::{
+        fifo::{BlockingFifo, Fifo},
+        irq::IrqGuard,
+    },
     bindings::error::EResult,
     dev2::{
         Device, DeviceBase,
@@ -244,6 +247,7 @@ impl CharDevice for Ns16550 {
 
     fn write_raw(&self, wdata: UserSlice<u8>, nonblock: bool) -> EResult<usize> {
         let res = self.txfifo.write(wdata, nonblock);
+        let _noirq = IrqGuard::new();
         self.check_fifos();
         res
     }

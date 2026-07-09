@@ -178,8 +178,8 @@ register_bitfields! {
         hb_fatal_err  OFFSET(29) NUMBITS(1) [],
         /// Task file error status.
         tf_err        OFFSET(30) NUMBITS(1) [],
-        /// Connected status changed.
-        conn_changed  OFFSET(31) NUMBITS(1) [],
+        /// Cold presence detect connected status changed.
+        cold_status   OFFSET(31) NUMBITS(1) [],
     ],
 
     /// AHCI port command and status register.
