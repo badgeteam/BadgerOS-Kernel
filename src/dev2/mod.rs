@@ -92,7 +92,9 @@ pub trait Device: Display + Any + Send + Sync + 'static {
 
     /// Test whether this device implements a trait and get its metadata if so.
     /// Should not be used directly.
-    fn get_trait_vtable(&self, trait_: TypeId) -> Option<DevDynMetadata>;
+    fn get_trait_vtable(&self, _trait: TypeId) -> Option<DevDynMetadata> {
+        None
+    }
 }
 
 impl dyn Device {

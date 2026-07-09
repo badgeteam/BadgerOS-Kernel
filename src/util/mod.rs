@@ -17,12 +17,12 @@ pub mod version {
 
 /// Enum that represents either a const or a mut reference.
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
-pub enum MaybeMut<'a, T> {
+pub enum MaybeMut<'a, T: ?Sized> {
     Const(&'a T),
     Mut(&'a mut T),
 }
 
-impl<'a, T> MaybeMut<'a, T> {
+impl<'a, T: ?Sized> MaybeMut<'a, T> {
     pub const fn try_mut(&mut self) -> Option<&mut T> {
         match self {
             MaybeMut::Const(_) => None,
@@ -42,7 +42,7 @@ impl<'a, T> MaybeMut<'a, T> {
     }
 }
 
-impl<'a, T> Deref for MaybeMut<'a, T> {
+impl<'a, T: ?Sized> Deref for MaybeMut<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {

@@ -19,33 +19,31 @@ register_bitfields! {
         /// Command completion coalescing supported.
         supports_cc_coalescing OFFSET( 7) NUMBITS(1) [],
         /// Number of command slots minus one.
-        n_cmd_slots            OFFSET( 8) NUMBITS(1) [],
+        n_cmd_slots            OFFSET( 8) NUMBITS(5) [],
         /// Partial state capable.
-        supports_pstate        OFFSET( 9) NUMBITS(1) [],
+        supports_pstate        OFFSET(13) NUMBITS(1) [],
         /// Slumber state capable.
-        supports_slumber       OFFSET(10) NUMBITS(1) [],
+        supports_slumber       OFFSET(14) NUMBITS(1) [],
         /// Supports multiple DRQ blocks per PIO command.
-        pio_multi_drq          OFFSET(11) NUMBITS(1) [],
+        pio_multi_drq          OFFSET(15) NUMBITS(1) [],
         /// Supports FIS-based switching.
-        supports_fis_switch    OFFSET(12) NUMBITS(1) [],
+        supports_fis_switch    OFFSET(16) NUMBITS(1) [],
         /// Supports port multiplier.
-        supports_port_mul      OFFSET(13) NUMBITS(1) [],
+        supports_port_mul      OFFSET(17) NUMBITS(1) [],
         /// Supports AHCI only mode.
-        supports_ahci_only     OFFSET(14) NUMBITS(1) [],
-        /// Reserved
-        _resvd0                OFFSET(15) NUMBITS(1) [],
+        supports_ahci_only     OFFSET(18) NUMBITS(1) [],
         /// Interface speed support.
-        max_if_speed           OFFSET(16) NUMBITS(4) [],
+        max_if_speed           OFFSET(20) NUMBITS(4) [],
         /// Supports command list override.
-        supports_clo           OFFSET(20) NUMBITS(1) [],
+        supports_clo           OFFSET(24) NUMBITS(1) [],
         /// Supports activity LED.
-        supports_led           OFFSET(21) NUMBITS(1) [],
+        supports_led           OFFSET(25) NUMBITS(1) [],
         /// Supports aggressive link power management.
-        supports_alp           OFFSET(22) NUMBITS(1) [],
+        supports_alp           OFFSET(26) NUMBITS(1) [],
         /// Supports staggered spin-up.
-        supports_ss            OFFSET(23) NUMBITS(1) [],
+        supports_ss            OFFSET(27) NUMBITS(1) [],
         /// Supports mechanical presence switch.
-        supports_det_sw        OFFSET(24) NUMBITS(1) [],
+        supports_det_sw        OFFSET(28) NUMBITS(1) [],
     ],
 
     /// AHCI generic host control: Global Host Control.
@@ -56,8 +54,6 @@ register_bitfields! {
         irq_en            OFFSET(1)  NUMBITS(1) [],
         /// HBA reverted to single MSI mode.
         single_msi_mode   OFFSET(2)  NUMBITS(1) [],
-        /// Reserved.
-        _resvd0           OFFSET(3)  NUMBITS(28) [],
         /// Legacy AHCI enable.
         ahci_en           OFFSET(31) NUMBITS(1) [],
     ],
@@ -74,8 +70,6 @@ register_bitfields! {
     pub HostCoalesc [
         // Enable coalescing of command completion interrupts.
         enable        OFFSET(0) NUMBITS(1) [],
-        // Reserved.
-        _resvd0       OFFSET(1) NUMBITS(2) [],
         // Interrupt to use for this feature.
         irq           OFFSET(3) NUMBITS(5) [],
         // Number of command completions before an interrupt.
@@ -162,8 +156,8 @@ register_bitfields! {
         set_dev_bits  OFFSET(3)  NUMBITS(1) [],
         /// Unknown FIS interrupt.
         unknown_fis   OFFSET(4)  NUMBITS(1) [],
-        /// Descriptor processed.
-        desc_proc     OFFSET(5)  NUMBITS(1) [],
+        /// A PRD with the I bit set has been processed.
+        prd_proc      OFFSET(5)  NUMBITS(1) [],
         /// Port connect status change.
         port_status   OFFSET(6)  NUMBITS(1) [],
         /// Device mechanical presence status.

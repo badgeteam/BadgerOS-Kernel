@@ -79,20 +79,14 @@ impl dyn PciCtlDevice {
             Err(x) => {
                 logkf!(
                     LogLevel::Warning,
-                    "{}: failed to register {}: {}",
+                    "{}: failed to create bus for {}: {}",
                     self,
                     addr,
                     x
                 );
             }
             Ok(ref bus) => {
-                logkf!(
-                    LogLevel::Info,
-                    "{}: registered {} as bus {}",
-                    self,
-                    addr,
-                    bus.id()
-                );
+                logkf!(LogLevel::Info, "Added {} as bus {}", &bus, bus.id());
                 logkf!(LogLevel::Info, "  -> class {}", bus.classcode);
             }
         }

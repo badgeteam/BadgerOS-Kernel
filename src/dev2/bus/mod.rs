@@ -25,6 +25,7 @@ use crate::{
 
 use super::registry;
 
+pub mod ata;
 pub mod pci;
 pub mod soc;
 

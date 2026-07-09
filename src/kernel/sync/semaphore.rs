@@ -17,6 +17,9 @@ pub struct Semaphore {
 }
 
 impl Semaphore {
+    /// How many posts can occur before it is considered suspiciously large and probably a bug.
+    pub const POST_LIMIT: u32 = 65536;
+
     pub const fn new() -> Self {
         Self {
             waitlist: Waitlist::new(),
@@ -24,9 +27,24 @@ impl Semaphore {
         }
     }
 
+    pub const fn with_count(initial_counter: u32) -> Self {
+        debug_assert!(
+            initial_counter < Self::POST_LIMIT,
+            "Suspiciously high initial Semaphore counter"
+        );
+        Self {
+            waitlist: Waitlist::new(),
+            counter: AtomicU32::new(initial_counter),
+        }
+    }
+
     /// Post once to the semaphore.
     pub fn post(&self) {
-        self.counter.fetch_add(1, Ordering::Release);
+        let tmp = self.counter.fetch_add(1, Ordering::Release);
+        debug_assert!(
+            tmp < Self::POST_LIMIT,
+            "Suspiciously high Semaphore counter"
+        );
         self.waitlist.notify();
     }
 

@@ -17,9 +17,11 @@ use crate::{
         Device, DeviceBase,
         bus::{
             Bus, BusResv,
+            ata::Command,
             pci::{PciBus, bar::BarType, classcode},
             soc::{MmioMapping, MmioStruct},
         },
+        class::atactl::AtaCtlDevice,
         driver::Driver,
     },
     device_get_trait_vtable,
@@ -28,6 +30,7 @@ use crate::{
         sched::{Thread, thread_sleep},
         sync::spinlock::RawSpinlock,
     },
+    util::MaybeMut,
 };
 
 mod fis;
@@ -87,16 +90,17 @@ impl SataAhciCtrl {
 
         // Switch to AHCI mode if it wasn't already in that mode.
         reg.ghc.ghc.modify(reg::HostCtrl::ahci_en.val(1));
+        let cmdlist_max = reg.ghc.cap.read(reg::HostCaps::n_cmd_slots);
 
         // Reset all ports.
         let ports_impl = reg.ghc.ports_impl.get();
         let mut port = [const { None }; 32];
         for i in 0..32 {
             if (ports_impl >> i) & 1 != 0 {
-                reg.port[i].irq_enable.set(0u32);
-                reg.port[i].irq_status.set(reg.port[i].irq_status.get());
+                // Just in case firmware forgot to properly stop this port.
+                reg.port[i].irq_enable.set(0);
 
-                match Port::new(i as u8, &reg.port[i]) {
+                match Port::new(i as u8, &reg.port[i], cmdlist_max as usize) {
                     Ok(it) => port[i] = Some(it),
                     Err(err) => logkf!(
                         LogLevel::Warning,
@@ -146,6 +150,8 @@ impl SataAhciCtrl {
             return Err(err);
         }
 
+        // If all succeeded, install and enable interrupts.
+
         Ok(this)
     }
 }
@@ -180,7 +186,27 @@ impl Device for SataAhciCtrl {
         true
     }
 
-    device_get_trait_vtable!();
+    device_get_trait_vtable!(AtaCtlDevice);
+}
+
+impl AtaCtlDevice for SataAhciCtrl {
+    fn ata_cmd(
+        &self,
+        port: u32,
+        cmd: Command,
+        ctrl: u8,
+        sec_count: u16,
+        feature: u16,
+        lba: u64,
+        data: Option<MaybeMut<'_, [u8]>>,
+    ) -> EResult<()> {
+        self.port
+            .get(port as usize)
+            .ok_or(Errno::ENODEV)?
+            .as_ref()
+            .ok_or(Errno::ENODEV)?
+            .ata_cmd(cmd, ctrl, sec_count, feature, lba, data)
+    }
 }
 
 pub struct SataDriver;

@@ -220,6 +220,6 @@ impl Bus for PciBus {
 
 impl Display for PciBus {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_fmt(format_args!("{}/{}", self.ctrl, self.addr))
+        f.write_fmt(format_args!("{} func {}", self.ctrl, self.addr))
     }
 }
