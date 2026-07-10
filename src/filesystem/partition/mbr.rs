@@ -1,10 +1,11 @@
-use alloc::{string::String, vec::Vec};
+use alloc::{boxed::Box, string::String, vec::Vec};
 use bytemuck::{AnyBitPattern, NoUninit, Zeroable, cast_slice_mut};
 use uuid::Uuid;
 
 use crate::{
     bindings::{device::class::block::BlockDevice, error::EResult},
     filesystem::partition::{Partition, PartitionDriver, VolumeInfo},
+    register_kmodule,
 };
 
 /// Cylinder, head, sector address.
@@ -39,7 +40,7 @@ unsafe impl Zeroable for MbrEntry {}
 unsafe impl NoUninit for MbrEntry {}
 unsafe impl AnyBitPattern for MbrEntry {}
 
-pub struct MbrDriver {}
+pub struct MbrDriver;
 
 impl MbrDriver {
     /// Detect but do not exclude GPT-formatted drives.
@@ -106,3 +107,11 @@ impl PartitionDriver for MbrDriver {
         res
     }
 }
+
+fn register_mbr() {
+    super::PARTITION_DRIVERS
+        .unintr_lock()
+        .push(Box::new(MbrDriver));
+}
+
+register_kmodule!("mbr", register_mbr);

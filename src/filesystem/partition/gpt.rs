@@ -1,6 +1,6 @@
 use core::mem::MaybeUninit;
 
-use alloc::{string::String, vec::Vec};
+use alloc::{boxed::Box, string::String, vec::Vec};
 use bytemuck::{AnyBitPattern, NoUninit, Zeroable, cast_slice_mut};
 use uuid::Uuid;
 
@@ -8,7 +8,7 @@ use crate::{
     LogLevel,
     bindings::{device::class::block::BlockDevice, error::EResult},
     filesystem::partition::{Partition, PartitionDriver, VolumeInfo, mbr::MbrDriver},
-    util,
+    register_kmodule, util,
 };
 use crc::{CRC_32_ISO_HDLC, Crc};
 
@@ -55,7 +55,7 @@ impl GptHeader {
     pub const GPT_SIGNATURE: [u8; 8] = *b"EFI PART";
 }
 
-pub struct GptDriver {}
+pub struct GptDriver;
 
 impl GptDriver {
     /// Initializer for GPT CRC32.
@@ -237,3 +237,11 @@ impl PartitionDriver for GptDriver {
         }))
     }
 }
+
+fn register_gpt() {
+    super::PARTITION_DRIVERS
+        .unintr_lock()
+        .push(Box::new(GptDriver));
+}
+
+register_kmodule!("gpt", register_gpt);

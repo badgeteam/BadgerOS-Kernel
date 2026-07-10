@@ -18,9 +18,11 @@ use crate::{
         },
         class::pcictl::{PciCtlDevice, cam_ecam_addr},
         driver::Driver,
+        registry,
     },
     device_get_trait_vtable,
     mem::pmm::PAddrr,
+    register_kmodule,
 };
 
 #[derive(Clone, Copy)]
@@ -264,3 +266,7 @@ impl Driver for PciGenericDriver {
         Ok(dev)
     }
 }
+
+register_kmodule!("pci-generic", || registry::register_driver(
+    &PciGenericDriver
+));

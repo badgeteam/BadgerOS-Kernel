@@ -1,11 +1,10 @@
-use core::ptr::slice_from_raw_parts;
+// SPDX-FileCopyrightText: 2025 Julian Scheffers <julian@scheffers.net>
+// SPDX-FileType: SOURCE
+// SPDX-License-Identifier: MIT
 
 use alloc::{string::String, vec::Vec};
 
-use crate::{
-    LogLevel,
-    bindings::raw::{limine_executable_cmdline_request, strlen},
-};
+use crate::{LogLevel, bindings::raw::limine_executable_cmdline_request};
 
 unsafe extern "C" {
     #[link_name = "bootp_cmdline_req"]

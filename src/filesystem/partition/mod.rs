@@ -9,7 +9,6 @@ use crate::{
         error::EResult,
         raw::{get_volume_info_t, partition_t, volume_info_t},
     },
-    filesystem::partition::{gpt::GptDriver, mbr::MbrDriver},
     kernel::sync::mutex::Mutex,
 };
 
@@ -113,12 +112,6 @@ pub fn get_volume_info(drive: BlockDevice) -> EResult<Option<VolumeInfo>> {
     }
     Ok(None)
 }
-
-register_kmodule!(partitioning, [1, 0, 0], || {
-    let mut guard = PARTITION_DRIVERS.unintr_lock();
-    guard.push(Box::new(GptDriver {}));
-    guard.push(Box::new(MbrDriver {}));
-});
 
 mod c_api {
     use crate::{

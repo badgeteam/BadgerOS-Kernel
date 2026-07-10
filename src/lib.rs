@@ -56,7 +56,6 @@ pub mod ktest;
 pub mod dev2;
 pub mod driver2;
 pub mod kernel;
-pub mod kparam;
 pub mod mem;
 pub mod process;
 pub mod util;

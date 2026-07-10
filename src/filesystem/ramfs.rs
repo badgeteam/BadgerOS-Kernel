@@ -30,6 +30,7 @@ use crate::{
         syscall::fs::DentBuffer,
         usercopy::{UserSlice, UserSliceMut},
     },
+    register_kmodule,
 };
 
 use super::{
@@ -600,4 +601,4 @@ fn register_ramfs() {
     );
 }
 
-register_kmodule!(ramfs, [1, 0, 0], register_ramfs);
+register_kmodule!("ramfs", register_ramfs);

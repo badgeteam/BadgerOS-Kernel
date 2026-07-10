@@ -2,4 +2,6 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
+pub mod kmodule;
+pub mod kparam;
 pub mod panic;

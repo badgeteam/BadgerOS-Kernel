@@ -12,7 +12,6 @@
 #include "device/dtb/dtparse.h"
 #include "filesystem.h"
 #include "interrupt.h"
-#include "kmodule.h"
 #include "limine.h"
 #include "log.h"
 #include "malloc.h"

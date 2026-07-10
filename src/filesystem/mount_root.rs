@@ -9,7 +9,8 @@ use crate::{
         device::{DeviceFilters, HasBaseDevice, class::block::BlockDevice, iter_drivers},
         raw::{dev_class_t_DEV_CLASS_BLOCK, driver_block_t, driver_t, mem_equals, strlen},
     },
-    kparam, util,
+    misc::kparam,
+    util,
 };
 
 use super::{

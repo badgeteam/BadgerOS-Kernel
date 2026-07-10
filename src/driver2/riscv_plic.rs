@@ -26,9 +26,11 @@ use crate::{
         },
         class::irqctl::{IrqCtlDevice, IrqCtlDeviceBase},
         driver::Driver,
+        registry,
     },
     device_get_trait_vtable,
     kernel::smp,
+    register_kmodule,
 };
 
 /// Supervisor external interrupt cause number (PLIC output to a hart).
@@ -225,3 +227,5 @@ impl Driver for RiscvPlicDriver {
         Ok(this)
     }
 }
+
+register_kmodule!("riscv-plic", || registry::register_driver(&RiscvPlicDriver));

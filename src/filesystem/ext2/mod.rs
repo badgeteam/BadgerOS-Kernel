@@ -28,6 +28,7 @@ use crate::{
         syscall::fs::DentBuffer,
         usercopy::{UserSlice, UserSliceMut},
     },
+    register_kmodule,
     util::MaybeMut,
 };
 use spec::*;
@@ -1831,4 +1832,4 @@ fn register_e2fs() {
         .insert("ext2".into(), Box::new(E2FsDriver {}));
 }
 
-register_kmodule!(ext2, [1, 0, 0], register_e2fs);
+register_kmodule!("ext2", register_e2fs);

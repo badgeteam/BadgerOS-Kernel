@@ -9,7 +9,7 @@ use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use crate::{
     bindings::{
         log::{LogLevel, logk_unlocked},
-        raw::{kernel_heap_init, kmodule_t},
+        raw::kernel_heap_init,
     },
     boot::protocol,
     cpu::{self, spinup::arch_cpu_spinup},
@@ -22,14 +22,10 @@ use crate::{
     },
     ktest::{KTestWhen, ktests_runlevel},
     mem::vmm,
+    misc::kmodule,
     process::Process,
     util::version,
 };
-
-unsafe extern "C" {
-    static __start_kmodules: *const kmodule_t;
-    static __stop_kmodules: *const kmodule_t;
-}
 
 /// Sets up basic things like memory management and the scheduler.
 /// Called by the entrypoint assembly code.
@@ -82,18 +78,7 @@ unsafe fn general_init() {
 
     let smp_ok;
     unsafe {
-        let mut cur = &raw const __start_kmodules;
-        while cur != &raw const __stop_kmodules {
-            logkf!(
-                LogLevel::Info,
-                "Init build-in module '{}'",
-                CStr::from_ptr((**cur).name).to_str().unwrap()
-            );
-            if let Some(init) = (**cur).init {
-                init();
-            }
-            cur = cur.add(1);
-        }
+        kmodule::init_builtins();
 
         dev2::init();
 

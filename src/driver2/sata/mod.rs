@@ -23,11 +23,13 @@ use crate::{
         },
         class::atactl::AtaCtlDevice,
         driver::Driver,
+        registry,
     },
     device_get_trait_vtable,
     driver2::sata::port::Port,
     kernel::{sched::thread_sleep, sync::spinlock::RawSpinlock},
     mem::dma::DmaTarget,
+    register_kmodule,
 };
 
 mod fis;
@@ -248,3 +250,5 @@ impl Driver for SataDriver {
         Ok(dev)
     }
 }
+
+register_kmodule!("sata-ahci", || registry::register_driver(&SataDriver));

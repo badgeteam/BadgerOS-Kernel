@@ -25,6 +25,7 @@ use crate::{
         },
         class::char::CharDevice,
         driver::Driver,
+        registry,
     },
     device_get_trait_vtable,
     kernel::sync::{spinlock::Spinlock, waitlist::Waitlist},
@@ -32,6 +33,7 @@ use crate::{
         uapi::termios,
         usercopy::{UserSlice, UserSliceMut},
     },
+    register_kmodule,
 };
 
 /// Enable for receive data available IRQ.
@@ -304,3 +306,5 @@ impl Driver for Ns16550Driver {
         Ok(device)
     }
 }
+
+register_kmodule!("ns16550", || registry::register_driver(&Ns16550Driver));

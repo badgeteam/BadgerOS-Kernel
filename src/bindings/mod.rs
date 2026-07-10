@@ -12,8 +12,6 @@ pub mod device;
 
 pub mod dlist;
 #[macro_use]
-pub mod kmodule;
-#[macro_use]
 pub mod log;
 #[macro_use]
 pub mod error;

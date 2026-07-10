@@ -23,6 +23,7 @@ use crate::{
         syscall::fs::DentBuffer,
         usercopy::{UserSlice, UserSliceMut},
     },
+    register_kmodule,
 };
 
 use super::{
@@ -1780,4 +1781,4 @@ fn register_fatfs() {
         .insert("msdos".into(), Box::new(FatFsDriver { allow_lfn: false }));
 }
 
-register_kmodule!(fatfs, [1, 0, 0], register_fatfs);
+register_kmodule!("fatfs", register_fatfs);
