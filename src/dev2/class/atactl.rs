@@ -6,7 +6,6 @@ use crate::{
     bindings::error::EResult,
     dev2::{Device, bus::ata::Command},
     mem::dma::DmaTarget,
-    util::MaybeMut,
 };
 
 /// Devices that expose one or more ATA buses.

@@ -85,6 +85,10 @@ impl Page {
     pub fn usage(&self) -> PageUsage {
         self.usage
     }
+    /// Change the page usage.
+    pub unsafe fn set_usage(&mut self, usage: PageUsage) {
+        self.usage = usage;
+    }
 }
 
 /// Physical memory freelist link.

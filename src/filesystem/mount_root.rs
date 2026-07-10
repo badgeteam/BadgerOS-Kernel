@@ -7,10 +7,7 @@ use crate::{
     LogLevel,
     bindings::{
         device::{DeviceFilters, HasBaseDevice, class::block::BlockDevice, iter_drivers},
-        raw::{
-            dev_class_t_DEV_CLASS_BLOCK, driver_block_t, driver_t, limine_kernel_file_request,
-            limine_uuid, mem_equals, strlen,
-        },
+        raw::{dev_class_t_DEV_CLASS_BLOCK, driver_block_t, driver_t, mem_equals, strlen},
     },
     kparam, util,
 };
@@ -21,15 +18,9 @@ use super::{
     partition::{Partition, get_volume_info},
 };
 
-unsafe extern "C" {
-    #[link_name = "bootp_kernel_file_req"]
-    static KERNEL_FILE: limine_kernel_file_request;
-}
-
-/// Helper function that converts Limine UUID to u128.
-const fn limine_uuid_conv(uuid: limine_uuid) -> Uuid {
-    Uuid::from_fields(uuid.a, uuid.b, uuid.c, &uuid.d)
-}
+pub static mut KFILE_GPT_DISK: Uuid = Uuid::nil();
+pub static mut KFILE_GPT_PART: Uuid = Uuid::nil();
+pub static mut KFILE_MBR_DISK: u32 = 0;
 
 /// Find partition by GUID.
 fn find_part_by_guid(guid: Uuid, is_type: bool) -> Option<(BlockDevice, Partition)> {
@@ -63,36 +54,34 @@ fn find_disk_by_guid(guid: Uuid) -> Option<BlockDevice> {
 
 /// Try to find the device that the kernel was loaded from.
 fn find_kernel_disk() -> Option<BlockDevice> {
-    let kernel_file = unsafe {
-        if KERNEL_FILE.response.is_null() {
-            return None;
+    unsafe {
+        let gpt_disk = KFILE_GPT_DISK;
+        let gpt_part = KFILE_GPT_PART;
+
+        // Try to find disk by disk GUID.
+        if !gpt_disk.is_nil()
+            && let Some(res) = find_disk_by_guid(gpt_disk)
+        {
+            return Some(res);
         }
-        &*(*KERNEL_FILE.response).kernel_file
-    };
 
-    // Try to find disk by disk GUID.
-    if limine_uuid_conv(kernel_file.gpt_disk_uuid).as_u128() != 0
-        && let Some(res) = find_disk_by_guid(limine_uuid_conv(kernel_file.gpt_disk_uuid))
-    {
-        return Some(res);
+        // Try to find disk by MBR ID.
+        if KFILE_MBR_DISK != 0
+            && let Some(res) = find_disk_by_guid(Uuid::from_u128(KFILE_MBR_DISK as u128))
+        {
+            return Some(res);
+        }
+
+        // Try to find disk by partition GUID.
+        if !gpt_part.is_nil()
+            && let Some(res) = find_part_by_guid(gpt_part, true)
+        {
+            return Some(res.0);
+        }
+
+        // Unable to find kernel disk.
+        None
     }
-
-    // Try to find disk by MBR ID.
-    if kernel_file.mbr_disk_id != 0
-        && let Some(res) = find_disk_by_guid(Uuid::from_u128(kernel_file.mbr_disk_id as u128))
-    {
-        return Some(res);
-    }
-
-    // Try to find disk by partition GUID.
-    if limine_uuid_conv(kernel_file.gpt_part_uuid).as_u128() != 0
-        && let Some(res) = find_part_by_guid(limine_uuid_conv(kernel_file.gpt_part_uuid), true)
-    {
-        return Some(res.0);
-    }
-
-    // Unable to find kernel disk.
-    None
 }
 
 /// Try to find a disk by node name; <type><index>.

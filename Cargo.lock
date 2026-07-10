@@ -178,6 +178,7 @@ dependencies = [
  "compile-time",
  "crc",
  "dtb",
+ "limine",
  "num",
  "static_assertions",
  "tock-registers",
@@ -198,6 +199,13 @@ checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
 dependencies = [
  "cfg-if",
  "windows-link",
+]
+
+[[package]]
+name = "limine"
+version = "0.6.5"
+dependencies = [
+ "uuid",
 ]
 
 [[package]]

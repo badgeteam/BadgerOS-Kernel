@@ -151,3 +151,20 @@ impl Ord for dyn Device {
         self.id().cmp(&other.id())
     }
 }
+
+/// Initialize the device subsystem.
+pub unsafe fn init() {
+    registry::init();
+
+    #[cfg(feature = "dtb")]
+    {
+        use crate::boot;
+
+        let fdt_ptr = boot::protocol::get_fdt_ptr();
+        if !fdt_ptr.is_null() {
+            unsafe { dtb::init(fdt_ptr as _) };
+        }
+    }
+
+    probe::start_thread();
+}

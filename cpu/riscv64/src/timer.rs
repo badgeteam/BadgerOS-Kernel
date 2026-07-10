@@ -2,8 +2,6 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-#[cfg(feature = "dtb")]
-use crate::dev2;
 use crate::{
     bindings::{device::dtb::DtbNode, log::LogLevel},
     config,

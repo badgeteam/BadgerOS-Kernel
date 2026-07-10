@@ -7,6 +7,7 @@ use core::arch::asm;
 use crate::bindings::log::write_unlocked;
 
 /// Get the frame pointer register.
+#[inline(always)]
 pub fn get_frame_ptr() -> *const () {
     let tmp;
     unsafe { asm!("mv {}, s0", out(reg)tmp) };

@@ -11,7 +11,6 @@ use crate::{
     bindings::error::EResult,
     dev2::{Device, class::atactl::AtaCtlDevice},
     mem::dma::DmaTarget,
-    util::MaybeMut,
 };
 
 use super::{Bus, BusBase};

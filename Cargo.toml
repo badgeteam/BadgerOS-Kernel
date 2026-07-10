@@ -25,6 +25,7 @@ static_assertions = "1.1.0"
 tock-registers = "0.9.0"
 uuid = { version = "1.18.1", default-features = false, features = ["serde"] }
 dtb = { path = "lib/dtb", optional = true }
+limine = { path = "lib/limine", features = ["uuid"] }
 
 [build-dependencies]
 bindgen = "0.72.1"
@@ -45,4 +46,4 @@ panic = "abort"
 opt-level = 2
 
 [workspace]
-members = ["lib/dtb"]
+members = ["lib/dtb", "lib/limine"]

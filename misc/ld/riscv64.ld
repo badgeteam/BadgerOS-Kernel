@@ -5,6 +5,7 @@ ENTRY(_start)
 
 PHDRS
 {
+    requests PT_LOAD    FLAGS(0x05); /* Overlaps text, so same perms */
     text     PT_LOAD    FLAGS(0x05); /* Execute + Read */
     rodata   PT_LOAD    FLAGS(0x04); /* Read only */
     data     PT_LOAD    FLAGS(0x06); /* Write + Read */
@@ -17,6 +18,11 @@ SECTIONS
     __start_badgeros_kernel = .;
 
     __start_text = .;
+    .requests : {
+        KEEP(*(.requests_start))
+        KEEP(*(.requests))
+        KEEP(*(.requests_end))
+    } :requests
     . = ALIGN(256);
     .interrupt_vector_table : {
         *(.interrupt_vector_table)
@@ -58,10 +64,6 @@ SECTIONS
     .got : { *(.got) } :data
     .got.plt : { *(.got.plt) } :data
     .data : {
-        /* Limine requests. */
-        KEEP(*(.requests_start))
-        KEEP(*(.requests))
-        KEEP(*(.requests_end))
         *(.data .data.*)
         *(.sdata .sdata.*)
     } :data

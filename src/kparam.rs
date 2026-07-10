@@ -36,29 +36,3 @@ pub fn get_kparam(key: &str) -> Option<&'static str> {
         Err(_) => None,
     }
 }
-
-#[unsafe(no_mangle)]
-/// Get all kernel parameters from the Limine request.
-pub unsafe extern "C" fn bootp_limine_load_kparams() {
-    // Try to get the kernel command-line as UTF-8.
-    let cmdline = unsafe {
-        if CMDLINE.response.is_null() {
-            return;
-        } else {
-            &*slice_from_raw_parts(
-                (*CMDLINE.response).cmdline as *mut u8,
-                strlen((*CMDLINE.response).cmdline),
-            )
-        }
-    };
-    let cmdline = String::from_utf8_lossy(cmdline);
-
-    // Split the command line along whitespace.
-    for substr in cmdline.split_ascii_whitespace() {
-        if let Some((key, val)) = substr.split_once('=') {
-            unsafe { add_kparam(key.into(), val.into()) };
-        } else {
-            unsafe { add_kparam(substr.into(), "".into()) };
-        }
-    }
-}

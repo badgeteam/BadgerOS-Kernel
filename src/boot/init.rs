@@ -2,33 +2,27 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::{arch::asm, ffi::CStr};
+use core::ffi::CStr;
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
 use crate::{
     bindings::{
         log::{LogLevel, logk_unlocked},
-        raw::{
-            bootp_early_init, bootp_full_init, bootp_postheap_init, bootp_reclaim_mem,
-            device_create_null_zero, kernel_heap_init, kmodule_t, limine_dtb_request,
-        },
+        raw::{kernel_heap_init, kmodule_t},
     },
+    boot::protocol,
     cpu::{self, spinup::arch_cpu_spinup},
-    dev2::{
-        self,
-        bus::ata::{self, AtaBus},
-        class::char::CharDevice,
-    },
+    dev2,
     filesystem::mount_root::mount_root_fs,
     kernel::{
         cpulocal::CpuLocal,
-        sched::{Scheduler, Thread, thread_sleep, thread_yield},
+        sched::{Scheduler, Thread},
         sync::mutex::Mutex,
     },
     ktest::{KTestWhen, ktests_runlevel},
-    mem::{dma::DmaFromRef, vmm},
-    process::{Process, usercopy::UserSlice},
+    mem::vmm,
+    process::Process,
     util::version,
 };
 
@@ -46,10 +40,12 @@ unsafe extern "C" fn basic_runtime_init() -> ! {
         let mut tmp_cpulocal = CpuLocal::default();
         CpuLocal::set(&raw mut tmp_cpulocal);
         arch_cpu_spinup();
+        ktests_runlevel(KTestWhen::Early);
 
         // Early hand-over from bootloader to kernel.
-        bootp_early_init();
-        ktests_runlevel(KTestWhen::Early);
+        protocol::early_init();
+        ktests_runlevel(KTestWhen::PMM);
+        // bootp_early_init();
 
         // Announce the kernel is alive.
         logk_unlocked(LogLevel::Info, "==============================");
@@ -61,7 +57,7 @@ unsafe extern "C" fn basic_runtime_init() -> ! {
         kernel_heap_init();
         ktests_runlevel(KTestWhen::Heap);
         vmm::init();
-        bootp_postheap_init();
+        protocol::late_init();
         ktests_runlevel(KTestWhen::VMM);
 
         // Move the CPU-local data onto the heap.
@@ -99,70 +95,8 @@ unsafe fn general_init() {
             cur = cur.add(1);
         }
 
-        dev2::registry::init();
+        dev2::init();
 
-        unsafe extern "C" {
-            static bootp_dtb_req: limine_dtb_request;
-        }
-        dev2::dtb::init((*bootp_dtb_req.response).dtb_ptr as _);
-
-        dev2::probe::start_thread();
-
-        logkf!(LogLevel::Info, "Finished");
-
-        loop {
-            let _ = thread_sleep(1000000);
-
-            logkf!(LogLevel::Debug, "Test ATA buses");
-            for bus in dev2::registry::buses_by_type::<AtaBus>().unwrap() {
-                logkf!(LogLevel::Debug, "Test ATA bus {}", &bus);
-
-                let mut id = [0u16; 256];
-                bus.ata_cmd(
-                    ata::Command::IdentDev,
-                    1 << 6,
-                    0,
-                    0,
-                    0,
-                    Some(DmaFromRef::from_mut(&mut id)),
-                )
-                .expect("ATA command failed");
-
-                let supports_48bit = id[83] & (1 << 10) != 0;
-                let block_size_exp;
-                if id[106] & (1 << 14) == 0 {
-                    block_size_exp = 9; // 512 bytes
-                } else {
-                    let block_size = id[117] as u64 + (id[118] as u64) << 16;
-                    if block_size == 0 {
-                        block_size_exp = 9; // 512 bytes
-                    } else {
-                        block_size_exp = block_size.trailing_zeros() as u8;
-                    }
-                }
-                let block_count = (id[100] as u64)
-                    + ((id[101] as u64) << 16)
-                    + ((id[102] as u64) << 32)
-                    + ((id[103] as u64) << 48);
-
-                logkf!(
-                    LogLevel::Debug,
-                    "{}: 48-bit: {}; sec. size: {}; sec. count: {}",
-                    &bus,
-                    if supports_48bit { 'y' } else { 'n' },
-                    1u64 << block_size_exp,
-                    block_count
-                );
-            }
-        }
-
-        // After this is old device and init.
-        return;
-
-        device_create_null_zero();
-
-        // Finish bootloader hand-over.
-        bootp_full_init();
         // Scheduler is already running on BSP so we start the tick timer retroactively for it.
         cpu::timer::start_tick_timer();
 
@@ -187,7 +121,7 @@ unsafe fn general_init() {
     if smp_ok {
         // We have now definitely stopped using all memory in bootloader reclaimable regions.
         // Exit the bootloader's services and reclaim all reclaimable memory.
-        unsafe { bootp_reclaim_mem() };
+        unsafe { protocol::reclaim_mem() };
     }
     ktests_runlevel(KTestWhen::RootFs);
 

@@ -4,6 +4,6 @@
 [submodule "kernel/lib/nanoprintf"]
 	path = lib/nanoprintf
 	url = https://github.com/charlesnicholson/nanoprintf
-[submodule "kernel/lib/limine"]
+[submodule "lib/limine"]
 	path = lib/limine
-	url = https://codeberg.org/Limine/Limine.git
+	url = https://robotman2412@github.com/robotman2412/limine-boot-rust
