@@ -25,21 +25,20 @@ use super::{
 };
 use crate::{
     LogLevel,
-    bindings::{
-        device::BaseDevice,
-        error::{EResult, Errno},
-    },
+    bindings::error::{EResult, Errno},
+    dev2::Device,
     filesystem::fifo::FifoShared,
     kernel::sync::{
         mutex::{Mutex, MutexGuard, SharedMutexGuard},
         waitlist::Waitlist,
     },
     mem::{
+        dma::DmaTarget,
+        pagecache::{PageCache, Pager},
         pmm::PAddrr,
         vmm::{
             map::{MapEntry, VmSpaceInner},
             memobject::{MappablePage, MemObject},
-            pagecache::{PageCache, Pager},
         },
     },
     process::{
@@ -217,7 +216,7 @@ impl File for VfsFile {
         Some(self.vnode.clone())
     }
 
-    fn get_device(&self) -> Option<BaseDevice> {
+    fn get_device(&self) -> Option<Arc<dyn Device>> {
         self.vnode
             .mtx
             .unintr_lock_shared()
@@ -555,7 +554,7 @@ impl Drop for VNode {
 /// Abstract vnode operations.
 pub trait VNodeOps: Any {
     /// Get the associated character device, if any.
-    fn get_device(&self, _vnode_self: &VNode) -> Option<BaseDevice> {
+    fn get_device(&self, _vnode_self: &VNode) -> Option<Arc<dyn Device>> {
         None
     }
     /// Get the partition offset and size that this file represents, if any.
@@ -570,6 +569,16 @@ pub trait VNodeOps: Any {
         offset: u64,
         buffer: &mut DentBuffer<'_>,
     ) -> EResult<u64>;
+    /// Use DMA to write data to the file.
+    /// Fails if the access is not aligned.
+    fn write_dma(&self, _vnode_self: &VNode, _offset: u64, _data: &dyn DmaTarget) -> EResult<()> {
+        Err(Errno::ENOSYS)
+    }
+    /// Use DMA to read data from the file.
+    /// Fails if the access is not aligned.
+    fn read_dma(&self, _vnode_self: &VNode, _offset: u64, _data: &dyn DmaTarget) -> EResult<()> {
+        Err(Errno::ENOSYS)
+    }
     /// Write data to the file.
     fn write(&self, vnode_self: &VNode, offset: u64, wdata: UserSlice<'_, u8>) -> EResult<()>;
     /// Read data from the file.
@@ -620,7 +629,7 @@ pub trait VNodeOps: Any {
     fn close(&mut self, _vnode_self: &VNode) {}
 }
 
-impl dyn VNodeOps + '_ {
+impl dyn VNodeOps {
     /// Write data to the file.
     pub fn writek(&self, vnode_self: &VNode, offset: u64, wdata: &[u8]) -> EResult<()> {
         self.write(vnode_self, offset, UserSlice::new_kernel(wdata))
@@ -795,6 +804,10 @@ pub trait VfsOps: Sync + Any {
     fn uses_inodes(&self) -> bool;
     /// Whether this filesystem must be mounted as read-only.
     fn read_only(&self) -> bool {
+        false
+    }
+    /// Whether this filesystem uses DMA access for regular file I/O.
+    fn dma_file_io(&self) -> bool {
         false
     }
     /// Log-base 2 number of bytes a block is for regular file I/O.

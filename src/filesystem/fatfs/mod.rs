@@ -12,10 +12,8 @@ use crate::{
         time::Timespec,
         utf8::{StaticString, StringLike},
     },
-    bindings::{
-        device::HasBaseDevice,
-        error::{EResult, Errno},
-    },
+    bindings::error::{EResult, Errno},
+    dev2::Device,
     filesystem::{VNodeMtxInner, fatfs::spec::attr2, vfs::vnflags},
     kernel::sync::mutex::Mutex,
     mem::vmm::zeroes,
@@ -947,7 +945,7 @@ impl VNodeOps for FatVNode {
             dev: fatfs
                 .media
                 .device()
-                .map(|dev| ((Into::<u32>::into(dev.id()) as u64) << 32) | dev.class() as u64)
+                .map(|dev| (Into::<u32>::into((&*dev as &dyn Device).id()) as u64) << 32)
                 .unwrap_or(0),
             ino: 0,
             mode: 0777,

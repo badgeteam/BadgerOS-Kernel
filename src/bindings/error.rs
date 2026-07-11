@@ -149,6 +149,7 @@ pub enum Errno {
     EHWPOISON = raw::EHWPOISON,
 
     EASSERT = raw::EASSERT,
+    EALIGN = raw::EALIGN,
 }
 
 impl Errno {
@@ -301,21 +302,7 @@ impl Display for Errno {
     }
 }
 
-impl Error for Errno {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        None
-    }
-
-    fn description(&self) -> &str {
-        "description() is deprecated; use Display"
-    }
-
-    fn cause(&self) -> Option<&dyn Error> {
-        None
-    }
-
-    fn provide<'a>(&'a self, _: &mut core::error::Request<'a>) {}
-}
+impl Error for Errno {}
 
 impl From<AllocError> for Errno {
     fn from(_: AllocError) -> Self {

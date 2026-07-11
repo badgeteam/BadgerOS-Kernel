@@ -6,7 +6,8 @@ use uuid::Uuid;
 
 use crate::{
     LogLevel,
-    bindings::{device::class::block::BlockDevice, error::EResult},
+    bindings::error::EResult,
+    dev2::class::block::BlockDevice,
     filesystem::partition::{Partition, PartitionDriver, VolumeInfo, mbr::MbrDriver},
     register_kmodule, util,
 };
@@ -62,7 +63,11 @@ impl GptDriver {
     pub const GPT_CRC32: Crc<u32> = Crc::<u32>::new(&CRC_32_ISO_HDLC);
 
     /// Helper function that calculates the GPT header CRC32.
-    pub fn gpt_header_crc32(drive: BlockDevice, header_lba: u64, header_len: u32) -> EResult<u32> {
+    pub fn gpt_header_crc32(
+        drive: &dyn BlockDevice,
+        header_lba: u64,
+        header_len: u32,
+    ) -> EResult<u32> {
         #[allow(invalid_value)]
         let mut buf: [u8; 512] = unsafe { MaybeUninit::uninit().assume_init() };
         drive.readk_bytes(
@@ -80,7 +85,7 @@ impl GptDriver {
     }
 
     /// Helper function that tries to get a GPT header.
-    pub fn get_gpt_header(drive: BlockDevice, header_lba: u64) -> EResult<Option<GptHeader>> {
+    pub fn get_gpt_header(drive: &dyn BlockDevice, header_lba: u64) -> EResult<Option<GptHeader>> {
         let mut raw_header = [GptHeader::default()];
         drive.readk_bytes(
             header_lba << drive.block_size_exp(),
@@ -104,7 +109,7 @@ impl GptDriver {
             return Ok(None);
         }
 
-        let crc = Self::gpt_header_crc32(drive.clone(), header_lba, raw_header.size)?;
+        let crc = Self::gpt_header_crc32(drive, header_lba, raw_header.size)?;
         if raw_header.crc32 != crc {
             logkf!(
                 LogLevel::Error,
@@ -142,7 +147,7 @@ impl GptDriver {
 
     /// Read a single GPT partition entry.
     pub fn get_partition(
-        drive: BlockDevice,
+        drive: &dyn BlockDevice,
         part_ent_offset: u64,
         part_ent_len: u32,
     ) -> EResult<Option<Partition>> {
@@ -185,13 +190,13 @@ impl GptDriver {
 }
 
 impl PartitionDriver for GptDriver {
-    fn detect(&self, drive: BlockDevice) -> EResult<Option<VolumeInfo>> {
+    fn detect(&self, drive: &dyn BlockDevice) -> EResult<Option<VolumeInfo>> {
         // Read the GPT headers.
-        let first_gpt = Self::get_gpt_header(drive.clone(), 1)?;
+        let first_gpt = Self::get_gpt_header(drive, 1)?;
         let second_gpt = if let Some(first_gpt) = first_gpt {
-            Self::get_gpt_header(drive.clone(), first_gpt.alt_lba)?
+            Self::get_gpt_header(drive, first_gpt.alt_lba)?
         } else {
-            Self::get_gpt_header(drive.clone(), drive.block_count() - 1)?
+            Self::get_gpt_header(drive, drive.block_count() - 1)?
         };
 
         // Decide which GPT header to use.
@@ -203,7 +208,7 @@ impl PartitionDriver for GptDriver {
         };
 
         // Check whather the protective MBR is present.
-        if let Some(mbr) = MbrDriver::detect_nopgt(drive.clone())? {
+        if let Some(mbr) = MbrDriver::detect_nopgt(drive)? {
             if !MbrDriver::is_protective_mbr(&mbr) {
                 logkf!(
                     LogLevel::Error,
@@ -224,7 +229,7 @@ impl PartitionDriver for GptDriver {
             let part_ent_offset = (active_gpt.parts_lba << drive.block_size_exp())
                 + i as u64 * active_gpt.part_ent_size as u64;
             if let Some(part) =
-                Self::get_partition(drive.clone(), part_ent_offset, active_gpt.part_ent_size)?
+                Self::get_partition(drive, part_ent_offset, active_gpt.part_ent_size)?
             {
                 parts.push(part);
             }

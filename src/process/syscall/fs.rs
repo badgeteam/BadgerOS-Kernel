@@ -5,7 +5,6 @@ use bytemuck::bytes_of;
 
 use crate::{
     bindings::{
-        device::HasBaseDevice,
         error::{EResult, Errno},
         raw::{seek_mode_t_SEEK_CUR, seek_mode_t_SEEK_END, seek_mode_t_SEEK_SET},
     },
@@ -322,28 +321,30 @@ pub(super) fn isatty(fd: c_int) -> EResult<()> {
 }
 
 pub(super) fn tcgetattr(fd: c_int, mut attr: UserPtrMut<termios>) -> EResult<()> {
-    let proc = process::current().unwrap();
-    let files = proc.files.lock_shared()?;
-    let fd = files.get_file(fd)?;
-    let mut buf = Default::default();
-    fd.get_device()
-        .ok_or(Errno::ENOTTY)?
-        .as_tty()
-        .ok_or(Errno::ENOTTY)?
-        .getattr(&mut buf)?;
-    attr.write(buf)
+    todo!()
+    // let proc = process::current().unwrap();
+    // let files = proc.files.lock_shared()?;
+    // let fd = files.get_file(fd)?;
+    // let mut buf = Default::default();
+    // fd.get_device()
+    //     .ok_or(Errno::ENOTTY)?
+    //     .as_tty()
+    //     .ok_or(Errno::ENOTTY)?
+    //     .getattr(&mut buf)?;
+    // attr.write(buf)
 }
 
 pub(super) fn tcsetattr(fd: c_int, attr: UserPtr<termios>) -> EResult<()> {
-    let proc = process::current().unwrap();
-    let files = proc.files.lock_shared()?;
-    let fd = files.get_file(fd)?;
-    let buf = attr.read()?;
-    fd.get_device()
-        .ok_or(Errno::ENOTTY)?
-        .as_tty()
-        .ok_or(Errno::ENOTTY)?
-        .setattr(&buf)
+    todo!()
+    // let proc = process::current().unwrap();
+    // let files = proc.files.lock_shared()?;
+    // let fd = files.get_file(fd)?;
+    // let buf = attr.read()?;
+    // fd.get_device()
+    //     .ok_or(Errno::ENOTTY)?
+    //     .as_tty()
+    //     .ok_or(Errno::ENOTTY)?
+    //     .setattr(&buf)
 }
 
 pub(super) fn getcwd(mut buf: UserSliceMut<u8>) -> EResult<()> {

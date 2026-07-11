@@ -1,7 +1,6 @@
-use crate::bindings::{
-    device::{HasBaseDevice, class::char::CharDevice},
-    error::EResult,
-    raw::dev_class_t_DEV_CLASS_TTY,
+use crate::{
+    bindings::error::EResult,
+    dev2::{Device, class::char::CharDevice},
 };
 
 use super::*;
@@ -9,7 +8,7 @@ use super::*;
 /// A character device bound to a VNode.
 pub struct CharDevFile {
     /// The character device associated with this file.
-    char_dev: CharDevice,
+    char_dev: Arc<dyn CharDevice>,
     /// The VNode at which this device is bound.
     vnode: Option<Arc<VNode>>,
     /// Mode flags.
@@ -27,7 +26,7 @@ impl CharDevFile {
                 .ops
                 .get_device(&vnode)
                 .unwrap()
-                .as_char()
+                .try_as_arc::<dyn CharDevice>()
                 .unwrap()
                 .clone(),
             vnode: Some(vnode),
@@ -36,7 +35,7 @@ impl CharDevFile {
     }
 
     /// Create a new character device file from a device handler.
-    pub fn new_raw(char_dev: CharDevice, flags: u32) -> Self {
+    pub fn new_raw(char_dev: Arc<dyn CharDevice>, flags: u32) -> Self {
         Self {
             char_dev,
             vnode: None,
@@ -47,15 +46,13 @@ impl CharDevFile {
 
 impl File for CharDevFile {
     fn poll(&self) -> u32 {
-        self.char_dev.poll()
+        todo!()
+        // self.char_dev.poll()
     }
 
-    fn poll_waitlists<'a>(
-        &'a self,
-        interest: u32,
-        collect: &mut Vec<&'a Waitlist>,
-    ) -> EResult<()> {
-        self.char_dev.poll_waitlists(interest, collect)
+    fn poll_waitlists<'a>(&'a self, interest: u32, collect: &mut Vec<&'a Waitlist>) -> EResult<()> {
+        todo!()
+        // self.char_dev.poll_waitlists(interest, collect)
     }
 
     fn get_flags(&self) -> u32 {
@@ -68,11 +65,12 @@ impl File for CharDevFile {
     }
 
     fn isatty(&self) -> EResult<()> {
-        if self.char_dev.class() == dev_class_t_DEV_CLASS_TTY {
-            Ok(())
-        } else {
-            Err(Errno::ENOTTY)
-        }
+        todo!()
+        // if self.char_dev.class() == dev_class_t_DEV_CLASS_TTY {
+        //     Ok(())
+        // } else {
+        //     Err(Errno::ENOTTY)
+        // }
     }
 
     fn get_dirents(&self, _buffer: &mut DentBuffer<'_>) -> EResult<()> {
@@ -100,7 +98,8 @@ impl File for CharDevFile {
         if flags & oflags::WRITE_ONLY == 0 {
             return Err(Errno::EBADF);
         }
-        self.char_dev.write(wdata, flags & oflags::NONBLOCK != 0)
+        self.char_dev
+            .write_raw(wdata, flags & oflags::NONBLOCK != 0)
     }
 
     fn read(&self, rdata: UserSliceMut<'_, u8>) -> EResult<usize> {
@@ -108,7 +107,7 @@ impl File for CharDevFile {
         if flags & oflags::READ_ONLY == 0 {
             return Err(Errno::EBADF);
         }
-        self.char_dev.read(rdata, flags & oflags::NONBLOCK != 0)
+        self.char_dev.read_raw(rdata, flags & oflags::NONBLOCK != 0)
     }
 
     fn resize(&self, _size: u64) -> EResult<()> {
@@ -123,15 +122,15 @@ impl File for CharDevFile {
         self.vnode.clone()
     }
 
-    fn get_device(&self) -> Option<BaseDevice> {
-        Some(self.char_dev.as_base().clone())
+    fn get_device(&self) -> Option<Arc<dyn Device>> {
+        Some(self.char_dev.clone())
     }
 }
 
 /// A block device bound to a VNode.
 pub(super) struct BlockDevFile {
     /// The block device associated with this file.
-    block_dev: BlockDevice,
+    block_dev: Arc<dyn BlockDevice>,
     /// The VNode at which this device is bound.
     vnode: Arc<VNode>,
     /// Mode flags.
@@ -149,7 +148,7 @@ impl BlockDevFile {
                 .ops
                 .get_device(&vnode)
                 .unwrap()
-                .as_block()
+                .try_as_arc::<dyn BlockDevice>()
                 .unwrap()
                 .clone(),
             vnode,
@@ -256,7 +255,7 @@ impl File for BlockDevFile {
         Some(self.vnode.clone())
     }
 
-    fn get_device(&self) -> Option<BaseDevice> {
-        Some(self.block_dev.as_base().clone())
+    fn get_device(&self) -> Option<Arc<dyn Device>> {
+        Some(self.block_dev.clone())
     }
 }

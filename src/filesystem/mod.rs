@@ -25,16 +25,12 @@ use vfs::{
 use crate::{
     LogLevel,
     badgelib::time::Timespec,
-    bindings::{
-        device::{
-            BaseDevice, HasBaseDevice,
-            class::{block::BlockDevice, char::CharDevice},
-        },
-        error::{EResult, Errno},
-        raw::{errno_t, file_t},
+    bindings::error::{EResult, Errno},
+    dev2::{
+        Device,
+        class::{block::BlockDevice, char::CharDevice},
     },
     filesystem::{
-        c_api::ref_as_file,
         fifo::{Fifo, FifoShared},
         vfs::{VNodeMtxInner, mflags, vnflags},
     },
@@ -42,7 +38,7 @@ use crate::{
         mutex::{Mutex, SharedMutexGuard},
         waitlist::Waitlist,
     },
-    mem::vmm::{memobject::MemObject, pagecache::PageCache},
+    mem::{pagecache::PageCache, vmm::memobject::MemObject},
     process::{
         syscall::fs::DentBuffer,
         uapi::stat::stat,
@@ -50,7 +46,6 @@ use crate::{
     },
 };
 
-pub mod c_api;
 pub mod device;
 pub mod ext2;
 pub mod fatfs;
@@ -341,7 +336,7 @@ pub trait File: Sync {
         None
     }
     /// Get the device that this file represents, if any.
-    fn get_device(&self) -> Option<BaseDevice> {
+    fn get_device(&self) -> Option<Arc<dyn Device>> {
         None
     }
     /// Get the partition offset and size that this file represents, if any.
@@ -414,11 +409,11 @@ pub enum MakeFileSpec<'a> {
     /// Named pipe.
     Fifo,
     /// Character device.
-    CharDev(CharDevice),
+    CharDev(Arc<dyn CharDevice>),
     /// Directory.
     Directory,
     /// Block device.
-    BlockDev((BlockDevice, Option<Range<u64>>)),
+    BlockDev((Arc<dyn BlockDevice>, Option<Range<u64>>)),
     /// Regular file.
     Regular,
     /// Symbolic link.
@@ -499,7 +494,7 @@ pub const NAME_MAX: usize = 255;
 #[derive(Clone)]
 struct MediaKey {
     /// Device that the media references.
-    device: BlockDevice,
+    device: Arc<dyn BlockDevice>,
     /// Partition offset.
     offset: Option<Range<u64>>,
 }
@@ -518,7 +513,8 @@ impl MediaKey {
 
 impl PartialEq for MediaKey {
     fn eq(&self, other: &Self) -> bool {
-        self.device.id() == other.device.id() && self.offset == other.offset
+        (&*self.device as &dyn Device).id() == (&*other.device as &dyn Device).id()
+            && self.offset == other.offset
     }
 }
 impl Eq for MediaKey {}
@@ -529,7 +525,10 @@ impl PartialOrd for MediaKey {
 }
 impl Ord for MediaKey {
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-        match self.device.id().cmp(&other.device.id()) {
+        match (&*self.device as &dyn Device)
+            .id()
+            .cmp(&(&*other.device as &dyn Device).id())
+        {
             core::cmp::Ordering::Equal => {}
             ord => return ord,
         }
@@ -1610,16 +1609,7 @@ pub fn mount(
     drop(mounts);
     drop(drivers);
 
-    // Notify device subsystem.
-    unsafe extern "C" {
-        fn device_devtmpfs_mounted(devtmpfs_root: file_t) -> errno_t;
-    }
-    if let EResult::Err(x) = try {
-        let vfs_root_dir = open(orig_at, path, oflags::DIR_ONLY | oflags::READ_ONLY)?;
-        Errno::check(unsafe { device_devtmpfs_mounted(ref_as_file(&*vfs_root_dir)) })?;
-    } {
-        logkf!(LogLevel::Warning, "Failed to populate devtmpfs: {}", x);
-    }
+    // TODO: Notify device subsystem.
 
     Ok(())
 }
@@ -1638,7 +1628,7 @@ pub fn umount(at: Option<&dyn File>, path: &[u8], flags: MFlags) -> EResult<()> 
     if vfs.is_none() {
         let ops = &target.mtx.lock_shared()?.ops;
         vfs = try {
-            let device = ops.get_device(&target)?.as_block()?;
+            let device = ops.get_device(&target)?.try_as_arc()?;
             let offset = ops.get_part_offset(&target);
             let media_key = MediaKey { device, offset };
             mount_table.fs_by_media.get(&media_key).cloned()?

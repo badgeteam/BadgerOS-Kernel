@@ -1,27 +1,25 @@
 use core::{cell::UnsafeCell, fmt::Debug};
 
-use alloc::boxed::Box;
+use alloc::{boxed::Box, sync::Arc};
 use num::traits::{FromBytes, ToBytes};
 
 use crate::{
-    bindings::{
-        device::{HasBaseDevice, class::block::BlockDevice},
-        error::{EResult, Errno},
-    },
-    mem::vmm::zeroes,
+    bindings::error::{EResult, Errno},
+    dev2::class::block::BlockDevice,
+    mem::dma::{self, DmaTarget},
     process::usercopy::{UserSlice, UserSliceMut},
 };
 
 /// Specifies some type of media a filesystem can be mounted on.
 pub enum MediaType {
-    Block(BlockDevice),
+    Block(Arc<dyn BlockDevice>),
     Ram(UnsafeCell<Box<[u8]>>),
 }
 
 impl Debug for MediaType {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Block(arg0) => f.debug_tuple("Block").field(&arg0.id()).finish(),
+            Self::Block(arg0) => arg0.fmt(f),
             Self::Ram(arg0) => f
                 .debug_tuple("Ram")
                 .field(&unsafe { arg0.as_ref_unchecked() }.len())
@@ -52,20 +50,43 @@ impl Media {
         }
         match &self.storage {
             MediaType::Block(block_device) => {
-                let zeroes = zeroes();
-                let end = offset + len;
-                let mut offset = offset;
-                while offset < end {
-                    let max = (end - offset).min(zeroes.len() as u64) as usize;
-                    block_device.writek_bytes(offset, &zeroes[..max])?;
-                    offset += max as u64;
-                }
+                block_device.write_zeroes(offset, len)?;
             }
             MediaType::Ram(ram) => {
                 let buffer = unsafe { ram.as_mut_unchecked() };
                 buffer[offset as usize..offset as usize + len as usize].fill(0);
             }
         }
+        Ok(())
+    }
+
+    /// Use DMA to write data, bypassing the caches.
+    /// Fails if the access is not aligned to disk blocks.
+    pub fn write_uncached(&self, offset: u64, data: &dyn DmaTarget) -> EResult<()> {
+        let offset = offset.checked_add(self.offset).ok_or(Errno::EIO)?;
+        let end = offset
+            .checked_add(data.dma_size() as u64)
+            .ok_or(Errno::EIO)?;
+        if end > self.size {
+            return Err(Errno::EIO);
+        }
+
+        match &self.storage {
+            MediaType::Block(block_device) => {
+                let block_size = 1 << block_device.block_size_exp();
+                if offset % block_size != 0 || end % block_size != 0 {
+                    return Err(Errno::EALIGN);
+                }
+                let block = offset / block_size;
+
+                block_device.write_blocks_uncached(block, data)?;
+            }
+            MediaType::Ram(ram) => {
+                let buffer = unsafe { ram.as_mut_unchecked() };
+                dma::cpu_gather(data, &mut buffer[offset as usize..end as usize])?;
+            }
+        }
+
         Ok(())
     }
 
@@ -94,6 +115,36 @@ impl Media {
                 )?;
             }
         }
+        Ok(())
+    }
+
+    /// Use DMA to read data, bypassing the caches.
+    /// Fails if the access is not aligned to disk blocks.
+    pub fn read_uncached(&self, offset: u64, data: &dyn DmaTarget) -> EResult<()> {
+        let offset = offset.checked_add(self.offset).ok_or(Errno::EIO)?;
+        let end = offset
+            .checked_add(data.dma_size() as u64)
+            .ok_or(Errno::EIO)?;
+        if end > self.size {
+            return Err(Errno::EIO);
+        }
+
+        match &self.storage {
+            MediaType::Block(block_device) => {
+                let block_size = 1 << block_device.block_size_exp();
+                if offset % block_size != 0 || end % block_size != 0 {
+                    return Err(Errno::EALIGN);
+                }
+                let block = offset / block_size;
+
+                block_device.read_blocks_uncached(block, data)?;
+            }
+            MediaType::Ram(ram) => {
+                let buffer = unsafe { ram.as_ref_unchecked() };
+                dma::cpu_scatter(data, &buffer[offset as usize..end as usize])?;
+            }
+        }
+
         Ok(())
     }
 
@@ -171,7 +222,7 @@ impl Media {
     }
 
     /// Device this media is attached to, if any.
-    pub fn device(&self) -> Option<BlockDevice> {
+    pub fn device(&self) -> Option<Arc<dyn BlockDevice>> {
         match &self.storage {
             MediaType::Block(block_device) => Some(block_device.clone()),
             _ => None,

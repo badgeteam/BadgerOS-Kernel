@@ -2,8 +2,6 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::ffi::CStr;
-
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
 use crate::{

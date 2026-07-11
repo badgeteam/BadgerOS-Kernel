@@ -15,15 +15,15 @@ use crate::{
     LogLevel,
     badgelib::time::{AtomicTimespec, Timespec},
     bindings::{
-        device::{
-            BaseDevice, HasBaseDevice,
-            class::{block::BlockDevice, char::CharDevice},
-        },
         error::{EResult, Errno},
         spinlock::Spinlock,
     },
     config::PAGE_SIZE,
     cpu,
+    dev2::{
+        Device,
+        class::{block::BlockDevice, char::CharDevice},
+    },
     filesystem::{VNodeMtxInner, vfs::mflags},
     kernel::sync::mutex::Mutex,
     process::{
@@ -154,11 +154,11 @@ enum RamFsData {
     /// Named pipe.
     Fifo,
     /// Character device.
-    CharDev(CharDevice),
+    CharDev(Arc<dyn CharDevice>),
     /// Directory.
     Directory(BTreeMap<Box<[u8]>, Dirent>),
     /// Block device.
-    BlockDev((BlockDevice, Option<Range<u64>>)),
+    BlockDev((Arc<dyn BlockDevice>, Option<Range<u64>>)),
     /// Regular file.
     Regular(Vec<u8>),
     /// Symbolic link.
@@ -242,11 +242,11 @@ struct RamVNode {
 }
 
 impl VNodeOps for RamVNode {
-    fn get_device(&self, _vnode_self: &VNode) -> Option<BaseDevice> {
+    fn get_device(&self, _vnode_self: &VNode) -> Option<Arc<dyn Device>> {
         let inode = unsafe { self.inode.as_ref_unchecked() };
         match &inode.data {
-            RamFsData::CharDev(dev) => Some(dev.as_base().clone()),
-            RamFsData::BlockDev(dev) => Some(dev.0.as_base().clone()),
+            RamFsData::CharDev(dev) => Some(dev.clone()),
+            RamFsData::BlockDev(dev) => Some(dev.0.clone()),
             _ => None,
         }
     }
@@ -527,7 +527,7 @@ impl VNodeOps for RamVNode {
             gid: 0,
             rdev: self
                 .get_device(vnode_self)
-                .map(|dev| ((u32::from(dev.id()) as u64) << 32) | dev.class() as u64)
+                .map(|dev| (u32::from(dev.id()) as u64) << 32)
                 .unwrap_or(0),
             size: size as u64,
             blksize: 1,

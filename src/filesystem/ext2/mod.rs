@@ -19,10 +19,8 @@ use alloc::{
 use crate::{
     LogLevel,
     badgelib::time::Timespec,
-    bindings::{
-        device::HasBaseDevice,
-        error::{EResult, Errno},
-    },
+    bindings::error::{EResult, Errno},
+    dev2::Device,
     kernel::sync::mutex::Mutex,
     process::{
         syscall::fs::DentBuffer,
@@ -1168,7 +1166,7 @@ impl VNodeOps for E2VNode {
                 .media
                 .device()
                 .as_ref()
-                .map(|dev| ((u32::from(dev.id()) as u64) << 32) | dev.class() as u64)
+                .map(|dev| (u32::from((&**dev as &dyn Device).id()) as u64) << 32)
                 .unwrap_or(0),
             ino: u32::from(self.ino) as u64,
             mode: inode.mode,

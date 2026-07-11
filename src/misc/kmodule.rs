@@ -24,6 +24,7 @@ macro_rules! register_kmodule {
 }
 
 pub unsafe fn init_builtins() {
+    #[allow(improper_ctypes)]
     unsafe extern "C" {
         static __start_kmodules: &'static KModule;
         static __stop_kmodules: &'static KModule;

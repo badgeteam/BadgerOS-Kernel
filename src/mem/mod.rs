@@ -5,6 +5,7 @@
 use core::sync::atomic::AtomicU32;
 
 pub mod dma;
+pub mod pagecache;
 pub mod pmm;
 pub mod vmm;
 

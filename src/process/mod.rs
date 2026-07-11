@@ -32,14 +32,13 @@ use usercopy::{AccessResult, UserSlice, UserSliceMut};
 
 use crate::{
     bindings::{
-        device::{HasBaseDevice, class::tty::TTYDevice},
         error::{EResult, Errno},
         log::LogLevel,
         raw::timestamp_us_t,
     },
     config::STACK_SIZE,
     cpu::{thread::GpRegfile, usermode::call_usermode},
-    device::builtin_driver::null_instance,
+    dev2::{self, class::char::CharDevice},
     filesystem::{self, File, SeekMode, device::CharDevFile, mode, oflags},
     kernel::{
         sched::Thread,
@@ -403,11 +402,8 @@ impl Process {
             return Ok(());
         }
 
-        let mut serial_devs = TTYDevice::filter(Default::default())?;
-        let stdio_dev = serial_devs
-            .try_remove(0)
-            .map(|x| x.as_char().unwrap())
-            .unwrap_or_else(|| null_instance());
+        let mut serial_devs = dev2::registry::devices_by_trait::<dyn CharDevice>()?;
+        let stdio_dev = serial_devs.try_remove(0).unwrap_or_else(|| todo!());
         let wfile = Arc::try_new(CharDevFile::new_raw(stdio_dev.clone(), oflags::WRITE_ONLY))?;
         let rfile = Arc::try_new(CharDevFile::new_raw(stdio_dev, oflags::READ_ONLY))?;
 

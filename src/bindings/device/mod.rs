@@ -623,7 +623,7 @@ pub trait BaseDriver: Sync {
 #[macro_export]
 macro_rules! abstract_driver_struct {
     ($type: ty, $class: expr, $match_: expr, $add: expr) => {{
-        use crate::{filesystem::c_api::*, bindings::{error::*, device::*, raw::*}};
+        use crate::{bindings::{error::*, device::*, raw::*}};
         use ::alloc::boxed::Box;
         use ::core::ffi::c_void;
         driver_t {
@@ -746,10 +746,7 @@ macro_rules! abstract_driver_struct {
             },
             create_devnodes: {
                 unsafe extern "C" fn create_devnodes_wrapper(device: *mut device_t, devtmpfs_root: file_t, devnode_dir: file_t) -> errno_t {
-                    let ptr = unsafe{&mut *((*device).cookie as *mut $type)};
-                    let devtmpfs_root = unsafe { file_as_ref(devtmpfs_root) }.unwrap();
-                    let devnode_dir = unsafe { file_as_ref(devnode_dir) }.unwrap();
-                    Errno::extract(ptr.create_devnodes(devtmpfs_root, devnode_dir))
+                    todo!();
                 }
                 Some(create_devnodes_wrapper)
             },

@@ -140,6 +140,7 @@ char const *errno_get_name(int errno) {
         case ERFKILL: return "ERFKILL";
         case EHWPOISON: return "EHWPOISON";
         case EASSERT: return "EASSERT";
+        case EALIGN: return "EALIGN";
     }
 }
 
@@ -280,5 +281,6 @@ char const *errno_get_desc(int errno) {
         case ERFKILL: return "Operation not possible due to RF-kill";
         case EHWPOISON: return "Memory page has hardware error";
         case EASSERT: return "Assertion failed";
+        case EALIGN: return "Address misaligned";
     }
 }

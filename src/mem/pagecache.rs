@@ -25,7 +25,7 @@ use crate::{
     util::rtree::RadixTree,
 };
 
-use super::{
+use super::vmm::{
     HHDM_OFFSET,
     memobject::{MappablePage, MemObject},
 };

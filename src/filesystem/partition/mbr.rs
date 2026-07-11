@@ -3,7 +3,8 @@ use bytemuck::{AnyBitPattern, NoUninit, Zeroable, cast_slice_mut};
 use uuid::Uuid;
 
 use crate::{
-    bindings::{device::class::block::BlockDevice, error::EResult},
+    bindings::error::EResult,
+    dev2::class::block::BlockDevice,
     filesystem::partition::{Partition, PartitionDriver, VolumeInfo},
     register_kmodule,
 };
@@ -44,7 +45,7 @@ pub struct MbrDriver;
 
 impl MbrDriver {
     /// Detect but do not exclude GPT-formatted drives.
-    pub fn detect_nopgt(drive: BlockDevice) -> EResult<Option<VolumeInfo>> {
+    pub fn detect_nopgt(drive: &dyn BlockDevice) -> EResult<Option<VolumeInfo>> {
         // Look for signature bytes.
         let mut signature = [0u8; 2];
         drive.readk_bytes(0x1fe, &mut signature)?;
@@ -95,7 +96,7 @@ impl MbrDriver {
 }
 
 impl PartitionDriver for MbrDriver {
-    fn detect(&self, drive: BlockDevice) -> EResult<Option<VolumeInfo>> {
+    fn detect(&self, drive: &dyn BlockDevice) -> EResult<Option<VolumeInfo>> {
         let res = Self::detect_nopgt(drive);
 
         if let Ok(Some(info)) = &res {

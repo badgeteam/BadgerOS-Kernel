@@ -331,3 +331,5 @@ typedef struct {
 
 // Assertion failed.
 #define EASSERT 134
+// Address misaligned.
+#define EALIGN  135

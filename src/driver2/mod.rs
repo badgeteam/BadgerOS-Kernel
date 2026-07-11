@@ -1,3 +1,4 @@
+pub mod ata;
 pub mod ns16550;
 pub mod pci;
 #[cfg(target_arch = "riscv64")]

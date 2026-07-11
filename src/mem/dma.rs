@@ -2,9 +2,15 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
+use core::usize;
+
 use crate::{
-    bindings::error::EResult,
-    mem::{pmm::PAddrr, vmm::kernel_mm},
+    bindings::error::{EResult, Errno},
+    config::PAGE_SIZE,
+    mem::{
+        pmm::PAddrr,
+        vmm::{self, kernel_mm},
+    },
 };
 
 /// Scatter-gather list entry.
@@ -12,6 +18,7 @@ use crate::{
 pub struct ScatterGatherEntry {
     pub paddr: PAddrr,
     pub vaddr: usize,
+    // TODO: Should this be u64?
     pub size: usize,
 }
 
@@ -31,7 +38,127 @@ pub unsafe trait DmaTarget {
     ) -> EResult<()>;
 }
 
-/// Simpler reference wrapper struct that implements [`DmaBuffer`] by doing virt2phys lookups.
+/// Copy data into a DMA target using the CPU.
+/// Fails if the `data` buffer is too small.
+pub fn cpu_scatter(target: &dyn DmaTarget, data: &[u8]) -> EResult<()> {
+    if !target.is_scatter() || target.dma_size() > data.len() {
+        return Err(Errno::EINVAL);
+    }
+
+    let mut index = 0;
+    let _ = target.collect(usize::MAX, &mut |ent| {
+        let slice =
+            unsafe { &mut *core::ptr::slice_from_raw_parts_mut(ent.vaddr as *mut u8, ent.size) };
+        slice.copy_from_slice(&data[index..index + ent.size]);
+        index += ent.size;
+        Ok(())
+    });
+
+    Ok(())
+}
+
+/// Copy data out of a DMA target using the CPU.
+/// Fails if the `data` buffer is too small.
+pub fn cpu_gather(target: &dyn DmaTarget, data: &mut [u8]) -> EResult<()> {
+    if target.is_scatter() || target.dma_size() > data.len() {
+        return Err(Errno::EINVAL);
+    }
+
+    let mut index = 0;
+    let _ = target.collect(usize::MAX, &mut |ent| {
+        let slice = unsafe { &*core::ptr::slice_from_raw_parts(ent.vaddr as *mut u8, ent.size) };
+        data[index..index + ent.size].copy_from_slice(slice);
+        index += ent.size;
+        Ok(())
+    });
+
+    Ok(())
+}
+
+/// Lets you gather zeroes from the zeroes page as a DMA target.
+pub struct DmaFillZero(usize);
+
+impl DmaFillZero {
+    /// Create an arbitrarily long span of zeroes.
+    pub const fn new(size: usize) -> Self {
+        Self(size)
+    }
+}
+
+unsafe impl DmaTarget for DmaFillZero {
+    fn is_scatter(&self) -> bool {
+        false
+    }
+
+    fn dma_size(&self) -> usize {
+        self.0
+    }
+
+    fn collect(
+        &self,
+        max_entry_size: usize,
+        sink: &mut dyn FnMut(ScatterGatherEntry) -> EResult<()>,
+    ) -> EResult<()> {
+        let max_entry_size = max_entry_size.min(PAGE_SIZE as usize);
+        let vaddr = vmm::zeroes().as_ptr() as usize;
+        let paddr = vmm::zeroes_paddr();
+        let mut size = self.0;
+
+        while size > 0 {
+            let max = size.min(max_entry_size);
+            sink(ScatterGatherEntry {
+                paddr,
+                vaddr,
+                size: max,
+            })?;
+            size -= max;
+        }
+
+        Ok(())
+    }
+}
+
+/// Implements [`DmaBuffer`] by associating an object with a given physical address.
+pub struct DmaFromBuffer<'a, T: ?Sized + 'a, const IS_SCATTER: bool> {
+    vaddr: &'a T,
+    paddr: PAddrr,
+}
+
+unsafe impl<T: ?Sized, const IS_SCATTER: bool> DmaTarget for DmaFromBuffer<'_, T, IS_SCATTER> {
+    fn is_scatter(&self) -> bool {
+        IS_SCATTER
+    }
+
+    fn dma_size(&self) -> usize {
+        size_of_val(self.vaddr)
+    }
+
+    fn collect(
+        &self,
+        max_entry_size: usize,
+        sink: &mut dyn FnMut(ScatterGatherEntry) -> EResult<()>,
+    ) -> EResult<()> {
+        let mut vaddr = self.vaddr as *const _ as *const () as usize;
+        let mut paddr = self.paddr;
+        let mut size = size_of_val(self.vaddr);
+
+        while size > 0 {
+            let max = size.min(max_entry_size);
+            sink(ScatterGatherEntry {
+                paddr,
+                vaddr,
+                size: max,
+            })?;
+            vaddr += max;
+            paddr += max;
+            size -= max;
+        }
+
+        Ok(())
+    }
+}
+
+/// Simple reference wrapper struct that implements [`DmaBuffer`] by doing virt2phys lookups.
 #[repr(transparent)]
 pub struct DmaFromRef<T: ?Sized, const IS_SCATTER: bool>(T);
 

@@ -1,14 +1,9 @@
-use core::{ffi::c_void, ops::Deref, ptr::NonNull};
-
-use alloc::vec::Vec;
+use alloc::sync::Arc;
 use uuid::Uuid;
 
 use crate::{
     LogLevel,
-    bindings::{
-        device::{DeviceFilters, HasBaseDevice, class::block::BlockDevice, iter_drivers},
-        raw::{dev_class_t_DEV_CLASS_BLOCK, driver_block_t, driver_t, mem_equals, strlen},
-    },
+    dev2::{Device, class::block::BlockDevice, registry},
     misc::kparam,
     util,
 };
@@ -24,11 +19,11 @@ pub static mut KFILE_GPT_PART: Uuid = Uuid::nil();
 pub static mut KFILE_MBR_DISK: u32 = 0;
 
 /// Find partition by GUID.
-fn find_part_by_guid(guid: Uuid, is_type: bool) -> Option<(BlockDevice, Partition)> {
-    let devs = BlockDevice::filter(DeviceFilters::default()).ok()?;
+fn find_part_by_guid(guid: Uuid, is_type: bool) -> Option<(Arc<dyn BlockDevice>, Partition)> {
+    let devs = registry::devices_by_trait::<dyn BlockDevice>().ok()?;
     for dev in devs {
         let _: Option<_> = try {
-            let info = get_volume_info(dev.clone()).ok()??;
+            let info = get_volume_info(&*dev).ok()??;
             for part in info.parts {
                 if if is_type { part.type_ } else { part.uuid } == guid {
                     return Some((dev, part));
@@ -40,11 +35,11 @@ fn find_part_by_guid(guid: Uuid, is_type: bool) -> Option<(BlockDevice, Partitio
 }
 
 /// Find disk by GUID.
-fn find_disk_by_guid(guid: Uuid) -> Option<BlockDevice> {
-    let devs = BlockDevice::filter(DeviceFilters::default()).ok()?;
+fn find_disk_by_guid(guid: Uuid) -> Option<Arc<dyn BlockDevice>> {
+    let devs = registry::devices_by_trait::<dyn BlockDevice>().ok()?;
     for dev in devs {
         let _: Option<_> = try {
-            let info = get_volume_info(dev.clone()).ok()??;
+            let info = get_volume_info(&*dev).ok()??;
             if info.uuid == guid {
                 return Some(dev);
             }
@@ -54,7 +49,7 @@ fn find_disk_by_guid(guid: Uuid) -> Option<BlockDevice> {
 }
 
 /// Try to find the device that the kernel was loaded from.
-fn find_kernel_disk() -> Option<BlockDevice> {
+fn find_kernel_disk() -> Option<Arc<dyn BlockDevice>> {
     unsafe {
         let gpt_disk = KFILE_GPT_DISK;
         let gpt_part = KFILE_GPT_PART;
@@ -87,90 +82,36 @@ fn find_kernel_disk() -> Option<BlockDevice> {
 
 /// Try to find a disk by node name; <type><index>.
 /// The matching block devices are sorted by ID.
-fn find_disk_by_nodename(nodename: &str) -> Option<BlockDevice> {
-    nodename.as_ascii()?;
+fn find_disk_by_nodename(nodename: &str) -> Option<Arc<dyn BlockDevice>> {
+    // TODO: dev2 has no device nodes yet.
 
-    // Extract the class from the nodename.
-    let class_len = nodename
-        .chars()
-        .into_iter()
-        .position(|x| x >= '0' && x <= '9')?;
-    let class = &nodename[..class_len];
-
-    // Extract the index from the nodename.
-    let index = nodename[class_len..].parse::<u32>().ok()?;
-
-    // Find block devices of matching driver.
-    let mut driver = None;
-    iter_drivers(|guard| {
-        if guard.dev_class == dev_class_t_DEV_CLASS_BLOCK {
-            let as_block = unsafe { &*(guard.deref() as *const driver_t as *const driver_block_t) };
-            let strlen = unsafe { strlen(as_block.blk_node_name) };
-            if strlen == class.len()
-                && unsafe {
-                    mem_equals(
-                        class.as_ptr() as *const c_void,
-                        as_block.blk_node_name as *const c_void,
-                        strlen,
-                    )
-                }
-            {
-                driver = Some(guard);
-                false
-            } else {
-                true
-            }
-        } else {
-            true
-        }
-    });
-    let driver = driver?;
-
-    // Get all devices with matching node name.
-    let devs = BlockDevice::filter(DeviceFilters {
-        driver: Some(NonNull::from(driver.deref())),
-        ..Default::default()
-    })
-    .ok()?;
-    let mut devs: Vec<_> = devs.iter().collect();
-    devs.sort_by(|a, b| a.id().cmp(&b.id()));
-
-    // Look up the device from this array.
-    if (index as usize) < devs.len() {
-        Some(devs[index as usize].clone())
-    } else {
-        None
-    }
+    None
 }
 
 /// Filter applicable disks' partitions.
 fn filter_parts(
-    kernel_disk: Option<BlockDevice>,
-    root_disk: Option<BlockDevice>,
+    kernel_disk: Option<Arc<dyn BlockDevice>>,
+    root_disk: Option<Arc<dyn BlockDevice>>,
     mut filter: impl FnMut(&Partition) -> bool,
-) -> Option<(BlockDevice, Partition)> {
+) -> Option<(Arc<dyn BlockDevice>, Partition)> {
     // Collect devices to search from.
     let devs = if let Some(root_disk) = root_disk {
         vec![root_disk]
     } else {
-        let mut devs: Vec<_> = BlockDevice::filter(Default::default())
-            .ok()?
-            .into_iter()
-            .filter(|dev| {
-                kernel_disk
-                    .as_ref()
-                    .map(|x| x.id() != dev.id())
-                    .unwrap_or(true)
-            })
-            .collect();
+        let mut devs = registry::devices_by_trait::<dyn BlockDevice>().ok()?;
         if let Some(kernel_disk) = kernel_disk {
+            // This filter and reinsert here causes the kernel disk to be searched first, and only once.
+            devs = devs
+                .into_iter()
+                .filter(|dev| (&**dev as &dyn Device).id() != (&*kernel_disk as &dyn Device).id())
+                .collect();
             devs.insert(0, kernel_disk);
         }
         devs
     };
 
     for dev in devs {
-        if let Ok(Some(info)) = get_volume_info(dev.clone()) {
+        if let Ok(Some(info)) = get_volume_info(&*dev) {
             for part in info.parts {
                 if filter(&part) {
                     return Some((dev, part));
@@ -186,7 +127,7 @@ fn filter_parts(
 pub fn mount_root_fs() {
     // Try to find the root disk.
     let kernel_disk = find_kernel_disk();
-    let root_disk: Option<BlockDevice> = try {
+    let root_disk: Option<Arc<dyn BlockDevice>> = try {
         let param = kparam::get_kparam("ROOTDISK")?;
         let res: Option<_> = try {
             if param[..5] == *"UUID=" {
@@ -229,7 +170,7 @@ pub fn mount_root_fs() {
             &root_disk
         } {
             try {
-                let info = get_volume_info(root_disk.clone()).ok()??;
+                let info = get_volume_info(&**root_disk).ok()??;
                 let index = param[5..].parse::<usize>().ok()?;
                 (index < info.parts.len())
                     .then(|| (root_disk.clone(), Some(info.parts[index].clone())))?
@@ -280,7 +221,7 @@ pub fn mount_root_fs() {
     logkf!(
         LogLevel::Info,
         "Mounting root filesystem on blkdev {}; offset 0x{:x}, size 0x{:x}",
-        disk.id(),
+        (&*disk as &dyn Device).id(),
         offset,
         size
     );
