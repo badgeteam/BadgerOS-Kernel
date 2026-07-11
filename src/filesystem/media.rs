@@ -62,11 +62,15 @@ impl Media {
 
     /// Use DMA to write data, bypassing the caches.
     /// Fails if the access is not aligned to disk blocks.
-    pub fn write_uncached(&self, offset: u64, data: &dyn DmaTarget) -> EResult<()> {
+    pub fn write_uncached(
+        &self,
+        offset: u64,
+        data_offset: u64,
+        data_length: u64,
+        data: &dyn DmaTarget,
+    ) -> EResult<()> {
         let offset = offset.checked_add(self.offset).ok_or(Errno::EIO)?;
-        let end = offset
-            .checked_add(data.dma_size() as u64)
-            .ok_or(Errno::EIO)?;
+        let end = offset.checked_add(data.size() as u64).ok_or(Errno::EIO)?;
         if end > self.size {
             return Err(Errno::EIO);
         }
@@ -79,11 +83,16 @@ impl Media {
                 }
                 let block = offset / block_size;
 
-                block_device.write_blocks_uncached(block, data)?;
+                block_device.write_blocks_uncached(block, data_offset, data_length, data)?;
             }
             MediaType::Ram(ram) => {
                 let buffer = unsafe { ram.as_mut_unchecked() };
-                dma::cpu_gather(data, &mut buffer[offset as usize..end as usize])?;
+                dma::cpu_gather(
+                    data_offset,
+                    data_length as usize,
+                    data,
+                    &mut buffer[offset as usize..end as usize],
+                )?;
             }
         }
 
@@ -120,11 +129,15 @@ impl Media {
 
     /// Use DMA to read data, bypassing the caches.
     /// Fails if the access is not aligned to disk blocks.
-    pub fn read_uncached(&self, offset: u64, data: &dyn DmaTarget) -> EResult<()> {
+    pub fn read_uncached(
+        &self,
+        offset: u64,
+        data_offset: u64,
+        data_length: u64,
+        data: &dyn DmaTarget,
+    ) -> EResult<()> {
         let offset = offset.checked_add(self.offset).ok_or(Errno::EIO)?;
-        let end = offset
-            .checked_add(data.dma_size() as u64)
-            .ok_or(Errno::EIO)?;
+        let end = offset.checked_add(data.size() as u64).ok_or(Errno::EIO)?;
         if end > self.size {
             return Err(Errno::EIO);
         }
@@ -137,11 +150,16 @@ impl Media {
                 }
                 let block = offset / block_size;
 
-                block_device.read_blocks_uncached(block, data)?;
+                block_device.read_blocks_uncached(block, data_offset, data_length, data)?;
             }
             MediaType::Ram(ram) => {
                 let buffer = unsafe { ram.as_ref_unchecked() };
-                dma::cpu_scatter(data, &buffer[offset as usize..end as usize])?;
+                dma::cpu_scatter(
+                    data_offset,
+                    data_length as usize,
+                    data,
+                    &buffer[offset as usize..end as usize],
+                )?;
             }
         }
 

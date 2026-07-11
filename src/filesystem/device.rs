@@ -46,13 +46,11 @@ impl CharDevFile {
 
 impl File for CharDevFile {
     fn poll(&self) -> u32 {
-        todo!()
-        // self.char_dev.poll()
+        self.char_dev.poll()
     }
 
     fn poll_waitlists<'a>(&'a self, interest: u32, collect: &mut Vec<&'a Waitlist>) -> EResult<()> {
-        todo!()
-        // self.char_dev.poll_waitlists(interest, collect)
+        self.char_dev.poll_waitlists(interest, collect)
     }
 
     fn get_flags(&self) -> u32 {
@@ -65,12 +63,11 @@ impl File for CharDevFile {
     }
 
     fn isatty(&self) -> EResult<()> {
-        todo!()
-        // if self.char_dev.class() == dev_class_t_DEV_CLASS_TTY {
-        //     Ok(())
-        // } else {
-        //     Err(Errno::ENOTTY)
-        // }
+        if self.char_dev.is_tty() {
+            Ok(())
+        } else {
+            Err(Errno::ENOTTY)
+        }
     }
 
     fn get_dirents(&self, _buffer: &mut DentBuffer<'_>) -> EResult<()> {

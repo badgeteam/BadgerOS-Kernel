@@ -66,6 +66,8 @@ pub(super) struct Port {
     cmd_finish_map: AtomicU32,
     /// Command error per slot.
     cmd_err_map: AtomicU32,
+    /// One or more commands has timed out.
+    cmd_timeout: AtomicU32,
     /// Spinlock that guards the interrupt enable register.
     irqen_lock: RawSpinlock,
     /// Host memory structures.
@@ -134,6 +136,7 @@ impl Port {
             cmd_issue_map: AtomicU32::new(0),
             cmd_finish_map: AtomicU32::new(0),
             cmd_err_map: AtomicU32::new(0),
+            cmd_timeout: AtomicU32::new(0),
             irqen_lock: RawSpinlock::new(),
             hms,
         })
@@ -199,6 +202,25 @@ impl Port {
                 Self::check_conn(&mut is_registered, reg, &bus);
             }
 
+            // Check for commands timed out.
+            if self
+                .cmd_timeout
+                .compare_exchange(1, 2, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+            {
+                Self::restart_port(reg);
+
+                while self.cmd_err_map.load(Ordering::Relaxed) != 0
+                    || self.cmd_finish_map.load(Ordering::Relaxed) != 0
+                {
+                    thread_yield();
+                }
+
+                self.cmd_timeout.store(0, Ordering::Relaxed);
+
+                continue;
+            }
+
             // Check for fatal error interrupts.
             if reg::PortIrq::tf_err.is_set(stat)
                 || reg::PortIrq::hb_fatal_err.is_set(stat)
@@ -228,6 +250,7 @@ impl Port {
             // Check for commands that have completed.
             let unproc_map = reg.cmd_issue.get();
             let mut finished_map = inflight_map & !unproc_map;
+            inflight_map &= !finished_map;
             self.cmd_finish_map
                 .fetch_or(finished_map, Ordering::Relaxed);
             while finished_map != 0 {
@@ -343,14 +366,8 @@ impl Port {
         debug_assert!(tmp & mask == 0, "Command list issued twice");
         self.work_waitlist.notify();
 
+        let lim = time_us() + 100000;
         loop {
-            self.cmd_waitlist[list].unintr_block(timestamp_us_t::MAX, || {
-                (self.cmd_finish_map.load(Ordering::Relaxed)
-                    | self.cmd_err_map.load(Ordering::Relaxed))
-                    & mask
-                    == 0
-            });
-
             if self.cmd_finish_map.load(Ordering::Relaxed) & mask != 0 {
                 self.cmd_finish_map.fetch_and(!mask, Ordering::Relaxed);
                 self.cmd_cancel(list);
@@ -362,6 +379,22 @@ impl Port {
                 self.cmd_cancel(list);
                 return Err(Errno::EIO);
             }
+
+            let Some(timeout) = lim.checked_sub(time_us()) else {
+                let _ =
+                    self.cmd_timeout
+                        .compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed);
+                self.work_waitlist.notify();
+                self.cmd_cancel(list);
+                return Err(Errno::ETIMEDOUT);
+            };
+
+            self.cmd_waitlist[list].unintr_block(timeout as i64, || {
+                (self.cmd_finish_map.load(Ordering::Relaxed)
+                    | self.cmd_err_map.load(Ordering::Relaxed))
+                    & mask
+                    == 0
+            });
         }
     }
 
@@ -372,6 +405,8 @@ impl Port {
         sec_count: u16,
         feature: u16,
         lba: u64,
+        data_offset: u64,
+        data_length: u64,
         data: Option<&dyn DmaTarget>,
     ) -> EResult<()> {
         let list = self.cmd_start();
@@ -381,38 +416,43 @@ impl Port {
 
         // Collect scatter-gather list.
         if let Some(data) = data {
-            let dma_size = data.dma_size();
-            if dma_size == 0 || dma_size & 1 != 0 || dma_size >= u32::MAX as usize {
+            let dma_size = data.size();
+            if dma_size == 0 || dma_size & 1 != 0 || dma_size >= u32::MAX as u64 {
                 logkf!(LogLevel::Error, "Invalid DMA size {} for AHCI", dma_size);
                 return Err(Errno::EINVAL);
             }
             hdr.prd_len.set(dma_size as u32);
 
             let mut index = 0;
-            data.collect(u32::MAX as usize - 1, &mut |entry| {
-                debug_assert!(entry.size <= u32::MAX as usize - 1);
-                if index >= PRDT_LIST_LEN {
-                    logkf!(LogLevel::Error, "Scatter-gather list too long");
-                    return Err(Errno::ENOMEM);
-                }
-                if (entry.paddr | entry.vaddr) & 1 != 0 {
-                    logkf!(LogLevel::Error, "Misaligned DMA buffer for AHCI");
-                    return Err(Errno::EINVAL);
-                }
+            data.collect(
+                data_offset,
+                data_length,
+                u32::MAX as usize - 1,
+                &mut |entry| {
+                    debug_assert!(entry.size <= u32::MAX as usize - 1);
+                    if index >= PRDT_LIST_LEN {
+                        logkf!(LogLevel::Error, "Scatter-gather list too long");
+                        return Err(Errno::ENOMEM);
+                    }
+                    if (entry.paddr | entry.vaddr) & 1 != 0 {
+                        logkf!(LogLevel::Error, "Misaligned DMA buffer for AHCI");
+                        return Err(Errno::EINVAL);
+                    }
 
-                prdt[index].dbc.set((entry.size - 1) as u32);
-                prdt[index].paddr.set(entry.paddr as u64);
-                index += 1;
+                    prdt[index].dbc.set((entry.size - 1) as u32);
+                    prdt[index].paddr.set(entry.paddr as u64);
+                    index += 1;
 
-                Ok(())
-            })?;
+                    Ok(())
+                },
+            )?;
             debug_assert!(index > 0);
 
             prdt[index - 1].dbc.modify(hms::DBC::irq_en::SET);
             hdr.desc.write(
                 hms::CmdHdrDesc::fis_len.val(size_of::<fis::RegisterH2D>() as u32 / 4)
                     + hms::CmdHdrDesc::prdtl.val(index as u32)
-                    + hms::CmdHdrDesc::write.val(!data.is_scatter() as u32)
+                    + hms::CmdHdrDesc::write.val(!data.allow_scatter() as u32)
                     + hms::CmdHdrDesc::clr_busy.val(1),
             );
         } else {

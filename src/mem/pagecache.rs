@@ -162,7 +162,6 @@ impl PageCache {
     /// entry_size_exp = block_size_exp + entry_blocks_exp = max(block_size_exp, page_size_exp).
     #[inline(always)]
     fn index(&self, offset: u64) -> (u64, usize) {
-        assert!(offset % PAGE_SIZE as u64 == 0);
         let entry_index = offset >> (self.block_size_exp + self.entry_blocks_exp);
         let page = ((offset >> PAGE_SIZE.ilog2()) & ((1u64 << self.entry_pages_exp) - 1)) as usize;
         (entry_index, page)
@@ -243,6 +242,7 @@ impl PageCache {
 
     /// Try to get an existing entry.
     pub fn get(&self, addr: u64) -> EResult<Option<MappablePage>> {
+        assert!(addr % PAGE_SIZE as u64 == 0);
         let (index, offset) = self.index(addr);
 
         let _noirq = IrqGuard::new();
@@ -284,6 +284,7 @@ impl PageCache {
 
     /// Get or allocate a page from the cache and increase its refcount.
     pub fn alloc(&self, pager: &dyn Pager, addr: u64) -> EResult<MappablePage> {
+        assert!(addr % PAGE_SIZE as u64 == 0);
         let (index, offset) = self.index(addr);
         let memobject = pager.memobject();
 
@@ -359,6 +360,7 @@ impl PageCache {
 
     /// Mark a page as being dirty.
     pub fn mark_dirty(&self, addr: u64) {
+        assert!(addr % PAGE_SIZE as u64 == 0);
         let (index, _) = self.index(addr);
 
         let inner = self.pages.lock_shared();
@@ -555,6 +557,29 @@ impl PageCache {
             let dst_slice =
                 unsafe { core::slice::from_raw_parts_mut(dst_vaddr as *mut u8, copy_len) };
             wdata.read_multiple(progress as usize, dst_slice)?;
+            // Mark dirty before dropping page so flush can't evict the just-written entry.
+            self.mark_dirty(page_base);
+
+            progress += copy_len as u64;
+        }
+        Ok(())
+    }
+
+    /// Write with zeroes through the cache.
+    pub fn write_zeroes(&self, pager: &dyn Pager, addr: u64, len: u64) -> EResult<()> {
+        let mut progress: u64 = 0;
+        while progress < len {
+            let cur_addr = addr + progress;
+            let page_base = cur_addr & !(PAGE_SIZE as u64 - 1);
+            let page_offset = (cur_addr - page_base) as usize;
+            let copy_len = (PAGE_SIZE as usize - page_offset).min((len - progress) as usize);
+
+            let page = self.alloc(pager, page_base)?;
+            let dst_vaddr = page.paddr() + unsafe { HHDM_OFFSET } + page_offset;
+            // SAFETY: paddr from the cache is valid for PAGE_SIZE bytes; copy_len fits within it.
+            let dst_slice =
+                unsafe { core::slice::from_raw_parts_mut(dst_vaddr as *mut u8, copy_len) };
+            dst_slice.fill(0);
             // Mark dirty before dropping page so flush can't evict the just-written entry.
             self.mark_dirty(page_base);
 

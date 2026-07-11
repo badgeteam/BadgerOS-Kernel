@@ -127,10 +127,10 @@ pub fn check_for_panic() {
 /// If no other core has panicked, returns and assumes the caller will eventually call [`kernel_panic_unlocked`].
 #[unsafe(no_mangle)]
 pub extern "C" fn claim_panic() {
+    unsafe { irq::disable() };
     if IS_PANICKING.fetch_add(1, Ordering::Relaxed) != 0 {
         panic_cpu_shutdown();
     }
-    unsafe { irq::disable() };
 }
 
 pub fn kekw() {

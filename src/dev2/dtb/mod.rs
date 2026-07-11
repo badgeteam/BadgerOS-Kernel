@@ -15,6 +15,7 @@ use crate::{
     cpu,
     dev2::{probe, registry},
     kernel::{self},
+    misc::kparam,
 };
 
 use super::bus::{Bus, soc::SocBus};
@@ -291,8 +292,7 @@ pub unsafe fn init(fdt: *const FdtHeader) {
     }
     let dtb = get();
 
-    #[cfg(debug_assertions)]
-    {
+    if kparam::get_kparam("DUMPDTB").is_some() {
         logkf!(LogLevel::Debug, "DTB:");
         printf!("{}", dtb);
     }

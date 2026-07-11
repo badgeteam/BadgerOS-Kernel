@@ -57,10 +57,21 @@ impl AtaBus {
         sec_count: u16,
         feature: u16,
         lba: u64,
+        data_offset: u64,
+        data_length: u64,
         data: Option<&dyn DmaTarget>,
     ) -> EResult<()> {
-        self.ctrl
-            .ata_cmd(self.port, cmd, ctrl, sec_count, feature, lba, data)
+        self.ctrl.ata_cmd(
+            self.port,
+            cmd,
+            ctrl,
+            sec_count,
+            feature,
+            lba,
+            data_offset,
+            data_length,
+            data,
+        )
     }
 }
 

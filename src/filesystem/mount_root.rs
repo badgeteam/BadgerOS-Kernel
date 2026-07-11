@@ -3,7 +3,9 @@ use uuid::Uuid;
 
 use crate::{
     LogLevel,
+    cpu::timer::time_us,
     dev2::{Device, class::block::BlockDevice, registry},
+    kernel::sched::thread_sleep,
     misc::kparam,
     util,
 };
@@ -125,6 +127,19 @@ fn filter_parts(
 
 /// Mount the root filesystem according to kernel parameters.
 pub fn mount_root_fs() {
+    let timeout = try { kparam::get_kparam("ROOTWAIT")?.parse::<u32>().ok()? }.unwrap_or(5);
+    let lim = time_us() + timeout as u64 * 1000000;
+
+    while time_us() < lim {
+        if mount_root_impl(false) {
+            return;
+        }
+        let _ = thread_sleep(250000);
+    }
+    mount_root_impl(true);
+}
+
+pub fn mount_root_impl(do_panic: bool) -> bool {
     // Try to find the root disk.
     let kernel_disk = find_kernel_disk();
     let root_disk: Option<Arc<dyn BlockDevice>> = try {
@@ -137,7 +152,11 @@ pub fn mount_root_fs() {
             }
         };
         if res.is_none() {
-            panic!("Unable to find ROOTDISK={}", param);
+            if do_panic {
+                panic!("Unable to find ROOTDISK={}", param);
+            } else {
+                return false;
+            }
         }
         res?
     };
@@ -191,18 +210,22 @@ pub fn mount_root_fs() {
         } {
             Some((root_disk, None))
         } else {
-            logkf!(
-                LogLevel::Fatal,
-                "Unable to find kernel disk needed to mount root"
-            );
-            None
+            if do_panic {
+                panic!("Unable to find kernel disk needed to mount root");
+            } else {
+                return false;
+            }
         }
     } else {
         panic!("Unknown format for ROOT={}", param);
     };
 
     if part.is_none() {
-        panic!("Unable to find ROOT={}", param);
+        if do_panic {
+            panic!("Unable to find ROOT={}", param);
+        } else {
+            return false;
+        }
     }
     let (disk, part) = part.unwrap();
 
@@ -231,4 +254,6 @@ pub fn mount_root_fs() {
     if let Err(x) = res {
         panic!("Unable to mount root filesystem: {}", x);
     }
+
+    true
 }

@@ -17,6 +17,13 @@ BadgerOS supports 128-bit GUIDs/UUIDs of the following forms, which it parses li
 
 Where `x` is any of the following ASCII characters representing a hexadecimal encoding: 0-9, a-f and A-F.
 
+### Parameter: DUMPDTB
+This parameter, if defined, causes the kernel to dump the DTB while booting.
+
+### Parameter: ROOTWAIT
+This parameter tells the kernel how long to wait for the root disk to be mounted, in seconds.
+By default, the kernel waits 5 seconds.
+
 ### Parameter: ROOT
 This parameter specifies how to mount the root filesystem.
 It can take the following forms:

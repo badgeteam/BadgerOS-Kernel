@@ -15,6 +15,7 @@ use crate::{
         pmm::{self, PAddrr},
         vmm,
     },
+    misc::kparam,
 };
 
 // Aarch64 and loongarch64 have critical problems before base revision 6, but RISC-V and x86_64 do not.
@@ -178,7 +179,11 @@ pub unsafe fn early_init() {
 }
 
 /// Post-heap boot protocol code.
-pub unsafe fn late_init() {}
+pub unsafe fn late_init() {
+    if let Some(cmdline) = CMDLINE.response() {
+        unsafe { kparam::parse_kparams(cmdline.cmdline().as_bytes()) };
+    }
+}
 
 /// Get RSDP physical address.
 #[cfg(feature = "dtb")]

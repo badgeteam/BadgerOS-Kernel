@@ -18,21 +18,25 @@ use crate::{
 pub struct ScatterGatherEntry {
     pub paddr: PAddrr,
     pub vaddr: usize,
-    // TODO: Should this be u64?
     pub size: usize,
 }
 
 /// DMA buffer; an object that can be collected into a scatter-gather list.
 pub unsafe trait DmaTarget {
-    /// DMA will write into host memory (modifying `self`).
-    fn is_scatter(&self) -> bool;
+    /// Allow DMA to write into host memory (modifying `self`).
+    fn allow_scatter(&self) -> bool;
 
-    /// How many bytes there are to this slice.
-    fn dma_size(&self) -> usize;
+    /// Allow DMA to read from host memory (reading from `self`).
+    fn allow_gather(&self) -> bool;
+
+    /// How many bytes there are to this object.
+    fn size(&self) -> u64;
 
     /// Collect into scatter-gather list entries.
     fn collect(
         &self,
+        offset: u64,
+        length: u64,
         max_entry_size: usize,
         sink: &mut dyn FnMut(ScatterGatherEntry) -> EResult<()>,
     ) -> EResult<()>;
@@ -40,13 +44,13 @@ pub unsafe trait DmaTarget {
 
 /// Copy data into a DMA target using the CPU.
 /// Fails if the `data` buffer is too small.
-pub fn cpu_scatter(target: &dyn DmaTarget, data: &[u8]) -> EResult<()> {
-    if !target.is_scatter() || target.dma_size() > data.len() {
+pub fn cpu_scatter(offset: u64, length: usize, target: &dyn DmaTarget, data: &[u8]) -> EResult<()> {
+    if !target.allow_scatter() || target.size() > data.len() as u64 {
         return Err(Errno::EINVAL);
     }
 
     let mut index = 0;
-    let _ = target.collect(usize::MAX, &mut |ent| {
+    let _ = target.collect(offset, length as u64, usize::MAX, &mut |ent| {
         let slice =
             unsafe { &mut *core::ptr::slice_from_raw_parts_mut(ent.vaddr as *mut u8, ent.size) };
         slice.copy_from_slice(&data[index..index + ent.size]);
@@ -59,13 +63,18 @@ pub fn cpu_scatter(target: &dyn DmaTarget, data: &[u8]) -> EResult<()> {
 
 /// Copy data out of a DMA target using the CPU.
 /// Fails if the `data` buffer is too small.
-pub fn cpu_gather(target: &dyn DmaTarget, data: &mut [u8]) -> EResult<()> {
-    if target.is_scatter() || target.dma_size() > data.len() {
+pub fn cpu_gather(
+    offset: u64,
+    length: usize,
+    target: &dyn DmaTarget,
+    data: &mut [u8],
+) -> EResult<()> {
+    if !target.allow_gather() || target.size() > data.len() as u64 {
         return Err(Errno::EINVAL);
     }
 
     let mut index = 0;
-    let _ = target.collect(usize::MAX, &mut |ent| {
+    let _ = target.collect(offset, length as u64, usize::MAX, &mut |ent| {
         let slice = unsafe { &*core::ptr::slice_from_raw_parts(ent.vaddr as *mut u8, ent.size) };
         data[index..index + ent.size].copy_from_slice(slice);
         index += ent.size;
@@ -76,42 +85,51 @@ pub fn cpu_gather(target: &dyn DmaTarget, data: &mut [u8]) -> EResult<()> {
 }
 
 /// Lets you gather zeroes from the zeroes page as a DMA target.
-pub struct DmaFillZero(usize);
+pub struct DmaFillZero(u64);
 
 impl DmaFillZero {
     /// Create an arbitrarily long span of zeroes.
-    pub const fn new(size: usize) -> Self {
+    pub const fn new(size: u64) -> Self {
         Self(size)
     }
 }
 
 unsafe impl DmaTarget for DmaFillZero {
-    fn is_scatter(&self) -> bool {
+    fn allow_scatter(&self) -> bool {
         false
     }
 
-    fn dma_size(&self) -> usize {
+    fn allow_gather(&self) -> bool {
+        true
+    }
+
+    fn size(&self) -> u64 {
         self.0
     }
 
     fn collect(
         &self,
+        offset: u64,
+        mut length: u64,
         max_entry_size: usize,
         sink: &mut dyn FnMut(ScatterGatherEntry) -> EResult<()>,
     ) -> EResult<()> {
         let max_entry_size = max_entry_size.min(PAGE_SIZE as usize);
         let vaddr = vmm::zeroes().as_ptr() as usize;
         let paddr = vmm::zeroes_paddr();
-        let mut size = self.0;
 
-        while size > 0 {
-            let max = size.min(max_entry_size);
+        if offset + length > self.0 {
+            return Err(Errno::EINVAL);
+        }
+
+        while length > 0 {
+            let max = length.min(max_entry_size as u64) as usize;
             sink(ScatterGatherEntry {
                 paddr,
                 vaddr,
                 size: max,
             })?;
-            size -= max;
+            length -= max as u64;
         }
 
         Ok(())
@@ -124,26 +142,54 @@ pub struct DmaFromBuffer<'a, T: ?Sized + 'a, const IS_SCATTER: bool> {
     paddr: PAddrr,
 }
 
+impl<'a, T: ?Sized + 'a> DmaFromBuffer<'a, T, false> {
+    /// # Safety
+    /// The caller promises that the virtual and physical addresses match.
+    pub const unsafe fn from_ref(vaddr: &'a T, paddr: PAddrr) -> Self {
+        Self { vaddr, paddr }
+    }
+}
+
+impl<'a, T: ?Sized + 'a> DmaFromBuffer<'a, T, true> {
+    /// # Safety
+    /// The caller promises that the virtual and physical addresses match.
+    pub const unsafe fn from_mut(vaddr: &'a mut T, paddr: PAddrr) -> Self {
+        Self { vaddr, paddr }
+    }
+}
+
 unsafe impl<T: ?Sized, const IS_SCATTER: bool> DmaTarget for DmaFromBuffer<'_, T, IS_SCATTER> {
-    fn is_scatter(&self) -> bool {
+    fn allow_scatter(&self) -> bool {
         IS_SCATTER
     }
 
-    fn dma_size(&self) -> usize {
-        size_of_val(self.vaddr)
+    fn allow_gather(&self) -> bool {
+        !IS_SCATTER
+    }
+
+    fn size(&self) -> u64 {
+        size_of_val(self.vaddr) as u64
     }
 
     fn collect(
         &self,
+        offset: u64,
+        length: u64,
         max_entry_size: usize,
         sink: &mut dyn FnMut(ScatterGatherEntry) -> EResult<()>,
     ) -> EResult<()> {
         let mut vaddr = self.vaddr as *const _ as *const () as usize;
         let mut paddr = self.paddr;
-        let mut size = size_of_val(self.vaddr);
 
-        while size > 0 {
-            let max = size.min(max_entry_size);
+        if offset + length > size_of_val(self.vaddr) as u64 {
+            return Err(Errno::EINVAL);
+        }
+        vaddr += offset as usize;
+        paddr += offset as usize;
+        let mut length = length as usize;
+
+        while length > 0 {
+            let max = length.min(max_entry_size);
             sink(ScatterGatherEntry {
                 paddr,
                 vaddr,
@@ -151,7 +197,7 @@ unsafe impl<T: ?Sized, const IS_SCATTER: bool> DmaTarget for DmaFromBuffer<'_, T
             })?;
             vaddr += max;
             paddr += max;
-            size -= max;
+            length -= max;
         }
 
         Ok(())
@@ -177,26 +223,37 @@ impl<T: ?Sized> DmaFromRef<T, true> {
 }
 
 unsafe impl<T: ?Sized, const IS_SCATTER: bool> DmaTarget for DmaFromRef<T, IS_SCATTER> {
-    fn is_scatter(&self) -> bool {
+    fn allow_scatter(&self) -> bool {
         IS_SCATTER
     }
 
-    fn dma_size(&self) -> usize {
-        size_of_val(self)
+    fn allow_gather(&self) -> bool {
+        !IS_SCATTER
+    }
+
+    fn size(&self) -> u64 {
+        size_of_val(self) as u64
     }
 
     fn collect(
         &self,
+        offset: u64,
+        length: u64,
         max_entry_size: usize,
         sink: &mut dyn FnMut(ScatterGatherEntry) -> EResult<()>,
     ) -> EResult<()> {
         let mut vaddr = self as *const _ as *const () as usize;
-        let mut size = size_of_val(self);
+
+        if offset + length > size_of_val(self) as u64 {
+            return Err(Errno::EINVAL);
+        }
+        let mut length = length as usize;
+        vaddr += offset as usize;
 
         let mut cur: Option<ScatterGatherEntry> = None;
-        while size > 0 {
+        while length > 0 {
             let v2p = kernel_mm().virt2phys(vaddr);
-            let mut ent_size = (v2p.size - (v2p.paddr - v2p.page_paddr)).min(size);
+            let mut ent_size = (v2p.size - (v2p.paddr - v2p.page_paddr)).min(length);
 
             if let Some(ent) = &mut cur {
                 if ent_size != 0 && v2p.paddr == ent.paddr + ent.size {
@@ -219,7 +276,7 @@ unsafe impl<T: ?Sized, const IS_SCATTER: bool> DmaTarget for DmaFromRef<T, IS_SC
             }
 
             vaddr += ent_size;
-            size -= ent_size;
+            length -= ent_size;
         }
 
         if let Some(cur) = cur {

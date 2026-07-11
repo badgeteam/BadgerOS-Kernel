@@ -4,7 +4,7 @@
 
 use core::{any::Any, fmt::Display};
 
-use alloc::sync::Arc;
+use alloc::{sync::Arc, vec::Vec};
 use tock_registers::{
     interfaces::{Readable, Writeable},
     register_structs,
@@ -28,6 +28,7 @@ use crate::{
         registry,
     },
     device_get_trait_vtable,
+    filesystem::poll,
     kernel::sync::{spinlock::Spinlock, waitlist::Waitlist},
     process::{
         uapi::termios,
@@ -231,16 +232,22 @@ impl Ns16550 {
 }
 
 impl CharDevice for Ns16550 {
-    fn read_waitlist(&self) -> Option<&Waitlist> {
-        Some(self.rxfifo.read_waitlist())
+    fn poll(&self) -> u32 {
+        let read = self.rxfifo.read_avl() > 0;
+        let write = self.txfifo.write_avl() > 0;
+        read as u32 * poll::IN + write as u32 * poll::OUT
     }
 
-    fn write_waitlist(&self) -> Option<&Waitlist> {
-        Some(self.txfifo.write_waitlist())
-    }
-
-    fn poll(&self, read: bool, write: bool) -> bool {
-        (read && self.rxfifo.read_avl() > 0) || (write && self.txfifo.write_avl() > 0)
+    fn poll_waitlists<'a>(&'a self, interest: u32, collect: &mut Vec<&'a Waitlist>) -> EResult<()> {
+        if interest & poll::IN != 0 {
+            collect.try_reserve(1)?;
+            collect.push(self.rxfifo.read_waitlist());
+        }
+        if interest & poll::OUT != 0 {
+            collect.try_reserve(1)?;
+            collect.push(self.rxfifo.write_waitlist());
+        }
+        Ok(())
     }
 
     fn read_raw(&self, rdata: UserSliceMut<u8>, nonblock: bool) -> EResult<usize> {

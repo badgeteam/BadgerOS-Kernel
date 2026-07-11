@@ -2,6 +2,8 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
+use alloc::vec::Vec;
+
 use crate::{
     bindings::error::EResult,
     dev2::Device,
@@ -11,17 +13,16 @@ use crate::{
 
 /// A character device (e.g. 16550 UART, /dev/null, etc).
 pub trait CharDevice: Device {
-    /// Get a copy of the underlying read waitlist.
-    /// Used to implement `select`.
-    fn read_waitlist(&self) -> Option<&Waitlist>;
+    /// Is this a TTY?
+    fn is_tty(&self) -> bool {
+        true
+    }
 
-    /// Get a copy of the underlying read waitlist.
-    /// Used to implement `select`.
-    fn write_waitlist(&self) -> Option<&Waitlist>;
+    /// Get current polling status flags.
+    fn poll(&self) -> u32;
 
-    /// Poll for available read and/or write space.
-    /// Used to implement `select`.
-    fn poll(&self, read: bool, write: bool) -> bool;
+    /// Collect waitlists for the requested poll interest flags.
+    fn poll_waitlists<'a>(&'a self, interest: u32, collect: &mut Vec<&'a Waitlist>) -> EResult<()>;
 
     /// Read raw bytes from this device (ignoring termios).
     /// Upon (partial) success, returns how many bytes were read.

@@ -161,6 +161,7 @@ pub fn register_bus(bus: Arc<dyn Bus>) -> EResult<()> {
     let exist = buses.insert(id, bus.clone());
     debug_assert!(exist.is_none());
     probe::BUS_PROBE_LIST.unintr_lock().insert(bus);
+    probe::WAITLIST.notify();
     Ok(())
 }
 
@@ -238,6 +239,7 @@ pub fn register_driver(driver: &'static dyn Driver) {
     drivers.push(driver);
     if !BUSES.unintr_lock_shared().is_empty() {
         probe::DRIVER_PROBE_LIST.unintr_lock().push(driver);
+        probe::WAITLIST.notify();
     }
     logkf!(LogLevel::Info, "Register driver '{}'", driver.name());
 }
