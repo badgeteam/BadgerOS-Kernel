@@ -395,11 +395,18 @@ def gen_rust_marshalling():
                 template.write(gen_warning)
         
         # Syscall dispatcher.
+        # Note: `sigret` is special-cased to bypass `regs.set_retval`. Its handler (`exit_signal`)
+        # fully replaces `regs` with the previously-interrupted context, and writing a generic
+        # return value into `regs.a0` afterward would clobber that just-restored register.
         fd.write("\npub fn dispatch(regs: &mut GpRegfile, sregs: &mut SpRegfile, args: [usize; 6], sysno: usize) {\n")
         fd.write("    let retval: usize;\n")
         fd.write("    match sysno {\n")
         for syscall in syscalls.values():
-            fd.write(f"        {syscall.index} => retval = marshal_{syscall.namespace}_{syscall.name}(")
+            no_retval = syscall.namespace == "proc" and syscall.name == "sigret"
+            if no_retval:
+                fd.write(f"        {syscall.index} => {{ marshal_{syscall.namespace}_{syscall.name}(")
+            else:
+                fd.write(f"        {syscall.index} => retval = marshal_{syscall.namespace}_{syscall.name}(")
             if syscall.regs:
                 fd.write("regs, sregs")
             i = 0
@@ -414,7 +421,10 @@ def gen_rust_marshalling():
                         i += 1
                     fd.write(f"args[{i}] as _")
                 i += 1
-            fd.write(") as _,\n")
+            if no_retval:
+                fd.write("); return; },\n")
+            else:
+                fd.write(") as _,\n")
         fd.write("        _ => retval = -(Errno::ENOSYS as i32) as _,\n")
         fd.write("    }\n")
         fd.write("    regs.set_retval(retval);\n")

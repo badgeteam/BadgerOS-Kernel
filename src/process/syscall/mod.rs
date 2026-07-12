@@ -17,12 +17,12 @@ use super::{
     usercopy::{UserPtr, UserPtrMut, UserSlice, UserSliceMut},
 };
 
-pub mod thread;
-pub mod sys;
-pub mod proc;
-pub mod mem;
-pub mod time;
 pub mod fs;
+pub mod proc;
+pub mod thread;
+pub mod time;
+pub mod mem;
+pub mod sys;
 
 pub fn dispatch(regs: &mut GpRegfile, sregs: &mut SpRegfile, args: [usize; 6], sysno: usize) {
     let retval: usize;
@@ -37,7 +37,7 @@ pub fn dispatch(regs: &mut GpRegfile, sregs: &mut SpRegfile, args: [usize; 6], s
         7 => retval = marshal_proc_fork(regs, sregs) as _,
         8 => retval = marshal_proc_exec(args[0] as _, args[1] as _, args[2] as _) as _,
         9 => retval = marshal_proc_sigaction(args[0] as _, args[1] as _, args[2] as _) as _,
-        10 => retval = marshal_proc_sigret(regs, sregs) as _,
+        10 => { marshal_proc_sigret(regs, sregs); return; },
         11 => retval = marshal_proc_waitpid(args[0] as _, args[1] as _, args[2] as _) as _,
         12 => retval = marshal_fs_open(args[0] as _, args[1] as _, args[2] as _) as _,
         13 => retval = marshal_fs_close(args[0] as _) as _,
