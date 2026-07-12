@@ -49,6 +49,7 @@ use crate::{
         },
     },
     mem::vmm::{self, map::VmSpace},
+    misc::kparam,
     process::{files::FDTable, uapi::wait::w_if_signalled},
 };
 
@@ -145,7 +146,8 @@ pub struct Process {
     tid_counter: AtomicI64,
     threads: Mutex<ProcThreads>,
     /// Queued asynchronous signals.
-    pub sigqueue: Mutex<LinkedList<siginfo_t>>,
+    /// **WARNING:** Despite being a spinlock, this may NOT be acquired from interrupts.
+    pub sigqueue: Spinlock<LinkedList<siginfo_t>>,
     /// Threads waiting on a status change for this process.
     waitlist: Waitlist,
     /// Threads waiting on a status change for any child process.
@@ -220,6 +222,8 @@ impl Process {
 
     /// Create the init process.
     pub fn new_init() -> EResult<Arc<Process>> {
+        unsafe { syscall::SYSCALL_TRACE = kparam::get_kparam("SYSCALL_TRACE").is_some() };
+
         // This assert enforces init isn't accidentally created twice.
         assert!(PID_COUNTER.fetch_add(1, Ordering::Relaxed) == 1);
 
@@ -248,7 +252,7 @@ impl Process {
             waitlist: Waitlist::new(),
             child_waitlist: Waitlist::new(),
             sigtab: Mutex::new(Sigtab::default()),
-            sigqueue: Mutex::new(LinkedList::new()),
+            sigqueue: Spinlock::new(LinkedList::new()),
         };
         proc.prefill_stdio_fds()?;
         let entry = load_executable(
@@ -299,7 +303,7 @@ impl Process {
                 threads: BTreeMap::new(),
                 detached: Vec::new(),
             }),
-            sigqueue: Mutex::new(LinkedList::new()),
+            sigqueue: Spinlock::new(LinkedList::new()),
         };
         let child = Arc::try_new(child)?;
         let mut pcr = self.pcr.unintr_lock();
@@ -472,7 +476,7 @@ impl Process {
     /// Send a signal to an arbitrary thread in this process.
     pub fn send_async_sig(&self, info: siginfo_t) {
         debug_assert!(info.si_signo < 1024);
-        self.sigqueue.unintr_lock().push_back(info);
+        self.sigqueue.lock().push_back(info);
 
         let threads = self.threads.unintr_lock_shared();
         for thread in threads.threads.values() {
@@ -523,7 +527,7 @@ impl Process {
         logkf!(LogLevel::Debug, "Process {} stopped", self.pid);
 
         self.files.unintr_lock().clear();
-        self.sigqueue.unintr_lock().clear();
+        self.sigqueue.lock().clear();
         self.memmap().clear();
     }
 

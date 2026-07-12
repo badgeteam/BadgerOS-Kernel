@@ -97,7 +97,9 @@ pub unsafe extern "C" fn riscv_exception_handler(regs: &mut GpRegfile, sregs: &m
         (*cpulocal).arch.irq_stack = null_mut();
         if let Some(thread) = (*cpulocal).thread.as_deref() {
             thread.runtime().irq_stack = null_mut();
-            thread.runtime().fstate.save_state(sregs);
+            if !sregs.is_kernel_mode() {
+                thread.runtime().fstate.save_state(sregs);
+            }
         }
 
         riscv_exception_handler_impl(regs, sregs);
@@ -119,7 +121,9 @@ pub unsafe extern "C" fn riscv_exception_handler(regs: &mut GpRegfile, sregs: &m
                 }
             }
 
-            thread.runtime().fstate.load_state(sregs);
+            if !sregs.is_kernel_mode() {
+                thread.runtime().fstate.load_state(sregs);
+            }
             thread.runtime().irq_stack = old_irq_stack;
         }
         (*cpulocal).arch.irq_stack = old_irq_stack;

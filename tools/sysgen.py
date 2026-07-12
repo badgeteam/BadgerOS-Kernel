@@ -9,7 +9,7 @@ gen_warning = """
 """
 rust_imports = """
 use crate::{
-    bindings::error::Errno,
+    bindings::{error::Errno, log::LogLevel},
     cpu::thread::{GpRegfile, SpRegfile},
 };
 use core::ffi::*;
@@ -394,12 +394,25 @@ def gen_rust_marshalling():
             with open(f"{template_dir}/{namespace}.rs", "w") as template:
                 template.write(gen_warning)
         
+        fd.write("\n")
+        fd.write("pub static mut SYSCALL_TRACE: bool = false;\n")
+        fd.write("\n")
+        
         # Syscall dispatcher.
         # Note: `sigret` is special-cased to bypass `regs.set_retval`. Its handler (`exit_signal`)
         # fully replaces `regs` with the previously-interrupted context, and writing a generic
         # return value into `regs.a0` afterward would clobber that just-restored register.
-        fd.write("\npub fn dispatch(regs: &mut GpRegfile, sregs: &mut SpRegfile, args: [usize; 6], sysno: usize) {\n")
+        fd.write("pub fn dispatch(regs: &mut GpRegfile, sregs: &mut SpRegfile, args: [usize; 6], sysno: usize) {\n")
         fd.write("    let retval: usize;\n")
+        
+        fd.write("    if unsafe { SYSCALL_TRACE } {\n")
+        fd.write("        match sysno {\n")
+        for syscall in syscalls.values():
+            fd.write(f"            {syscall.index} => logkf!(LogLevel::Debug, \"syscall {syscall.namespace}::{syscall.name}\"),\n")
+        fd.write("            x => logkf!(LogLevel::Warning, \"unknown syscall {}\", x),\n")
+        fd.write("        }\n")
+        fd.write("    }\n") # SYSCALL_TRACE
+        
         fd.write("    match sysno {\n")
         for syscall in syscalls.values():
             no_retval = syscall.namespace == "proc" and syscall.name == "sigret"

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: CC0
 
 use crate::{
-    bindings::error::Errno,
+    bindings::{error::Errno, log::LogLevel},
     cpu::thread::{GpRegfile, SpRegfile},
 };
 use core::ffi::*;
@@ -17,15 +17,69 @@ use super::{
     usercopy::{UserPtr, UserPtrMut, UserSlice, UserSliceMut},
 };
 
-pub mod fs;
-pub mod proc;
 pub mod thread;
-pub mod time;
+pub mod proc;
 pub mod mem;
+pub mod time;
+pub mod fs;
 pub mod sys;
+
+pub static mut SYSCALL_TRACE: bool = false;
 
 pub fn dispatch(regs: &mut GpRegfile, sregs: &mut SpRegfile, args: [usize; 6], sysno: usize) {
     let retval: usize;
+    if unsafe { SYSCALL_TRACE } {
+        match sysno {
+            0 => logkf!(LogLevel::Debug, "syscall thread::yield_time"),
+            1 => logkf!(LogLevel::Debug, "syscall thread::sleep"),
+            2 => logkf!(LogLevel::Debug, "syscall thread::create"),
+            3 => logkf!(LogLevel::Debug, "syscall thread::detach"),
+            4 => logkf!(LogLevel::Debug, "syscall thread::join"),
+            5 => logkf!(LogLevel::Debug, "syscall thread::exit"),
+            6 => logkf!(LogLevel::Debug, "syscall proc::exit"),
+            7 => logkf!(LogLevel::Debug, "syscall proc::fork"),
+            8 => logkf!(LogLevel::Debug, "syscall proc::exec"),
+            9 => logkf!(LogLevel::Debug, "syscall proc::sigaction"),
+            10 => logkf!(LogLevel::Debug, "syscall proc::sigret"),
+            11 => logkf!(LogLevel::Debug, "syscall proc::waitpid"),
+            12 => logkf!(LogLevel::Debug, "syscall fs::open"),
+            13 => logkf!(LogLevel::Debug, "syscall fs::close"),
+            14 => logkf!(LogLevel::Debug, "syscall fs::read"),
+            15 => logkf!(LogLevel::Debug, "syscall fs::write"),
+            16 => logkf!(LogLevel::Debug, "syscall fs::getdents"),
+            17 => logkf!(LogLevel::Debug, "syscall fs::rename"),
+            18 => logkf!(LogLevel::Debug, "syscall fs::stat"),
+            19 => logkf!(LogLevel::Debug, "syscall fs::mkdir"),
+            20 => logkf!(LogLevel::Debug, "syscall fs::rmdir"),
+            21 => logkf!(LogLevel::Debug, "syscall fs::link"),
+            22 => logkf!(LogLevel::Debug, "syscall fs::unlink"),
+            23 => logkf!(LogLevel::Debug, "syscall fs::mkfifo"),
+            24 => logkf!(LogLevel::Debug, "syscall fs::pipe"),
+            25 => logkf!(LogLevel::Debug, "syscall fs::seek"),
+            26 => logkf!(LogLevel::Debug, "syscall mem::map"),
+            27 => logkf!(LogLevel::Debug, "syscall mem::unmap"),
+            28 => logkf!(LogLevel::Debug, "syscall mem::protect"),
+            29 => logkf!(LogLevel::Debug, "syscall sys::log"),
+            30 => logkf!(LogLevel::Debug, "syscall time::gettime"),
+            31 => logkf!(LogLevel::Debug, "syscall thread::kill"),
+            32 => logkf!(LogLevel::Debug, "syscall proc::kill"),
+            33 => logkf!(LogLevel::Debug, "syscall proc::getid"),
+            34 => logkf!(LogLevel::Debug, "syscall fs::symlink"),
+            35 => logkf!(LogLevel::Debug, "syscall fs::dup"),
+            36 => logkf!(LogLevel::Debug, "syscall thread::sigmask"),
+            37 => logkf!(LogLevel::Debug, "syscall sys::uname"),
+            38 => logkf!(LogLevel::Debug, "syscall fs::isatty"),
+            39 => logkf!(LogLevel::Debug, "syscall fs::tcgetattr"),
+            40 => logkf!(LogLevel::Debug, "syscall fs::tcsetattr"),
+            41 => logkf!(LogLevel::Debug, "syscall fs::getcwd"),
+            42 => logkf!(LogLevel::Debug, "syscall fs::chdir"),
+            43 => logkf!(LogLevel::Debug, "syscall fs::getfd"),
+            44 => logkf!(LogLevel::Debug, "syscall fs::setfd"),
+            45 => logkf!(LogLevel::Debug, "syscall fs::getfl"),
+            46 => logkf!(LogLevel::Debug, "syscall fs::setfl"),
+            x => logkf!(LogLevel::Warning, "unknown syscall {}", x),
+        }
+    }
     match sysno {
         0 => retval = marshal_thread_yield_time() as _,
         1 => retval = marshal_thread_sleep(args[0] as _) as _,

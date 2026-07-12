@@ -298,8 +298,8 @@ impl FloatState {
                 "fsd f\\+, \\+*8({})",
                 ".endr",
                 ".option pop",
-                in(reg) self,
-                out(reg) self.fcsr
+                out(reg) self.fcsr,
+                in(reg) self
             );
             asm!("csrc sstatus, {}", in(reg) xs::DIRTY << SSTATUS_FS_BIT);
         }

@@ -56,3 +56,6 @@ Example value: Booting from the first SATA drive: `ROOTDISK=sata0`.
 If omitted, BadgerOS will look through all disks found, where the disk that the kernel was loaded from is first.
 
 *See also: [Parameter: ROOT](#parameter-root).*
+
+### Parameter: SYSCALL_TRACE
+Causes every system call made to be logged.

@@ -313,7 +313,7 @@ impl Thread {
 
         drop(queue);
         if let Some(proc) = self.process.clone() {
-            let mut queue = proc.sigqueue.unintr_lock();
+            let mut queue = proc.sigqueue.lock();
 
             // The get signals for the process in general.
             let mut iter = queue.cursor_front_mut();
