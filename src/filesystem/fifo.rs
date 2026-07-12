@@ -127,12 +127,23 @@ impl FifoShared {
 
     /// Handle a file close on the FIFO.
     fn close(&self, had_read: bool, had_write: bool) {
-        // TODO: Destroy buffer if all readers or all writers close.
+        let mut destroy = false;
         if had_read {
-            self.read_count.fetch_sub(1, Ordering::Relaxed);
+            destroy |= self.read_count.fetch_sub(1, Ordering::Relaxed) == 1;
         }
         if had_write {
-            self.write_count.fetch_sub(1, Ordering::Relaxed);
+            destroy |= self.write_count.fetch_sub(1, Ordering::Relaxed) == 1;
+        }
+
+        if destroy {
+            let _noirq = IrqGuard::new();
+
+            let mut guard = self.buffer.lock();
+            if self.read_count.load(Ordering::Relaxed) == 0
+                || self.write_count.load(Ordering::Relaxed) == 0
+            {
+                *guard = None;
+            }
         }
     }
 

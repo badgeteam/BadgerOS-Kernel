@@ -1164,7 +1164,6 @@ pub fn make_file(at: Option<&dyn File>, path: &[u8], spec: MakeFileSpec) -> ERes
 }
 
 /// Rename a file within the same filesystem.
-/// TODO: Default POSIX semantics actually delete the target, this doesn't.
 pub fn rename(
     old_at: Option<&dyn File>,
     old_path: &[u8],
