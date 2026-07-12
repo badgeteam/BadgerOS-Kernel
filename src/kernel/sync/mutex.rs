@@ -13,6 +13,7 @@ use crate::{
     bindings::{
         error::{EResult, Errno},
         raw::{errno_t, timestamp_us_t},
+        time_us,
     },
     kernel::sync::waitlist::Waitlist,
 };
@@ -36,12 +37,12 @@ impl RawMutex {
         RawMutexGuard::new(self, timestamp_us_t::MAX)
     }
 
-    pub fn timed_lock<'a>(&'a self, timeout: timestamp_us_t) -> EResult<RawMutexGuard<'a>> {
-        RawMutexGuard::new(self, timeout)
-    }
-
     pub fn lock_shared<'a>(&'a self) -> EResult<SharedRawMutexGuard<'a>> {
         SharedRawMutexGuard::new(self, timestamp_us_t::MAX)
+    }
+
+    pub fn timed_lock<'a>(&'a self, timeout: timestamp_us_t) -> EResult<RawMutexGuard<'a>> {
+        RawMutexGuard::new(self, timeout)
     }
 
     pub fn timed_lock_shared<'a>(
@@ -51,16 +52,25 @@ impl RawMutex {
         SharedRawMutexGuard::new(self, timeout)
     }
 
-    /// Version of [`Self::lock`] that can't be interrupted.
     pub fn unintr_lock<'a>(&'a self) -> RawMutexGuard<'a> {
         // TODO: Can't *actually* be interrupted yet because of no signals being implemented.
         self.lock().unwrap()
     }
 
-    /// Version of [`Self::lock_shared`] that can't be interrupted.
     pub fn unintr_lock_shared<'a>(&'a self) -> SharedRawMutexGuard<'a> {
         // TODO: Can't *actually* be interrupted yet because of no signals being implemented.
         self.lock_shared().unwrap()
+    }
+
+    pub fn unintr_timed_lock<'a>(&'a self, timeout: timestamp_us_t) -> EResult<RawMutexGuard<'a>> {
+        RawMutexGuard::unintr_new(self, timeout)
+    }
+
+    pub fn unintr_timed_lock_shared<'a>(
+        &'a self,
+        timeout: timestamp_us_t,
+    ) -> EResult<SharedRawMutexGuard<'a>> {
+        SharedRawMutexGuard::unintr_new(self, timeout)
     }
 }
 
@@ -88,14 +98,48 @@ impl<'a> RawMutexGuard<'a> {
         }
 
         // Slow path.
+        let lim = time_us().saturating_add(timeout);
         while !mutex
             .shares
             .compare_exchange_weak(0, u32::MAX, Ordering::Acquire, Ordering::Relaxed)
             .is_ok()
         {
+            let Some(timeout) = lim.checked_sub(time_us()) else {
+                return Err(Errno::ETIMEDOUT);
+            };
             mutex
                 .waitlist
                 .block(timeout, || mutex.shares.load(Ordering::Relaxed) != 0)?;
+        }
+
+        Ok(Self { mutex })
+    }
+
+    fn unintr_new(mutex: &'a RawMutex, timeout: timestamp_us_t) -> EResult<Self> {
+        // Fast path.
+        for _ in 0..50 {
+            if mutex
+                .shares
+                .compare_exchange_weak(0, u32::MAX, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+            {
+                return Ok(Self { mutex });
+            }
+        }
+
+        // Slow path.
+        let lim = time_us().saturating_add(timeout);
+        while !mutex
+            .shares
+            .compare_exchange_weak(0, u32::MAX, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
+            let Some(timeout) = lim.checked_sub(time_us()) else {
+                return Err(Errno::ETIMEDOUT);
+            };
+            mutex
+                .waitlist
+                .unintr_block(timeout, || mutex.shares.load(Ordering::Relaxed) != 0);
         }
 
         Ok(Self { mutex })
@@ -146,12 +190,62 @@ impl<'a> SharedRawMutexGuard<'a> {
         }
 
         // Slow path.
+        let lim = time_us().saturating_add(timeout);
         loop {
+            let Some(timeout) = lim.checked_sub(time_us()) else {
+                return Err(Errno::ETIMEDOUT);
+            };
             if old == u32::MAX {
                 old = mutex.shares.load(Ordering::Relaxed);
                 mutex
                     .waitlist
                     .block(timeout, || mutex.shares.load(Ordering::Relaxed) == u32::MAX)?;
+                continue;
+            }
+            match mutex.shares.compare_exchange_weak(
+                old,
+                old + 1,
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return Ok(Self { mutex }),
+                Err(x) => {
+                    old = x;
+                }
+            }
+        }
+    }
+
+    fn unintr_new(mutex: &'a RawMutex, timeout: timestamp_us_t) -> EResult<Self> {
+        // Fast path.
+        let mut old = mutex.shares.load(Ordering::Relaxed);
+        for _ in 0..50 {
+            if old == u32::MAX {
+                old = mutex.shares.load(Ordering::Relaxed);
+                continue;
+            }
+            match mutex.shares.compare_exchange_weak(
+                old,
+                old + 1,
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return Ok(Self { mutex }),
+                Err(x) => old = x,
+            }
+        }
+
+        // Slow path.
+        let lim = time_us().saturating_add(timeout);
+        loop {
+            let Some(timeout) = lim.checked_sub(time_us()) else {
+                return Err(Errno::ETIMEDOUT);
+            };
+            if old == u32::MAX {
+                old = mutex.shares.load(Ordering::Relaxed);
+                mutex
+                    .waitlist
+                    .unintr_block(timeout, || mutex.shares.load(Ordering::Relaxed) == u32::MAX);
                 continue;
             }
             match mutex.shares.compare_exchange_weak(
@@ -219,20 +313,18 @@ impl<T> Mutex<T> {
         SharedMutexGuard::new(self, timeout)
     }
 
-    pub unsafe fn data(&self) -> &mut T {
-        unsafe { self.data.as_mut_unchecked() }
-    }
-
     /// Version of [`Self::lock`] that can't be interrupted.
     pub fn unintr_lock<'a>(&'a self) -> MutexGuard<'a, T> {
-        // TODO: Can't *actually* be interrupted yet because of no signals being implemented.
-        self.lock().unwrap()
+        MutexGuard::unintr_new(self, timestamp_us_t::MAX).unwrap()
     }
 
     /// Version of [`Self::lock_shared`] that can't be interrupted.
     pub fn unintr_lock_shared<'a>(&'a self) -> SharedMutexGuard<'a, T> {
-        // TODO: Can't *actually* be interrupted yet because of no signals being implemented.
-        self.lock_shared().unwrap()
+        SharedMutexGuard::unintr_new(self, timestamp_us_t::MAX).unwrap()
+    }
+
+    pub unsafe fn data(&self) -> &mut T {
+        unsafe { self.data.as_mut_unchecked() }
     }
 }
 
@@ -257,6 +349,13 @@ impl<'a, T> MutexGuard<'a, T> {
     }
 
     fn new(mutex: &'a Mutex<T>, timeout: timestamp_us_t) -> EResult<Self> {
+        Ok(Self {
+            inner: mutex.inner.timed_lock(timeout)?,
+            data: unsafe { mutex.data.as_mut_unchecked() },
+        })
+    }
+
+    fn unintr_new(mutex: &'a Mutex<T>, timeout: timestamp_us_t) -> EResult<Self> {
         Ok(Self {
             inner: mutex.inner.timed_lock(timeout)?,
             data: unsafe { mutex.data.as_mut_unchecked() },
@@ -343,6 +442,13 @@ impl<'a, T> SharedMutexGuard<'a, T> {
     fn new(mutex: &'a Mutex<T>, timeout: timestamp_us_t) -> EResult<Self> {
         Ok(Self {
             inner: mutex.inner.timed_lock_shared(timeout)?,
+            data: unsafe { mutex.data.as_ref_unchecked() },
+        })
+    }
+
+    fn unintr_new(mutex: &'a Mutex<T>, timeout: timestamp_us_t) -> EResult<Self> {
+        Ok(Self {
+            inner: mutex.inner.unintr_timed_lock_shared(timeout)?,
             data: unsafe { mutex.data.as_ref_unchecked() },
         })
     }
