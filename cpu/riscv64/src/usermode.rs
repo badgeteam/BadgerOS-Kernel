@@ -72,8 +72,8 @@ pub unsafe fn enter_signal(
     fregs.fcsr = runtime.fstate.fcsr as _;
 
     let mut sp = regs.sp;
-    sp -= sp % 16;
     sp -= size_of::<SignalFrame>();
+    sp -= sp % 16;
     let mut ptr = UserPtr::new_mut(sp as *mut SignalFrame)?;
     ptr.write(frame)?;
 

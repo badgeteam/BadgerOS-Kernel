@@ -4,7 +4,10 @@
 use alloc::{ffi::CString, sync::Arc, vec::Vec};
 
 use crate::{
-    bindings::error::{EResult, Errno},
+    bindings::{
+        error::{EResult, Errno},
+        log::LogLevel,
+    },
     cpu::{
         self,
         thread::{GpRegfile, SpRegfile},
@@ -123,6 +126,10 @@ pub(super) fn sigret(regs: &mut GpRegfile, sregs: &mut SpRegfile) -> EResult<()>
     if unsafe { cpu::usermode::exit_signal(regs, sregs) }.is_err() {
         signal_die(Signal::SIGSEGV as i32);
     }
+
+    logkf!(LogLevel::Debug, "regs:\n{}", regs);
+    logkf!(LogLevel::Debug, "sregs:\n{}", sregs);
+
     Ok(())
 }
 
