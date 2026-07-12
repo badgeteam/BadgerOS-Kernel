@@ -323,6 +323,7 @@ impl FloatState {
             );
             asm!("csrc sstatus, {}", in(reg) xs::DIRTY << SSTATUS_FS_BIT);
         }
+        self.float_enable = true;
     }
 }
 
