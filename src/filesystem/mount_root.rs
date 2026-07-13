@@ -13,7 +13,7 @@ use crate::{
 use super::{
     media::{Media, MediaType},
     mount,
-    partition::{Partition, get_volume_info},
+    partition::Partition,
 };
 
 pub static mut KFILE_GPT_DISK: Uuid = Uuid::nil();
@@ -25,7 +25,7 @@ fn find_part_by_guid(guid: Uuid, is_type: bool) -> Option<(Arc<dyn BlockDevice>,
     let devs = registry::devices_by_trait::<dyn BlockDevice>().ok()?;
     for dev in devs {
         let _: Option<_> = try {
-            let info = get_volume_info(&*dev).ok()??;
+            let info = dev.volume_info(false).ok()??;
             for part in info.parts {
                 if if is_type { part.type_ } else { part.uuid } == guid {
                     return Some((dev, part));
@@ -41,7 +41,7 @@ fn find_disk_by_guid(guid: Uuid) -> Option<Arc<dyn BlockDevice>> {
     let devs = registry::devices_by_trait::<dyn BlockDevice>().ok()?;
     for dev in devs {
         let _: Option<_> = try {
-            let info = get_volume_info(&*dev).ok()??;
+            let info = dev.volume_info(false).ok()??;
             if info.uuid == guid {
                 return Some(dev);
             }
@@ -113,7 +113,7 @@ fn filter_parts(
     };
 
     for dev in devs {
-        if let Ok(Some(info)) = get_volume_info(&*dev) {
+        if let Ok(Some(info)) = dev.volume_info(false) {
             for part in info.parts {
                 if filter(&part) {
                     return Some((dev, part));
@@ -189,7 +189,7 @@ pub fn mount_root_impl(do_panic: bool) -> bool {
             &root_disk
         } {
             try {
-                let info = get_volume_info(&**root_disk).ok()??;
+                let info = root_disk.volume_info(false).ok()??;
                 let index = param[5..].parse::<usize>().ok()?;
                 (index < info.parts.len())
                     .then(|| (root_disk.clone(), Some(info.parts[index].clone())))?
