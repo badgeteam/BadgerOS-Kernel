@@ -128,6 +128,43 @@ impl PhysMap {
         self.root
     }
 
+    /// Create one or more page-sized mappings.
+    pub unsafe fn map_mutiple(
+        &self,
+        mut vaddr: usize,
+        mut paddr: PAddrr,
+        flags: u32,
+        mut len: usize,
+    ) -> EResult<()> {
+        unsafe {
+            debug_assert!(paddr % PAGE_SIZE as usize == 0);
+            debug_assert!(len % PAGE_SIZE as usize == 0);
+
+            while len > 0 {
+                let level = calc_superpage(paddr, vaddr, len);
+                let max = PAGE_SIZE << (BITS_PER_LEVEL * level as u32);
+
+                self.map_raw_impl(
+                    vaddr,
+                    Some(PTE {
+                        ppn: paddr / PAGE_SIZE as PAddrr,
+                        flags,
+                        level,
+                        valid: true,
+                        leaf: true,
+                    }),
+                    level,
+                )?;
+
+                vaddr += max as PAddrr;
+                paddr += max as usize;
+                len -= max as usize;
+            }
+
+            Ok(())
+        }
+    }
+
     /// Create or replace one page-sized mapping.
     pub unsafe fn map(&self, vaddr: usize, paddr: PAddrr, flags: u32) -> EResult<()> {
         unsafe {
@@ -192,60 +229,71 @@ impl PhysMap {
 
         // Descend the page table to the target level.
         for level in (level + 1..unsafe { PAGING_LEVELS as u8 }).rev() {
-            let index = get_vpn_index(vaddr, level);
-            let raw_pte = unsafe { read_pte(pgtable_paddr, index) };
-            let pte = PTE::unpack(raw_pte, level);
+            loop {
+                let index = get_vpn_index(vaddr, level);
+                let raw_pte = unsafe { read_pte(pgtable_paddr, index) };
+                let pte = PTE::unpack(raw_pte, level);
 
-            pgtable_paddr = if !pte.valid {
-                // Create a new level of page table.
-                if null_pte {
-                    // Unless the new PTE is null.
-                    return Ok(());
-                }
-                let paddr = alloc_pgtable_page()?;
-                unsafe {
-                    let res = cmpxchg_pte(
-                        pgtable_paddr,
-                        index,
-                        raw_pte,
-                        PTE {
-                            ppn: paddr / PAGE_SIZE as usize,
-                            flags: global_flag,
-                            valid: true,
-                            leaf: false,
-                            level,
-                        }
-                        .pack(),
-                    );
-                    if !res {
-                        phys_page_free(paddr);
-                        pgtable_paddr
-                    } else {
-                        paddr
+                pgtable_paddr = if !pte.valid {
+                    // Create a new level of page table.
+                    if null_pte {
+                        // Unless the new PTE is null.
+                        return Ok(());
                     }
-                }
-            } else if pte.leaf {
-                // A superpage is split into smaller pages.
-                let paddr = split_pgtable_leaf(pte, level - 1)?;
-                unsafe {
-                    // TODO: Currently unreachable, but this is incorrect.
-                    xchg_pte(
-                        pgtable_paddr,
-                        index,
-                        PTE {
-                            ppn: paddr / PAGE_SIZE as usize,
-                            flags: global_flag,
-                            valid: true,
-                            leaf: false,
-                            level,
+                    let paddr = alloc_pgtable_page()?;
+                    unsafe {
+                        let res = cmpxchg_pte(
+                            pgtable_paddr,
+                            index,
+                            raw_pte,
+                            PTE {
+                                ppn: paddr / PAGE_SIZE as usize,
+                                flags: global_flag,
+                                valid: true,
+                                leaf: false,
+                                level,
+                            }
+                            .pack(),
+                        );
+                        if !res {
+                            // If the PTE had concurrently changed, try again.
+                            phys_page_free(paddr);
+                            continue;
+                        } else {
+                            paddr
                         }
-                        .pack(),
-                    )
+                    }
+                } else if pte.leaf {
+                    // A superpage is split into smaller pages.
+                    let paddr = split_pgtable_leaf(pte, level - 1)?;
+                    unsafe {
+                        let ok = cmpxchg_pte(
+                            pgtable_paddr,
+                            index,
+                            raw_pte,
+                            PTE {
+                                ppn: paddr / PAGE_SIZE as usize,
+                                flags: global_flag,
+                                valid: true,
+                                leaf: false,
+                                level,
+                            }
+                            .pack(),
+                        );
+                        if !ok {
+                            // If the PTE had concurrently changed, try again.
+                            Self::drop_impl(paddr, 0..PTE_PER_PAGE, level - 1);
+                            continue;
+                        } else {
+                            paddr
+                        }
+                    }
+                } else {
+                    pte.ppn * PAGE_SIZE as usize
                 };
-                paddr
-            } else {
-                pte.ppn * PAGE_SIZE as usize
-            };
+                // Loop with break at the end because Rust doesn't do labels.
+                break;
+            }
         }
 
         // Write new PTE.
@@ -442,6 +490,12 @@ impl Debug for Virt2Phys {
             .field("valid", &self.valid)
             .finish()
     }
+}
+
+/// Calculate the maximum superpage order.
+fn calc_superpage(paddr: PAddrr, vaddr: usize, len: usize) -> u8 {
+    let align = (paddr | vaddr as usize | len as usize).trailing_zeros() - PAGE_SIZE.ilog2();
+    (align / BITS_PER_LEVEL as u32) as u8
 }
 
 /// Get the index in the given page table level for the given virtual address.
