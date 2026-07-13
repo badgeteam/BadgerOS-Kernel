@@ -407,7 +407,9 @@ impl Process {
         }
 
         let mut serial_devs = dev2::registry::devices_by_trait::<dyn CharDevice>()?;
-        let stdio_dev = serial_devs.try_remove(0).unwrap_or_else(|| todo!());
+        let stdio_dev = serial_devs
+            .try_remove(0)
+            .unwrap_or_else(|| dev2::void::null_instance());
         let wfile = Arc::try_new(CharDevFile::new_raw(stdio_dev.clone(), oflags::WRITE_ONLY))?;
         let rfile = Arc::try_new(CharDevFile::new_raw(stdio_dev, oflags::READ_ONLY))?;
 

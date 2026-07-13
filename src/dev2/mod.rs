@@ -20,6 +20,7 @@ pub mod driver;
 pub mod dtb;
 pub mod probe;
 pub mod registry;
+pub mod void;
 
 /// Wrapper struct so that [`Device::get_trait_vtable()`] needs an `unsafe` to implement non-stub.
 pub struct DevDynMetadata(NonNull<()>);
@@ -155,6 +156,8 @@ impl Ord for dyn Device {
 /// Initialize the device subsystem.
 pub unsafe fn init() {
     registry::init();
+
+    unsafe { void::init() };
 
     #[cfg(feature = "dtb")]
     {
