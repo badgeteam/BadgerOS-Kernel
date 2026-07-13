@@ -26,6 +26,7 @@ use super::{
 use crate::{
     LogLevel,
     bindings::error::{EResult, Errno},
+    config::PAGE_SIZE,
     dev2::Device,
     filesystem::fifo::FifoShared,
     kernel::sync::{
@@ -453,11 +454,18 @@ impl MemObject for VNode {
         guard.retain(|e| !core::ptr::addr_eq(e.1, range));
     }
 
-    fn get(&self, offset: u64) -> Option<MappablePage> {
-        self.pagecache.as_ref().unwrap().get(offset).unwrap_or(None)
+    fn get(&self, offset: u64) -> Option<(MappablePage, usize)> {
+        Some((
+            self.pagecache
+                .as_ref()
+                .unwrap()
+                .get(offset)
+                .unwrap_or(None)?,
+            PAGE_SIZE as usize,
+        ))
     }
 
-    fn alloc(&self, offset: u64) -> EResult<MappablePage> {
+    fn alloc(&self, offset: u64) -> EResult<(MappablePage, usize)> {
         let guard = self.mtx.unintr_lock_shared();
         if offset >= guard.ops.get_size(self) {
             return Err(Errno::ENXIO);
@@ -466,7 +474,10 @@ impl MemObject for VNode {
             vnode: self,
             ops: &*guard.ops,
         };
-        self.pagecache.as_ref().unwrap().alloc(&pager, offset)
+        Ok((
+            self.pagecache.as_ref().unwrap().alloc(&pager, offset)?,
+            PAGE_SIZE as usize,
+        ))
     }
 
     fn mark_dirty(&self, offset: u64) {

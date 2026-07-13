@@ -33,6 +33,8 @@ pub const ANONYMOUS: u32 = 0x20;
 pub const DENYWRITE: u32 = 0x40;
 /// Mapping must be populated immediately.
 pub const POPULATE: u32 = 0x8000;
+/// Use hugepages where possible.
+pub const HUGETLB: u32 = 0x40000;
 /// Kernel mapping need not be populated immediately; has no effect on user mappings.
 /// If omitted, the mapping is forced to be [`SHARED`] and [`POPULATE`].
 pub const LAZY_KERNEL: u32 = 0x8000_0000;
@@ -216,7 +218,8 @@ impl MapEntryInner {
 
     /// Get the page currently mapped at `offset`.
     /// Must only be called if there is no page currently mapped for `offset`.
-    fn get_page(&self, offset: usize) -> Option<MappablePage> {
+    /// Returns a mappable page and many pages contiguous it is (refcount of the first page in the buddy block is used).
+    fn get_page(&self, offset: usize) -> Option<(MappablePage, usize)> {
         debug_assert!(offset % PAGE_SIZE as usize == 0);
         if let Some(amap) = &self.amap
             && let Some(mut page) = amap.get_page(offset)
@@ -226,23 +229,28 @@ impl MapEntryInner {
                 page.clear_writable();
             }
 
-            return Some(page);
+            return Some((page, PAGE_SIZE as usize));
         }
 
         if let Some(mapping) = &self.mapping {
             let mut page = mapping.object.get(offset as u64 + mapping.offset)?;
             if self.map_flags & SHARED == 0 {
                 // Private mappings; can't directly write to the memory object.
-                page.clear_writable();
+                page.0.clear_writable();
             }
             Some(page)
         } else {
-            Some(zeroes_page())
+            Some((zeroes_page(), PAGE_SIZE as usize))
         }
     }
 
     /// Get or allocate the page at `offset`.
-    unsafe fn alloc_page(&mut self, offset: usize, for_writing: bool) -> EResult<MappablePage> {
+    /// Returns a mappable page and many pages contiguous it is (refcount of the first page in the buddy block is used).
+    unsafe fn alloc_page(
+        &mut self,
+        offset: usize,
+        for_writing: bool,
+    ) -> EResult<(MappablePage, usize)> {
         debug_assert!(offset % PAGE_SIZE as usize == 0);
 
         let orig;
@@ -253,7 +261,7 @@ impl MapEntryInner {
                 page.clear_writable();
             }
             if !for_writing || page.writable() {
-                return Ok(page);
+                return Ok((page, PAGE_SIZE as usize));
             }
             orig = Some(page);
         } else {
@@ -262,20 +270,20 @@ impl MapEntryInner {
             if let Some(mapping) = &self.mapping {
                 paddr = mapping.object.alloc(offset as u64 + mapping.offset)?;
             } else {
-                paddr = zeroes_page();
+                paddr = (zeroes_page(), PAGE_SIZE as usize);
             }
 
             if !for_writing || ((self.map_flags & SHARED) != 0 && self.mapping.is_some()) {
                 // Page can be immediately mapped given for the given access type.
                 if (self.map_flags & SHARED) == 0 {
-                    paddr.clear_writable();
+                    paddr.0.clear_writable();
                 }
                 return Ok(paddr);
             }
 
             // Page can't be immediately mapped; instead, it shall be copied to a new anon.
             // However, we don't do this for the page of zeroes so we know to memset instead of memcpy later.
-            orig = self.mapping.is_some().then_some(paddr);
+            orig = self.mapping.is_some().then_some(paddr.0);
         }
 
         // Ensure we have a mutable reference to an AnonMap.
@@ -294,7 +302,10 @@ impl MapEntryInner {
         let amap = Arc::get_mut(self.amap.as_mut().unwrap()).unwrap();
 
         // SAFETY: `orig` here comes from the memory object, which promises it is valid physical memory.
-        unsafe { amap.alloc_page(offset, orig.as_ref().map(MappablePage::paddr)) }
+        Ok((
+            unsafe { amap.alloc_page(offset, orig.as_ref().map(MappablePage::paddr))? },
+            PAGE_SIZE as usize,
+        ))
     }
 }
 
@@ -796,7 +807,8 @@ impl VmSpaceInner {
         // Get the page from either the cache or the memory object.
         let existing = guard.get_page(page_vaddr - entry.range.start);
         let page;
-        if existing.is_none() || (access == prot::WRITE && !existing.as_ref().unwrap().writable()) {
+        if existing.is_none() || (access == prot::WRITE && !existing.as_ref().unwrap().0.writable())
+        {
             // SAFETY: We know the existing page to be owned by the same range, so it is readable.
             page =
                 unsafe { guard.alloc_page(page_vaddr - entry.range.start, access == prot::WRITE)? };
@@ -807,7 +819,7 @@ impl VmSpaceInner {
         // SAFETY: The page mapped here is provided by the range and we need to trust it is correct.
         unsafe {
             let mut prot_flags = guard.prot_flags;
-            if !page.writable() && guard.map_flags & SHARED == 0 {
+            if !page.0.writable() && guard.map_flags & SHARED == 0 {
                 prot_flags &= !prot::WRITE;
             }
             let mut mmu_flags = prot::into_mmu_flags(prot_flags) | physmap::flags::A;
@@ -816,13 +828,13 @@ impl VmSpaceInner {
             } else {
                 mmu_flags |= physmap::flags::G;
             }
-            if page.refcounted() {
+            if page.0.refcounted() {
                 mmu_flags |= physmap::flags::REFCOUNT;
             }
-            if !page.tracks_dirty() {
+            if !page.0.tracks_dirty() {
                 mmu_flags |= physmap::flags::D;
             }
-            pmap.map(page_vaddr, page.into_paddr(), mmu_flags)?;
+            pmap.map(page_vaddr, page.0.into_paddr(), mmu_flags)?;
         }
 
         Ok(())

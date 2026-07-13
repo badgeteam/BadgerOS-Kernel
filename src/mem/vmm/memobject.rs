@@ -2,10 +2,13 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::{fmt::Debug, num::NonZeroUsize, sync::atomic::Ordering};
+use core::{fmt::Debug, num::NonZeroUsize, ops::Div, sync::atomic::Ordering};
 
 use crate::{
-    bindings::{error::EResult, log::LogLevel},
+    bindings::{
+        error::{EResult, Errno},
+        log::LogLevel,
+    },
     config::PAGE_SIZE,
     mem::pmm::{self, PAddrr},
 };
@@ -100,11 +103,13 @@ pub trait MemObject: Debug {
     }
 
     /// Try to get an existing page from the object.
+    /// Returns a mappable page and many pages contiguous it is (refcount of the first page in the buddy block is used).
     /// May spuriously return [`None`] even if the page is available.
-    fn get(&self, offset: u64) -> Option<MappablePage>;
+    fn get(&self, offset: u64) -> Option<(MappablePage, usize)>;
 
     /// Allocate a new page from the object.
-    fn alloc(&self, offset: u64) -> EResult<MappablePage>;
+    /// Returns a mappable page and many pages contiguous it is (refcount of the first page in the buddy block is used).
+    fn alloc(&self, offset: u64) -> EResult<(MappablePage, usize)>;
 
     /// Mark a page as being dirty.
     fn mark_dirty(&self, offset: u64);
@@ -135,14 +140,26 @@ impl MemObject for RawMemory {
         self.len as u64
     }
 
-    fn get(&self, offset: u64) -> Option<MappablePage> {
+    fn get(&self, offset: u64) -> Option<(MappablePage, usize)> {
+        if offset.checked_add(PAGE_SIZE as u64)? > self.len as u64 {
+            return None;
+        }
         // SAFETY: The creator of this object guaranteed that the memory is valid.
-        Some(unsafe { MappablePage::new(self.paddr + offset as usize, false, true, false) })
+        Some((
+            unsafe { MappablePage::new(self.paddr + offset as usize, false, true, false) },
+            (self.len as u64 - offset).div(PAGE_SIZE as u64) as usize,
+        ))
     }
 
-    fn alloc(&self, offset: u64) -> EResult<MappablePage> {
+    fn alloc(&self, offset: u64) -> EResult<(MappablePage, usize)> {
+        if offset.checked_add(PAGE_SIZE as u64).ok_or(Errno::EFAULT)? > self.len as u64 {
+            return Err(Errno::EFAULT);
+        }
         // SAFETY: The creator of this object guaranteed that the memory is valid.
-        Ok(unsafe { MappablePage::new(self.paddr + offset as usize, false, true, false) })
+        Ok((
+            unsafe { MappablePage::new(self.paddr + offset as usize, false, true, false) },
+            (self.len as u64 - offset).div(PAGE_SIZE as u64) as usize,
+        ))
     }
 
     fn mark_dirty(&self, _offset: u64) {}

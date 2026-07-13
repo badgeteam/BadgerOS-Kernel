@@ -157,7 +157,7 @@ pub unsafe fn init() {
                 size,
                 vpn,
                 0..0,
-                map::FIXED | map::POPULATE | map::SHARED,
+                map::FIXED | map::POPULATE | map::SHARED | map::HUGETLB,
                 prot::READ | prot::EXEC,
                 Some(Mapping {
                     offset: 0,
@@ -175,7 +175,7 @@ pub unsafe fn init() {
                 size,
                 vpn,
                 0..0,
-                map::FIXED | map::POPULATE | map::SHARED,
+                map::FIXED | map::POPULATE | map::SHARED | map::HUGETLB,
                 prot::READ,
                 Some(Mapping {
                     offset: 0,
@@ -193,7 +193,7 @@ pub unsafe fn init() {
                 size,
                 vpn,
                 0..0,
-                map::FIXED | map::POPULATE | map::SHARED,
+                map::FIXED | map::POPULATE | map::SHARED | map::HUGETLB,
                 prot::READ | prot::WRITE,
                 Some(Mapping {
                     offset: 0,
@@ -210,7 +210,7 @@ pub unsafe fn init() {
                 HHDM_SIZE,
                 HHDM_VADDR,
                 0..0,
-                map::FIXED | map::POPULATE | map::SHARED,
+                map::FIXED | map::POPULATE | map::SHARED | map::HUGETLB,
                 prot::READ | prot::WRITE,
                 Some(Mapping {
                     offset: 0,
