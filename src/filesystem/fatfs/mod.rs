@@ -25,7 +25,7 @@ use crate::{
 };
 
 use super::{
-    FSDRIVERS, MakeFileSpec, NAME_MAX, NodeType, Stat, UnlinkMode,
+    FSDRIVERS, MakeFileSpec, NAME_MAX, InodeType, Stat, UnlinkMode,
     media::Media,
     vfs::{VNode, VNodeOps, Vfs, VfsDriver, VfsOps, mflags::MFlags},
 };
@@ -222,9 +222,9 @@ impl FatVNode {
         name_copy.copy_from_slice(name);
 
         let type_ = if dirent.attr & attr::DIRECTORY != 0 {
-            NodeType::Directory
+            InodeType::Directory
         } else {
-            NodeType::Regular
+            InodeType::Regular
         };
 
         Ok(super::Dirent {
@@ -648,7 +648,7 @@ impl VNodeOps for FatVNode {
 
         self.len = new_size;
         if let Some(dirent_disk_offset) = *dirent_disk_offset
-            && vnode_self.type_ == NodeType::Regular
+            && vnode_self.type_ == InodeType::Regular
         {
             // Update length, but only for regular files.
             let len = new_size.to_le_bytes();
@@ -979,11 +979,11 @@ impl VNodeOps for FatVNode {
         self.len as u64
     }
 
-    fn get_type(&self, _vnode_self: &VNode) -> NodeType {
+    fn get_type(&self, _vnode_self: &VNode) -> InodeType {
         if self.is_dir {
-            NodeType::Directory
+            InodeType::Directory
         } else {
-            NodeType::Regular
+            InodeType::Regular
         }
     }
 

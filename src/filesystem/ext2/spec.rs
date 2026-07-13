@@ -4,7 +4,7 @@
 
 use static_assertions::assert_eq_size;
 
-use crate::{bindings::error::Errno, filesystem::NodeType};
+use crate::{bindings::error::Errno, filesystem::InodeType};
 
 /// Calls conversion function `$func` on integers in `$type`.
 #[rustfmt::skip]
@@ -238,32 +238,32 @@ pub enum Mode {
     Fifo = 0x1000,
 }
 
-impl Into<NodeType> for Mode {
-    fn into(self) -> NodeType {
+impl Into<InodeType> for Mode {
+    fn into(self) -> InodeType {
         match self {
-            Mode::UnixSocket => NodeType::UnixSocket,
-            Mode::Symlink => NodeType::Symlink,
-            Mode::Regular => NodeType::Regular,
-            Mode::BlockDev => NodeType::BlockDev,
-            Mode::Directory => NodeType::Directory,
-            Mode::CharDev => NodeType::CharDev,
-            Mode::Fifo => NodeType::Fifo,
+            Mode::UnixSocket => InodeType::UnixSocket,
+            Mode::Symlink => InodeType::Symlink,
+            Mode::Regular => InodeType::Regular,
+            Mode::BlockDev => InodeType::BlockDev,
+            Mode::Directory => InodeType::Directory,
+            Mode::CharDev => InodeType::CharDev,
+            Mode::Fifo => InodeType::Fifo,
         }
     }
 }
 
-impl TryFrom<NodeType> for Mode {
+impl TryFrom<InodeType> for Mode {
     type Error = Errno;
 
-    fn try_from(value: NodeType) -> Result<Self, Errno> {
+    fn try_from(value: InodeType) -> Result<Self, Errno> {
         match value {
-            NodeType::UnixSocket => Ok(Mode::UnixSocket),
-            NodeType::Symlink => Ok(Mode::Symlink),
-            NodeType::Regular => Ok(Mode::Regular),
-            NodeType::BlockDev => Ok(Mode::BlockDev),
-            NodeType::Directory => Ok(Mode::Directory),
-            NodeType::CharDev => Ok(Mode::CharDev),
-            NodeType::Fifo => Ok(Mode::Fifo),
+            InodeType::UnixSocket => Ok(Mode::UnixSocket),
+            InodeType::Symlink => Ok(Mode::Symlink),
+            InodeType::Regular => Ok(Mode::Regular),
+            InodeType::BlockDev => Ok(Mode::BlockDev),
+            InodeType::Directory => Ok(Mode::Directory),
+            InodeType::CharDev => Ok(Mode::CharDev),
+            InodeType::Fifo => Ok(Mode::Fifo),
             _ => Err(Errno::EINVAL),
         }
     }
@@ -354,32 +354,32 @@ impl TryFrom<u8> for FileType {
     }
 }
 
-impl Into<NodeType> for FileType {
-    fn into(self) -> NodeType {
+impl Into<InodeType> for FileType {
+    fn into(self) -> InodeType {
         match self {
-            FileType::UnixSocket => NodeType::UnixSocket,
-            FileType::Symlink => NodeType::Symlink,
-            FileType::Regular => NodeType::Regular,
-            FileType::BlockDev => NodeType::BlockDev,
-            FileType::Directory => NodeType::Directory,
-            FileType::CharDev => NodeType::CharDev,
-            FileType::Fifo => NodeType::Fifo,
-            FileType::Unknown => NodeType::Unknown,
+            FileType::UnixSocket => InodeType::UnixSocket,
+            FileType::Symlink => InodeType::Symlink,
+            FileType::Regular => InodeType::Regular,
+            FileType::BlockDev => InodeType::BlockDev,
+            FileType::Directory => InodeType::Directory,
+            FileType::CharDev => InodeType::CharDev,
+            FileType::Fifo => InodeType::Fifo,
+            FileType::Unknown => InodeType::Unknown,
         }
     }
 }
 
-impl From<NodeType> for FileType {
-    fn from(value: NodeType) -> Self {
+impl From<InodeType> for FileType {
+    fn from(value: InodeType) -> Self {
         match value {
-            NodeType::UnixSocket => FileType::UnixSocket,
-            NodeType::Symlink => FileType::Symlink,
-            NodeType::Regular => FileType::Regular,
-            NodeType::BlockDev => FileType::BlockDev,
-            NodeType::Directory => FileType::Directory,
-            NodeType::CharDev => FileType::CharDev,
-            NodeType::Fifo => FileType::Fifo,
-            NodeType::Unknown => FileType::Unknown,
+            InodeType::UnixSocket => FileType::UnixSocket,
+            InodeType::Symlink => FileType::Symlink,
+            InodeType::Regular => FileType::Regular,
+            InodeType::BlockDev => FileType::BlockDev,
+            InodeType::Directory => FileType::Directory,
+            InodeType::CharDev => FileType::CharDev,
+            InodeType::Fifo => FileType::Fifo,
+            InodeType::Unknown => FileType::Unknown,
         }
     }
 }

@@ -26,10 +26,7 @@ use crate::{
     LogLevel,
     badgelib::time::Timespec,
     bindings::error::{EResult, Errno},
-    dev2::{
-        Device,
-        class::{block::BlockDevice, char::CharDevice},
-    },
+    dev2::{self, Device, class::block::BlockDevice},
     filesystem::{
         fifo::{Fifo, FifoShared},
         vfs::{VNodeMtxInner, mflags, vnflags},
@@ -112,8 +109,8 @@ pub mod mode {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 /// Inode mode.
-pub struct NodeMode {
-    pub type_: NodeType,
+pub struct ModeFlags {
+    pub type_: InodeType,
     pub others: Access,
     pub group: Access,
     pub owner: Access,
@@ -122,18 +119,18 @@ pub struct NodeMode {
     pub sticky: bool,
 }
 
-impl NodeMode {
+impl ModeFlags {
     /// Convert into the format for the posix `struct stat` `st_mode` field.
     pub const fn into_u16(self) -> u16 {
         let mode = match self.type_ {
-            NodeType::Unknown => 0,
-            NodeType::Fifo => mode::S_IFIFO,
-            NodeType::CharDev => mode::S_IFCHR,
-            NodeType::Directory => mode::S_IFDIR,
-            NodeType::BlockDev => mode::S_IFBLK,
-            NodeType::Regular => mode::S_IFREG,
-            NodeType::Symlink => mode::S_IFLNK,
-            NodeType::UnixSocket => mode::S_IFSOCK,
+            InodeType::Unknown => 0,
+            InodeType::Fifo => mode::S_IFIFO,
+            InodeType::CharDev => mode::S_IFCHR,
+            InodeType::Directory => mode::S_IFDIR,
+            InodeType::BlockDev => mode::S_IFBLK,
+            InodeType::Regular => mode::S_IFREG,
+            InodeType::Symlink => mode::S_IFLNK,
+            InodeType::UnixSocket => mode::S_IFSOCK,
         };
         mode + (self.others as u16) * 0o0001
             + (self.group as u16) * 0o0010
@@ -146,14 +143,14 @@ impl NodeMode {
     /// Convert from the format for the posix `struct stat` `st_mode` field.
     pub const fn from_u16(value: u16) -> Self {
         let type_ = match value & mode::S_IFMT {
-            mode::S_IFIFO => NodeType::Fifo,
-            mode::S_IFCHR => NodeType::CharDev,
-            mode::S_IFDIR => NodeType::Directory,
-            mode::S_IFBLK => NodeType::BlockDev,
-            mode::S_IFREG => NodeType::Regular,
-            mode::S_IFLNK => NodeType::Symlink,
-            mode::S_IFSOCK => NodeType::UnixSocket,
-            _ => NodeType::Unknown,
+            mode::S_IFIFO => InodeType::Fifo,
+            mode::S_IFCHR => InodeType::CharDev,
+            mode::S_IFDIR => InodeType::Directory,
+            mode::S_IFBLK => InodeType::BlockDev,
+            mode::S_IFREG => InodeType::Regular,
+            mode::S_IFLNK => InodeType::Symlink,
+            mode::S_IFSOCK => InodeType::UnixSocket,
+            _ => InodeType::Unknown,
         };
         Self {
             type_,
@@ -167,13 +164,13 @@ impl NodeMode {
     }
 }
 
-impl Into<u16> for NodeMode {
+impl Into<u16> for ModeFlags {
     fn into(self) -> u16 {
         self.into_u16()
     }
 }
 
-impl From<u16> for NodeMode {
+impl From<u16> for ModeFlags {
     fn from(value: u16) -> Self {
         Self::from_u16(value)
     }
@@ -236,7 +233,7 @@ impl Into<stat> for Stat {
 #[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 /// Types of file recognised by [`Dirent`].
-pub enum NodeType {
+pub enum InodeType {
     #[default]
     /// Unknown file type.
     Unknown,
@@ -262,7 +259,7 @@ pub struct Dirent {
     /// Inode number.
     pub ino: u64,
     /// Type of entry this is.
-    pub type_: NodeType,
+    pub type_: InodeType,
     /// File name:
     pub name: Box<[u8]>,
     /// On-disk position of the dirent.
@@ -408,8 +405,8 @@ impl dyn File + '_ {
 pub enum MakeFileSpec<'a> {
     /// Named pipe.
     Fifo,
-    /// Character device.
-    CharDev(Arc<dyn CharDevice>),
+    /// Character/other device.
+    CharDev(Arc<dyn Device>),
     /// Directory.
     Directory,
     /// Block device.
@@ -423,15 +420,15 @@ pub enum MakeFileSpec<'a> {
 }
 
 impl MakeFileSpec<'_> {
-    pub fn node_type(&self) -> NodeType {
+    pub fn node_type(&self) -> InodeType {
         match self {
-            MakeFileSpec::Fifo => NodeType::Fifo,
-            MakeFileSpec::CharDev(_) => NodeType::CharDev,
-            MakeFileSpec::Directory => NodeType::Directory,
-            MakeFileSpec::BlockDev(_) => NodeType::BlockDev,
-            MakeFileSpec::Regular => NodeType::Regular,
-            MakeFileSpec::Symlink(_) => NodeType::Symlink,
-            MakeFileSpec::UnixSocket => NodeType::UnixSocket,
+            MakeFileSpec::Fifo => InodeType::Fifo,
+            MakeFileSpec::CharDev(_) => InodeType::CharDev,
+            MakeFileSpec::Directory => InodeType::Directory,
+            MakeFileSpec::BlockDev(_) => InodeType::BlockDev,
+            MakeFileSpec::Regular => InodeType::Regular,
+            MakeFileSpec::Symlink(_) => InodeType::Symlink,
+            MakeFileSpec::UnixSocket => InodeType::UnixSocket,
         }
     }
 }
@@ -783,7 +780,7 @@ fn o_creat_helper(to_create: Arc<DentCache>, exclusive: bool) -> EResult<Arc<VNo
         }),
         ino,
         vfs: dir_vnode.vfs.clone(),
-        type_: NodeType::Regular,
+        type_: InodeType::Regular,
         fifo: None,
         pagecache: Some(PageCache::new(dir_vnode.vfs.block_size_exp, 0)),
         mappings: Mutex::new(Vec::new()),
@@ -876,7 +873,7 @@ pub fn open(at: Option<&dyn File>, path: &[u8], mut oflags: OFlags) -> EResult<A
     };
 
     match vnode.type_ {
-        NodeType::Fifo => {
+        InodeType::Fifo => {
             // FIFO file ops.
             Ok(Box::<dyn File>::from(Box::try_new(Fifo::new(
                 Some(vnode.clone()),
@@ -885,21 +882,21 @@ pub fn open(at: Option<&dyn File>, path: &[u8], mut oflags: OFlags) -> EResult<A
             )?)?)
             .into())
         }
-        NodeType::CharDev => {
+        InodeType::CharDev => {
             // Character device file ops.
             Ok(
                 Box::<dyn File>::from(Box::try_new(CharDevFile::new(vnode.clone(), oflags))?)
                     .into(),
             )
         }
-        NodeType::BlockDev => {
+        InodeType::BlockDev => {
             // Block device file ops.
             Ok(
                 Box::<dyn File>::from(Box::try_new(BlockDevFile::new(vnode.clone(), oflags))?)
                     .into(),
             )
         }
-        NodeType::UnixSocket => {
+        InodeType::UnixSocket => {
             logkf!(LogLevel::Warning, "TODO: UNIX domain socket file ops");
             return Err(Errno::ENOSYS);
         }
@@ -1128,9 +1125,9 @@ pub fn make_file(at: Option<&dyn File>, path: &[u8], spec: MakeFileSpec) -> ERes
     })?;
 
     // Create new VNode.
-    let fifo = (type_ == NodeType::Fifo).then(|| FifoShared::new());
+    let fifo = (type_ == InodeType::Fifo).then(|| FifoShared::new());
     let pagecache =
-        (type_ == NodeType::Regular).then(|| PageCache::new(dir_vnode.vfs.block_size_exp, 0));
+        (type_ == InodeType::Regular).then(|| PageCache::new(dir_vnode.vfs.block_size_exp, 0));
     let new_vnode = Arc::try_new(VNode {
         mtx: Mutex::new(VNodeMtxInner {
             ops: new_ops,
@@ -1485,7 +1482,7 @@ fn create_vfs(
         vnode: Mutex::new(None),
         dirent: Dirent {
             ino: root_ino,
-            type_: NodeType::Directory,
+            type_: InodeType::Directory,
             name: Box::try_new(*b"/")?,
             dirent_off: 0,
             dirent_disk_off: 0,
@@ -1500,7 +1497,7 @@ fn create_vfs(
         }),
         ino: root_ino,
         vfs: vfs.clone(),
-        type_: NodeType::Directory,
+        type_: InodeType::Directory,
         fifo: None,
         pagecache: None,
         mappings: Mutex::new(Vec::new()),
@@ -1608,7 +1605,13 @@ pub fn mount(
     drop(mounts);
     drop(drivers);
 
-    // TODO: Notify device subsystem.
+    // Notify device subsystem.
+    if let EResult::Err(x) = try {
+        let vfs_root_dir = open(orig_at, path, oflags::DIR_ONLY | oflags::READ_ONLY)?;
+        dev2::node::populate(&*vfs_root_dir)?;
+    } {
+        logkf!(LogLevel::Warning, "Failed to populate devtmpfs: {}", x);
+    }
 
     Ok(())
 }

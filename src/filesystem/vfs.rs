@@ -21,7 +21,7 @@ use alloc::{
 use mflags::MFlags;
 
 use super::{
-    Dirent, File, MakeFileSpec, NodeType, SeekMode, Stat, UnlinkMode, media::Media, oflags, poll,
+    Dirent, File, MakeFileSpec, InodeType, SeekMode, Stat, UnlinkMode, media::Media, oflags, poll,
 };
 use crate::{
     LogLevel,
@@ -202,7 +202,7 @@ impl File for VfsFile {
         let mut flags = self.flags.lock()?;
         if flags.flags & oflags::READ_ONLY == 0 {
             return Err(Errno::EBADF);
-        } else if self.vnode.type_ != NodeType::Directory {
+        } else if self.vnode.type_ != InodeType::Directory {
             return Err(Errno::ENOTDIR);
         }
         let guard = self.vnode.mtx.lock_shared()?;
@@ -265,7 +265,7 @@ impl File for VfsFile {
         let flags = self.flags.lock()?;
         if flags.flags & oflags::WRITE_ONLY == 0 {
             Err(Errno::EBADF)
-        } else if self.vnode.type_ == NodeType::Directory {
+        } else if self.vnode.type_ == InodeType::Directory {
             return Err(Errno::EISDIR);
         } else if self.vnode.vfs.is_read_only() {
             Err(Errno::EROFS)
@@ -280,7 +280,7 @@ impl File for VfsFile {
         let mut flags = self.flags.lock()?;
         if flags.flags & oflags::READ_ONLY == 0 {
             return Err(Errno::EBADF);
-        } else if self.vnode.type_ == NodeType::Directory {
+        } else if self.vnode.type_ == InodeType::Directory {
             return Err(Errno::EISDIR);
         }
 
@@ -388,7 +388,7 @@ pub struct VNode {
     /// VFS on which this VNode exists.
     pub(super) vfs: Arc<Vfs>,
     /// What kind of node this is.
-    pub(super) type_: NodeType,
+    pub(super) type_: InodeType,
     /// Shared FIFO data.
     pub(super) fifo: Option<Arc<FifoShared>>,
     /// Page cache for regular files.
@@ -632,7 +632,7 @@ pub trait VNodeOps: Any {
     /// Get the current size of the file.
     fn get_size(&self, vnode_self: &VNode) -> u64;
     /// Get the type of nod this is.
-    fn get_type(&self, vnode_self: &VNode) -> NodeType;
+    fn get_type(&self, vnode_self: &VNode) -> InodeType;
     /// Sync the underlying caches to disk.
     fn sync(&self, vnode_self: &VNode) -> EResult<()>;
 
@@ -739,9 +739,9 @@ impl Vfs {
         // Call the filesystem to open the vnode.
         let ops = self.ops.lock_shared()?.open(self, dirent)?;
 
-        let fifo = (dirent.type_ == NodeType::Fifo).then(|| FifoShared::new());
+        let fifo = (dirent.type_ == InodeType::Fifo).then(|| FifoShared::new());
         let pagecache =
-            (dirent.type_ == NodeType::Regular).then(|| PageCache::new(self.block_size_exp, 0));
+            (dirent.type_ == InodeType::Regular).then(|| PageCache::new(self.block_size_exp, 0));
         let ino = if uses_inodes {
             dirent.ino
         } else {
@@ -761,7 +761,7 @@ impl Vfs {
             mappings: Mutex::new(Vec::new()),
             denywrite: AtomicI32::new(0),
         })?;
-        if dirent.type_ == NodeType::Regular {
+        if dirent.type_ == InodeType::Regular {
             vnode
                 .pagecache
                 .as_ref()
@@ -1075,7 +1075,7 @@ impl DentCache {
 
         // Insert new entry.
         match dirent.type_ {
-            NodeType::Directory => {
+            InodeType::Directory => {
                 let value = Arc::try_new(DentCache {
                     type_: DentCacheType::Directory(Mutex::new(DentCacheDir::EMPTY)),
                     parent: Some(this.clone()),
@@ -1089,7 +1089,7 @@ impl DentCache {
 
                 Ok(value)
             }
-            NodeType::Symlink => {
+            InodeType::Symlink => {
                 // Read the symlink first.
                 let vnode = self_vnode.vfs.open(&dirent, None)?;
                 let name = vnode.mtx.lock_shared()?.ops.readlink(&self_vnode)?;
@@ -1191,7 +1191,7 @@ impl DentCache {
 
         let vnode = self.vfs.open(
             &self.dirent,
-            if self.dirent.type_ == NodeType::Directory || !uses_inodes {
+            if self.dirent.type_ == InodeType::Directory || !uses_inodes {
                 // Must also provide for inode-less regular files so re-opening the same file will get the same VNode.
                 Some(self.clone())
             } else {

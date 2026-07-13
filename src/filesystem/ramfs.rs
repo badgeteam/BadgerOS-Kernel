@@ -20,10 +20,7 @@ use crate::{
     },
     config::PAGE_SIZE,
     cpu,
-    dev2::{
-        Device,
-        class::{block::BlockDevice, char::CharDevice},
-    },
+    dev2::{Device, class::block::BlockDevice},
     filesystem::{VNodeMtxInner, vfs::mflags},
     kernel::sync::mutex::Mutex,
     process::{
@@ -34,7 +31,7 @@ use crate::{
 };
 
 use super::{
-    Dirent, FSDRIVERS, MakeFileSpec, NodeMode, NodeType, Stat, UnlinkMode,
+    Dirent, FSDRIVERS, InodeType, MakeFileSpec, ModeFlags, Stat, UnlinkMode,
     media::Media,
     vfs::{VNode, VNodeOps, Vfs, VfsDriver, VfsOps, mflags::MFlags},
 };
@@ -154,7 +151,7 @@ enum RamFsData {
     /// Named pipe.
     Fifo,
     /// Character device.
-    CharDev(Arc<dyn CharDevice>),
+    CharDev(Arc<dyn Device>),
     /// Directory.
     Directory(BTreeMap<Box<[u8]>, Dirent>),
     /// Block device.
@@ -205,15 +202,15 @@ impl RamFsData {
     }
 
     /// Get the matching [`NodeType`].
-    fn node_type(&self) -> NodeType {
+    fn node_type(&self) -> InodeType {
         match self {
-            RamFsData::Fifo => NodeType::Fifo,
-            RamFsData::CharDev(_) => NodeType::CharDev,
-            RamFsData::Directory(_) => NodeType::Directory,
-            RamFsData::BlockDev(_) => NodeType::BlockDev,
-            RamFsData::Regular(_) => NodeType::Regular,
-            RamFsData::Symlink(_) => NodeType::Symlink,
-            RamFsData::UnixSocket => NodeType::UnixSocket,
+            RamFsData::Fifo => InodeType::Fifo,
+            RamFsData::CharDev(_) => InodeType::CharDev,
+            RamFsData::Directory(_) => InodeType::Directory,
+            RamFsData::BlockDev(_) => InodeType::BlockDev,
+            RamFsData::Regular(_) => InodeType::Regular,
+            RamFsData::Symlink(_) => InodeType::Symlink,
+            RamFsData::UnixSocket => InodeType::UnixSocket,
         }
     }
 }
@@ -512,7 +509,7 @@ impl VNodeOps for RamVNode {
         Ok(Stat {
             dev: 0,
             ino: 0,
-            mode: NodeMode {
+            mode: ModeFlags {
                 type_: inode.data.node_type(),
                 others: 7,
                 group: 7,
@@ -548,7 +545,7 @@ impl VNodeOps for RamVNode {
         inode.size.load(Ordering::Relaxed) as u64
     }
 
-    fn get_type(&self, _vnode_self: &VNode) -> NodeType {
+    fn get_type(&self, _vnode_self: &VNode) -> InodeType {
         let inode = unsafe { self.inode.as_ref_unchecked() };
         inode.data.node_type()
     }

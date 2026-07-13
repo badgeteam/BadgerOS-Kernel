@@ -32,7 +32,7 @@ use crate::{
 use spec::*;
 
 use super::{
-    Dirent, FSDRIVERS, MakeFileSpec, NAME_MAX, NodeType, Stat, UnlinkMode,
+    Dirent, FSDRIVERS, InodeType, MakeFileSpec, NAME_MAX, Stat, UnlinkMode,
     media::Media,
     vfs::{
         VNode, VNodeMtxInner, VNodeOps, Vfs, VfsDriver, VfsOps,
@@ -53,7 +53,7 @@ struct E2VNode {
     /// Current size.
     size: u64,
     /// Node type.
-    type_: NodeType,
+    type_: InodeType,
 }
 
 impl E2VNode {
@@ -894,7 +894,7 @@ impl VNodeOps for E2VNode {
             .downcast_mut::<E2VNode>()
             .unwrap();
 
-        let is_dir = unlinked_ops.type_ == NodeType::Directory;
+        let is_dir = unlinked_ops.type_ == InodeType::Directory;
         if is_dir {
             if mode == UnlinkMode::FileOnly {
                 return Err(Errno::EISDIR);
@@ -1200,7 +1200,7 @@ impl VNodeOps for E2VNode {
         self.size
     }
 
-    fn get_type(&self, _vnode_self: &VNode) -> NodeType {
+    fn get_type(&self, _vnode_self: &VNode) -> InodeType {
         self.type_
     }
 
@@ -1488,7 +1488,7 @@ impl E2Fs {
 
     /// Helper function to get the inode type for a dirent.
     /// Will query the actual inode for ext2 rev. 0.
-    fn get_inode_type(&self, dent: &LinkedDent) -> EResult<NodeType> {
+    fn get_inode_type(&self, dent: &LinkedDent) -> EResult<InodeType> {
         if self.feature_incompat & feat::incompat::FILETYPE == 0 {
             let group = dent.ino.checked_sub(1).ok_or(Errno::EIO)? / self.inodes_per_group;
             let index = (dent.ino - 1) % self.inodes_per_group;
@@ -1559,7 +1559,7 @@ impl E2Fs {
             inode.size as u64 | ((inode.dir_acl as u64) << 32)
         };
         let mode = Mode::try_from(inode.mode)?;
-        let type_: NodeType = mode.into();
+        let type_: InodeType = mode.into();
 
         // Loaded successfully, make VNode.
         Ok(Box::<dyn VNodeOps>::from(Box::try_new(E2VNode {

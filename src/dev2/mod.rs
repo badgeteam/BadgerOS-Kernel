@@ -18,6 +18,7 @@ pub mod class;
 pub mod driver;
 #[cfg(feature = "dtb")]
 pub mod dtb;
+pub mod node;
 pub mod probe;
 pub mod registry;
 pub mod void;

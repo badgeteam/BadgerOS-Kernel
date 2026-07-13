@@ -8,7 +8,7 @@ use crate::{
         error::{EResult, Errno},
         raw::{seek_mode_t_SEEK_CUR, seek_mode_t_SEEK_END, seek_mode_t_SEEK_SET},
     },
-    filesystem::{self, Dirent, MakeFileSpec, NodeType, PATH_MAX, SeekMode},
+    filesystem::{self, Dirent, InodeType, MakeFileSpec, PATH_MAX, SeekMode},
     process::{
         self, FILE_MAX,
         files::FileDesc,
@@ -43,14 +43,14 @@ impl<'a> DentBuffer<'a> {
             d_off: dent.dirent_off as i64,
             d_reclen,
             d_type: match dent.type_ {
-                NodeType::Unknown => dirent::DT_UNKNOWN,
-                NodeType::Fifo => dirent::DT_FIFO,
-                NodeType::CharDev => dirent::DT_CHR,
-                NodeType::Directory => dirent::DT_DIR,
-                NodeType::BlockDev => dirent::DT_CHR,
-                NodeType::Regular => dirent::DT_REG,
-                NodeType::Symlink => dirent::DT_LNK,
-                NodeType::UnixSocket => dirent::DT_SOCK,
+                InodeType::Unknown => dirent::DT_UNKNOWN,
+                InodeType::Fifo => dirent::DT_FIFO,
+                InodeType::CharDev => dirent::DT_CHR,
+                InodeType::Directory => dirent::DT_DIR,
+                InodeType::BlockDev => dirent::DT_CHR,
+                InodeType::Regular => dirent::DT_REG,
+                InodeType::Symlink => dirent::DT_LNK,
+                InodeType::UnixSocket => dirent::DT_SOCK,
             },
         };
 

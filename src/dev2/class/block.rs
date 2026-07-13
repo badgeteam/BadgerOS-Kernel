@@ -7,6 +7,7 @@ use core::ptr::NonNull;
 use crate::{
     bindings::error::EResult,
     dev2::Device,
+    filesystem::partition::VolumeInfo,
     kernel::sync::mutex::{Mutex, SharedMutexGuard},
     mem::{
         dma::{DmaFromBuffer, DmaTarget},
@@ -97,6 +98,10 @@ pub trait BlockDevice: Device {
 }
 
 impl dyn BlockDevice {
+    /// Get the volume information.
+    /// If `force_probe` is `true`, probe for partitions even if they had been probed already.
+    // fn volume_info(&self, force_probe: bool) -> EResult<VolumeInfo> {}
+
     /// Get or allocate the metadata and page cache.
     fn alloc_meta<'a>(&'a self) -> EResult<SharedMutexGuard<'a, BlockDeviceBaseInner>> {
         let base = self.block_base();
