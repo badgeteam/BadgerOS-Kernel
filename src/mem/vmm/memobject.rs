@@ -2,7 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::{fmt::Debug, num::NonZeroUsize, ops::Div, sync::atomic::Ordering};
+use core::{fmt::Debug, num::NonZeroUsize, sync::atomic::Ordering};
 
 use crate::{
     bindings::{
@@ -103,12 +103,12 @@ pub trait MemObject: Debug {
     }
 
     /// Try to get an existing page from the object.
-    /// Returns a mappable page and many pages contiguous it is (refcount of the first page in the buddy block is used).
+    /// Returns a mappable page and many bytes contiguous it is (refcount of the first page in the buddy block is used).
     /// May spuriously return [`None`] even if the page is available.
     fn get(&self, offset: u64) -> Option<(MappablePage, usize)>;
 
     /// Allocate a new page from the object.
-    /// Returns a mappable page and many pages contiguous it is (refcount of the first page in the buddy block is used).
+    /// Returns a mappable page and many bytes contiguous it is (refcount of the first page in the buddy block is used).
     fn alloc(&self, offset: u64) -> EResult<(MappablePage, usize)>;
 
     /// Mark a page as being dirty.
@@ -147,7 +147,7 @@ impl MemObject for RawMemory {
         // SAFETY: The creator of this object guaranteed that the memory is valid.
         Some((
             unsafe { MappablePage::new(self.paddr + offset as usize, false, true, false) },
-            (self.len as u64 - offset).div(PAGE_SIZE as u64) as usize,
+            (self.len as u64 - offset) as usize,
         ))
     }
 
@@ -158,7 +158,7 @@ impl MemObject for RawMemory {
         // SAFETY: The creator of this object guaranteed that the memory is valid.
         Ok((
             unsafe { MappablePage::new(self.paddr + offset as usize, false, true, false) },
-            (self.len as u64 - offset).div(PAGE_SIZE as u64) as usize,
+            (self.len as u64 - offset) as usize,
         ))
     }
 

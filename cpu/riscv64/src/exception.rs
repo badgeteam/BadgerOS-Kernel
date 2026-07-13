@@ -219,7 +219,7 @@ unsafe fn riscv_exception_handler_impl(regs: &mut GpRegfile, sregs: &mut SpRegfi
         unsafe { cpu::irq::enable() };
 
         if sregs.is_kernel_mode() && vmm::physmap::is_canon_kernel_addr(sregs.stval) {
-            if vmm::kernel_mm().fault(sregs.stval, access).is_ok() {
+            if vmm::kernel_mm().fault(sregs.stval, access, 0).is_ok() {
                 unsafe { cpu::irq::disable() };
                 return;
             }
@@ -227,7 +227,7 @@ unsafe fn riscv_exception_handler_impl(regs: &mut GpRegfile, sregs: &mut SpRegfi
             && vmm::physmap::is_canon_user_addr(sregs.stval)
         {
             let mm = unsafe { (*thread).runtime().memmap };
-            if !mm.is_null() && unsafe { &*mm }.fault(sregs.stval, access).is_ok() {
+            if !mm.is_null() && unsafe { &*mm }.fault(sregs.stval, access, 0).is_ok() {
                 unsafe { cpu::irq::disable() };
                 return;
             }

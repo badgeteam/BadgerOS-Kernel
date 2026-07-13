@@ -613,19 +613,19 @@ impl VmSpaceInner {
                 )?
             };
             let _map = map.demote();
+            let mut res = Ok(addr);
             if map_flags & POPULATE != 0 {
                 let access = if !has_mapping {
                     prot::WRITE
                 } else {
                     prot::READ
                 };
-                for addr in (addr..addr + size).step_by(PAGE_SIZE as usize) {
-                    self.fault(&mut fences, addr, access)
-                        .expect("Prefault failed");
+                if let Err(x) = self.fault(&mut fences, addr, access, size) {
+                    res = Err(x);
                 }
             }
             vmfence::shootdown(&fences);
-            Ok(addr)
+            res
         }
     }
 
@@ -767,13 +767,14 @@ impl VmSpaceInner {
     }
 
     /// Implementation of [`Self::fault`] if the entry is found.
+    /// On success, returns how many bytes have been mapped after `vaddr`.
     fn fault_impl(
         fences: &mut VmFenceSet,
         pmap: &PhysMap,
         vaddr: usize,
         access: u8,
         entry: &MapEntry,
-    ) -> EResult<()> {
+    ) -> EResult<usize> {
         let page_vaddr = vaddr - vaddr % PAGE_SIZE as usize;
         let v2p = pmap.virt2phys(page_vaddr);
         let flags = if v2p.valid {
@@ -784,7 +785,7 @@ impl VmSpaceInner {
         if flags & access == access {
             // TLB must be outdated; flush it and retry.
             mmu::vmem_fence(Some(page_vaddr), None);
-            return Ok(());
+            return Ok(PAGE_SIZE as usize - vaddr % PAGE_SIZE as usize);
         }
 
         if v2p.valid {
@@ -834,20 +835,34 @@ impl VmSpaceInner {
             if !page.0.tracks_dirty() {
                 mmu_flags |= physmap::flags::D;
             }
-            pmap.map(page_vaddr, page.0.into_paddr(), mmu_flags)?;
-        }
+            let len = page.1.min(entry.range.end - page_vaddr);
+            pmap.map_mutiple(page_vaddr, page.0.into_paddr(), mmu_flags, len)?;
 
-        Ok(())
+            Ok(len - vaddr % PAGE_SIZE as usize)
+        }
     }
 
     /// Handle a page fault at address `vaddr`.
+    /// If `size > 0`, succeed only if at least that many bytes starting at `vaddr` are successfully mapped.
     /// If this returns [`Ok`], the access should be retried.
-    pub fn fault(&self, fences: &mut VmFenceSet, vaddr: usize, access: u8) -> EResult<()> {
+    pub fn fault(
+        &self,
+        fences: &mut VmFenceSet,
+        mut vaddr: usize,
+        access: u8,
+        mut size: usize,
+    ) -> EResult<()> {
+        size = size.max(1);
         let map = self.map.lock_shared();
 
         for entry in unsafe { map.iter() } {
             if entry.range.contains(&vaddr) {
-                return Self::fault_impl(fences, &self.pmap, vaddr, access, entry);
+                while size > 0 {
+                    let len = Self::fault_impl(fences, &self.pmap, vaddr, access, entry)?;
+                    size = size.saturating_sub(len);
+                    vaddr = vaddr.wrapping_add(len);
+                }
+                return Ok(());
             }
         }
 
@@ -1024,10 +1039,11 @@ impl VmSpace {
     }
 
     /// Handle a page fault at address `vaddr`.
+    /// If `size > 0`, succeed only if at least that many bytes starting at `vaddr` are successfully mapped.
     /// If this returns [`Ok`], the access should be retried.
-    pub fn fault(&self, vaddr: usize, access: u8) -> EResult<()> {
+    pub fn fault(&self, vaddr: usize, access: u8, size: usize) -> EResult<()> {
         let mut fences = VmFenceSet::new();
-        self.0.fault(&mut fences, vaddr, access)?;
+        self.0.fault(&mut fences, vaddr, access, size)?;
         Ok(())
     }
 
@@ -1122,10 +1138,11 @@ impl KernelVmSpace {
     }
 
     /// Handle a page fault at address `vaddr`.
+    /// If `size > 0`, succeed only if at least that many bytes starting at `vaddr` are successfully mapped.
     /// If this returns [`Ok`], the access should be retried.
-    pub fn fault(&self, vaddr: usize, access: u8) -> EResult<()> {
+    pub fn fault(&self, vaddr: usize, access: u8, size: usize) -> EResult<()> {
         let mut fences = VmFenceSet::new();
-        self.0.fault(&mut fences, vaddr, access)?;
+        self.0.fault(&mut fences, vaddr, access, size)?;
         Ok(())
     }
 
