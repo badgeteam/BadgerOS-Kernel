@@ -10,6 +10,7 @@ use core::{
     ops::Range,
     ptr::{self, NonNull},
     sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering},
+    unreachable, write,
 };
 
 use alloc::{
@@ -18,17 +19,16 @@ use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
 };
-use mflags::MFlags;
 
 use super::{
-    Dirent, File, MakeFileSpec, InodeType, SeekMode, Stat, UnlinkMode, media::Media, oflags, poll,
+    Dirent, File, InodeType, MakeFileSpec, SeekMode, Stat, UnlinkMode, media::Media, oflags, poll,
 };
 use crate::{
     LogLevel,
     bindings::error::{EResult, Errno},
     config::PAGE_SIZE,
     dev2::Device,
-    filesystem::fifo::FifoShared,
+    filesystem::{fifo::FifoShared, mount},
     kernel::sync::{
         mutex::{Mutex, MutexGuard, SharedMutexGuard},
         waitlist::Waitlist,
@@ -370,7 +370,7 @@ pub mod vnflags {
 }
 
 /// [`VNode`] operations and flags.
-pub struct VNodeMtxInner {
+pub(super) struct VNodeMtxInner {
     /// VFS implementation of file operations.
     pub(super) ops: Box<dyn VNodeOps>,
     /// Dirent cache associated.
@@ -652,20 +652,6 @@ impl dyn VNodeOps {
     }
 }
 
-#[rustfmt::skip]
-pub mod mflags {
-    /// Mounted filesystem flags.
-    pub type MFlags = u32;
-    /// Filesystem is read-only.
-    pub const READ_ONLY: u32 = 0x0000_0001;
-    /// Do not follow symbolic links.
-    pub const NOFOLLOW:  u32 = 0x0000_0020;
-    /// Try to cancel pending I/O operations; only supported on certain filesystems.
-    pub const FORCE:     u32 = 0x0001_0000;
-    /// Lazily unmount; remove the filesystem from the tree now, and wait with unmount until open handles are closed.
-    pub const DETACH:    u32 = 0x0002_0000;
-}
-
 /// A mounted virtual filesystem.
 pub struct Vfs {
     /// Instance of the filesystem driver.
@@ -687,7 +673,7 @@ unsafe impl Sync for Vfs {}
 
 impl Vfs {
     pub fn is_read_only(&self) -> bool {
-        self.flags.load(Ordering::Relaxed) & mflags::READ_ONLY != 0
+        self.flags.load(Ordering::Relaxed) & mount::READ_ONLY != 0
     }
 
     /// Lock the ops mutex shared and convert to type `U`.
@@ -779,7 +765,7 @@ impl Vfs {
     /// Called if an I/O error happens on this VFS.
     #[inline(never)]
     pub(super) fn check_eio_failed(&self) {
-        if self.flags.fetch_or(mflags::READ_ONLY, Ordering::Relaxed) & mflags::READ_ONLY == 0 {
+        if self.flags.fetch_or(mount::READ_ONLY, Ordering::Relaxed) & mount::READ_ONLY == 0 {
             logkf!(
                 LogLevel::Error,
                 "I/O error on filesystem; marking read-only"
@@ -860,7 +846,7 @@ pub trait VfsDriver {
     fn detect(&self, media: &Media) -> EResult<bool>;
     /// Mount the filesystem on some medium.
     /// Expected to log errors if they are caused by invalid parameters.
-    fn mount(&self, media: Option<Media>, mflags: MFlags) -> EResult<Box<dyn VfsOps>>;
+    fn mount(&self, media: Option<Media>, mflags: u32) -> EResult<Box<dyn VfsOps>>;
 }
 
 /// Data associated with dirent caches for directories.

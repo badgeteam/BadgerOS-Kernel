@@ -1,3 +1,5 @@
+use core::panic;
+
 use alloc::sync::Arc;
 use uuid::Uuid;
 
@@ -250,7 +252,7 @@ pub fn mount_root_impl(do_panic: bool) -> bool {
     );
 
     // Finally mount filesystem.
-    let res = mount(None, b"/", None, Some(media), 0);
+    let res = mount::mount(None, b"/", None, Some(media), 0);
     if let Err(x) = res {
         panic!("Unable to mount root filesystem: {}", x);
     }

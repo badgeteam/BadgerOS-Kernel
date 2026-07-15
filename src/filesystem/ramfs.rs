@@ -21,7 +21,7 @@ use crate::{
     config::PAGE_SIZE,
     cpu,
     dev2::{Device, class::block::BlockDevice},
-    filesystem::{VNodeMtxInner, vfs::mflags},
+    filesystem::{VNodeMtxInner, mount},
     kernel::sync::mutex::Mutex,
     process::{
         syscall::fs::DentBuffer,
@@ -33,7 +33,7 @@ use crate::{
 use super::{
     Dirent, FSDRIVERS, InodeType, MakeFileSpec, ModeFlags, Stat, UnlinkMode,
     media::Media,
-    vfs::{VNode, VNodeOps, Vfs, VfsDriver, VfsOps, mflags::MFlags},
+    vfs::{VNode, VNodeOps, Vfs, VfsDriver, VfsOps},
 };
 
 /// A filesystem that is entirely resident in RAM.
@@ -565,8 +565,8 @@ impl VfsDriver for RamFsDriver {
         Ok(false)
     }
 
-    fn mount(&self, media: Option<Media>, mflags: MFlags) -> EResult<Box<dyn VfsOps>> {
-        if mflags & mflags::READ_ONLY != 0 {
+    fn mount(&self, media: Option<Media>, mflags: u32) -> EResult<Box<dyn VfsOps>> {
+        if mflags & mount::READ_ONLY != 0 {
             logkf!(
                 LogLevel::Error,
                 "It doesn't make sense to mount an empty RamFS as READ_ONLY"

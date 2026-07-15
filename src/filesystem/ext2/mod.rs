@@ -7,6 +7,7 @@ use core::{
     mem::offset_of,
     num::{NonZeroU32, NonZeroU64},
     sync::atomic::{AtomicU32, Ordering},
+    unreachable,
 };
 
 use alloc::{
@@ -21,6 +22,7 @@ use crate::{
     badgelib::time::Timespec,
     bindings::error::{EResult, Errno},
     dev2::Device,
+    filesystem::mount,
     kernel::sync::mutex::Mutex,
     process::{
         syscall::fs::DentBuffer,
@@ -34,11 +36,7 @@ use spec::*;
 use super::{
     Dirent, FSDRIVERS, InodeType, MakeFileSpec, NAME_MAX, Stat, UnlinkMode,
     media::Media,
-    vfs::{
-        VNode, VNodeMtxInner, VNodeOps, Vfs, VfsDriver, VfsOps,
-        mflags::{self, MFlags},
-        vnflags,
-    },
+    vfs::{VNode, VNodeMtxInner, VNodeOps, Vfs, VfsDriver, VfsOps, vnflags},
 };
 
 mod spec;
@@ -1221,7 +1219,7 @@ impl VNodeOps for E2VNode {
         let e2fs = vnode_self.vfs.get_ops_as::<E2Fs>();
         let inode = self.inode.unintr_lock();
         if inode.nlink != 0
-            || (vnode_self.vfs.flags.load(Ordering::Relaxed) & mflags::READ_ONLY) != 0
+            || (vnode_self.vfs.flags.load(Ordering::Relaxed) & mount::READ_ONLY) != 0
         {
             // Inode was closed, but isn't unlinked.
             return;
@@ -1730,7 +1728,7 @@ impl VfsDriver for E2FsDriver {
         Ok(superblock.magic == MAGIC)
     }
 
-    fn mount(&self, media: Option<Media>, _mflags: MFlags) -> EResult<Box<dyn VfsOps>> {
+    fn mount(&self, media: Option<Media>, _mflags: u32) -> EResult<Box<dyn VfsOps>> {
         let media = media.ok_or(Errno::ENODEV)?;
 
         // Load the superblock.

@@ -25,11 +25,11 @@ use crate::{
 };
 
 use super::{
-    FSDRIVERS, MakeFileSpec, NAME_MAX, InodeType, Stat, UnlinkMode,
+    FSDRIVERS, InodeType, MakeFileSpec, NAME_MAX, Stat, UnlinkMode,
     media::Media,
-    vfs::{VNode, VNodeOps, Vfs, VfsDriver, VfsOps, mflags::MFlags},
+    vfs::{VNode, VNodeOps, Vfs, VfsDriver, VfsOps},
 };
-use core::{fmt::Debug, num::NonZeroU8};
+use core::{fmt::Debug, num::NonZeroU8, unimplemented};
 
 mod cluster;
 mod spec;
@@ -1671,7 +1671,7 @@ impl VfsDriver for FatFsDriver {
         Ok(true)
     }
 
-    fn mount(&self, media: Option<Media>, _mflags: MFlags) -> EResult<Box<dyn VfsOps>> {
+    fn mount(&self, media: Option<Media>, _mflags: u32) -> EResult<Box<dyn VfsOps>> {
         // Read the BPB.
         let media = media.ok_or(Errno::ENODEV)?;
         let mut bpb = [0u8; size_of::<Bpb>()];
