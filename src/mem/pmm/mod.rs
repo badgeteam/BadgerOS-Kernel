@@ -361,8 +361,16 @@ pub unsafe fn page_free(mut block: PAddrr, mut order: u8) {
 
     // Remove the pages from where they were previously accounted.
     match unsafe { &*page_struct(block) }.usage() {
-        PageUsage::Free => unreachable!("Unused page marked as free again"),
-        PageUsage::KernelSegment => unreachable!("Kernel segment page marked as free"),
+        PageUsage::Free => unreachable!(
+            "Unused page at 0x{:x} .. 0x{:x} marked as free again",
+            block,
+            block + ((PAGE_SIZE as usize) << order)
+        ),
+        PageUsage::KernelSegment => unreachable!(
+            "Kernel segment page at  0x{:x} .. 0x{:x} marked as free",
+            block,
+            block + ((PAGE_SIZE as usize) << order)
+        ),
         PageUsage::Unusable => (), // Not accounted as being used for something.
         PageUsage::Cache => {
             CACHE_PAGES.fetch_sub(pages_freed, Ordering::Relaxed);
@@ -433,8 +441,8 @@ pub unsafe fn mark_free(mut memory: Range<PAddrr>) {
         let max_order = memory
             .start
             .trailing_zeros()
-            .sub(PAGE_SIZE.ilog2())
-            .min((memory.end - memory.start).ilog2()) as u8;
+            .min((memory.end - memory.start).ilog2())
+            .sub(PAGE_SIZE.ilog2()) as u8;
         unsafe { page_free(memory.start, max_order) };
         memory.start += (PAGE_SIZE as usize) << max_order;
     }
