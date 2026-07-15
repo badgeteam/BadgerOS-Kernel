@@ -406,10 +406,16 @@ impl Process {
             return Ok(());
         }
 
-        let mut serial_devs = dev2::registry::devices_by_trait::<dyn CharDevice>()?;
-        let stdio_dev = serial_devs
-            .try_remove(0)
-            .unwrap_or_else(|| dev2::void::null_instance());
+        let serial_devs = dev2::registry::devices_by_trait::<dyn CharDevice>()?;
+        let mut stdio_dev = None;
+        for dev in serial_devs {
+            if dev.is_tty() {
+                stdio_dev = Some(dev);
+                break;
+            }
+        }
+
+        let stdio_dev = stdio_dev.unwrap_or_else(|| dev2::void::null_instance());
         let wfile = Arc::try_new(CharDevFile::new_raw(stdio_dev.clone(), oflags::WRITE_ONLY))?;
         let rfile = Arc::try_new(CharDevFile::new_raw(stdio_dev, oflags::READ_ONLY))?;
 
