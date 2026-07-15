@@ -4,6 +4,7 @@
 
 use core::{
     any::Any,
+    fmt::Display,
     mem::offset_of,
     num::{NonZeroU32, NonZeroU64},
     sync::atomic::{AtomicU32, Ordering},
@@ -36,7 +37,7 @@ use spec::*;
 use super::{
     Dirent, FSDRIVERS, InodeType, MakeFileSpec, NAME_MAX, Stat, UnlinkMode,
     media::Media,
-    vfs::{VNode, VNodeMtxInner, VNodeOps, Vfs, VfsDriver, VfsOps, vnflags},
+    vfs::{VNode, VNodeOps, Vfs, VfsDriver, VfsOps, vnflags},
 };
 
 mod spec;
@@ -753,6 +754,12 @@ impl E2VNode {
         )?;
 
         Ok(())
+    }
+}
+
+impl Display for E2VNode {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_fmt(format_args!("E2VNode {}", self.ino))
     }
 }
 
@@ -1607,6 +1614,12 @@ impl E2Fs {
     }
 }
 
+impl Display for E2Fs {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_fmt(format_args!("E2Fs on {:?}", self.media))
+    }
+}
+
 impl VfsOps for E2Fs {
     fn media(&self) -> Option<&Media> {
         Some(&self.media)
@@ -1637,17 +1650,13 @@ impl VfsOps for E2Fs {
         vnode_self: &Arc<Vfs>,
         _src_dir: &Arc<VNode>,
         src_name: &[u8],
-        src_mutexinner: &mut VNodeMtxInner,
-        dest_dir: &Arc<VNode>,
-        dest_name: &[u8],
-        dest_mutexinner: &mut VNodeMtxInner,
+        src_ops: &mut dyn VNodeOps,
+        dst_dir: &Arc<VNode>,
+        dst_name: &[u8],
+        dst_ops: &mut dyn VNodeOps,
     ) -> EResult<Dirent> {
-        let src_ops = (src_mutexinner.ops.as_mut() as &mut dyn Any)
-            .downcast_mut::<E2VNode>()
-            .unwrap();
-        let dest_ops = (dest_mutexinner.ops.as_mut() as &mut dyn Any)
-            .downcast_mut::<E2VNode>()
-            .unwrap();
+        let src_ops = (src_ops as &mut dyn Any).downcast_mut::<E2VNode>().unwrap();
+        let dst_ops = (dst_ops as &mut dyn Any).downcast_mut::<E2VNode>().unwrap();
 
         // Find source dirent.
         let mut found = None;
@@ -1662,10 +1671,10 @@ impl VfsOps for E2Fs {
         let (found, _offset) = found.ok_or(Errno::ENOENT)?;
 
         // Create new dirent.
-        dest_ops.create_dirent(
-            dest_dir,
+        dst_ops.create_dirent(
+            dst_dir,
             NonZeroU32::new(found.ino).ok_or(Errno::EIO)?,
-            dest_name,
+            dst_name,
             found.file_type.try_into()?,
         )?;
 
@@ -1679,7 +1688,7 @@ impl VfsOps for E2Fs {
         Ok(Dirent {
             ino: found.ino as u64,
             type_: FileType::try_from(found.file_type)?.into(),
-            name: dest_name.into(),
+            name: dst_name.into(),
             dirent_disk_off: 0,
             dirent_off: 0,
         })

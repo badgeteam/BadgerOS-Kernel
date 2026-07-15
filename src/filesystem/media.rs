@@ -20,10 +20,7 @@ impl Debug for MediaType {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Block(arg0) => arg0.fmt(f),
-            Self::Ram(arg0) => f
-                .debug_tuple("Ram")
-                .field(&unsafe { arg0.as_ref_unchecked() }.len())
-                .finish(),
+            Self::Ram(arg0) => f.write_fmt(format_args!("Ramdisk 0x{:x}", arg0.get() as usize)),
         }
     }
 }
@@ -36,6 +33,7 @@ pub struct Media {
     /// Partition byte size.
     pub size: u64,
     /// Partition underlying storage.
+    // TODO: Make a RamDisk so that storage is just a BlockDevice handle.
     pub storage: MediaType,
 }
 unsafe impl Sync for Media {}

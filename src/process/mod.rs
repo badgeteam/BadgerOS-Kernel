@@ -416,8 +416,12 @@ impl Process {
         }
 
         let stdio_dev = stdio_dev.unwrap_or_else(|| dev2::void::null_instance());
-        let wfile = Arc::try_new(CharDevFile::new_raw(stdio_dev.clone(), oflags::WRITE_ONLY))?;
-        let rfile = Arc::try_new(CharDevFile::new_raw(stdio_dev, oflags::READ_ONLY))?;
+        let wfile = Arc::try_new(CharDevFile::new(
+            None,
+            stdio_dev.clone(),
+            oflags::WRITE_ONLY,
+        ))?;
+        let rfile = Arc::try_new(CharDevFile::new(None, stdio_dev, oflags::READ_ONLY))?;
 
         let _ = fds.inner.try_insert(
             0,

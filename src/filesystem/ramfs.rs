@@ -5,6 +5,7 @@
 use core::{
     any::Any,
     cell::UnsafeCell,
+    fmt::Display,
     ops::Range,
     sync::atomic::{AtomicU64, AtomicUsize, Ordering},
 };
@@ -21,7 +22,7 @@ use crate::{
     config::PAGE_SIZE,
     cpu,
     dev2::{Device, class::block::BlockDevice},
-    filesystem::{VNodeMtxInner, mount},
+    filesystem::mount,
     kernel::sync::mutex::Mutex,
     process::{
         syscall::fs::DentBuffer,
@@ -105,10 +106,10 @@ impl VfsOps for RamFs {
         _self_arc: &Arc<Vfs>,
         src_dir: &Arc<VNode>,
         src_name: &[u8],
-        _src_mutexinner: &mut VNodeMtxInner,
+        _src_ops: &mut dyn VNodeOps,
         dest_dir: &Arc<VNode>,
         dest_name: &[u8],
-        _dest_mutexinner: &mut VNodeMtxInner,
+        _dest_ops: &mut dyn VNodeOps,
     ) -> EResult<Dirent> {
         // Downcast trait objects into RamVNode.
         let mut src_ops = src_dir.mtx.lock()?;
@@ -143,6 +144,12 @@ impl VfsOps for RamFs {
         dest_dir_map.insert(dest_name.into(), entry.clone());
 
         Ok(entry)
+    }
+}
+
+impl Display for RamFs {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_fmt(format_args!("RamFs 0x{:x}", self as *const RamFs as usize))
     }
 }
 
@@ -236,6 +243,14 @@ struct RamINode {
 /// VNode wrapper for a [`RamINode`].
 struct RamVNode {
     inode: Arc<UnsafeCell<RamINode>>,
+}
+
+impl Display for RamVNode {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_fmt(format_args!("E2VNode {}", unsafe {
+            self.inode.as_ref_unchecked().ino
+        }))
+    }
 }
 
 impl VNodeOps for RamVNode {

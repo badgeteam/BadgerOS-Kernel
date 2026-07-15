@@ -14,7 +14,7 @@ use crate::{
     },
     bindings::error::{EResult, Errno},
     dev2::Device,
-    filesystem::{VNodeMtxInner, fatfs::spec::attr2, vfs::vnflags},
+    filesystem::{fatfs::spec::attr2, vfs::vnflags},
     kernel::sync::mutex::Mutex,
     mem::vmm::zeroes,
     process::{
@@ -29,7 +29,12 @@ use super::{
     media::Media,
     vfs::{VNode, VNodeOps, Vfs, VfsDriver, VfsOps},
 };
-use core::{fmt::Debug, num::NonZeroU8, unimplemented};
+use core::{
+    any::Any,
+    fmt::{Debug, Display},
+    num::NonZeroU8,
+    unimplemented,
+};
 
 mod cluster;
 mod spec;
@@ -63,6 +68,19 @@ struct FatVNode {
     dirent_disk_off: Mutex<Option<u64>>,
     /// Is a directory?
     is_dir: bool,
+}
+
+impl Display for FatVNode {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match &self.storage {
+            FatFileStorage::Root16(_) => f.write_fmt(format_args!("FatVNode root16")),
+            FatFileStorage::Clusters(cluster_chain) => f.write_fmt(format_args!(
+                "FatVNode {:?} for {:?}",
+                cluster_chain.get(0),
+                *self.dirent_disk_off.unintr_lock_shared()
+            )),
+        }
+    }
 }
 
 impl FatVNode {
@@ -766,8 +784,9 @@ impl VNodeOps for FatVNode {
 
         if let Some(unlinked_vnode) = &unlinked_vnode {
             let mut guard = unlinked_vnode.mtx.unintr_lock();
-            let fat_vnode =
-                unsafe { &*(guard.ops.as_ref() as *const dyn VNodeOps as *const FatVNode) };
+            let fat_vnode = &*(guard.ops.as_ref() as &dyn Any)
+                .downcast_ref::<FatVNode>()
+                .unwrap();
             *fat_vnode.dirent_disk_off.unintr_lock() = None;
             guard.flags |= vnflags::REMOVED;
         }
@@ -996,12 +1015,12 @@ impl VNodeOps for FatVNode {
     }
 
     fn close(&mut self, vnode_self: &VNode) {
+        let fatfs = vnode_self.vfs.get_ops_as::<FatFs>();
         if let FatFileStorage::Clusters(chain) = &self.storage
             && self.dirent_disk_off.unintr_lock_shared().is_none()
-            && vnode_self.is_vfs_root().is_none()
+            && chain.get(0) != Some(fatfs.root_dir_cluster)
         {
             // If this VNode was unlinked, mark the clusters as free now.
-            let fatfs = vnode_self.vfs.get_ops_as::<FatFs>();
             fatfs.cluster_alloc.free_chain(chain);
         }
     }
@@ -1512,6 +1531,12 @@ impl FatFs {
     }
 }
 
+impl Display for FatFs {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_fmt(format_args!("FatFs on {:?}", self.media))
+    }
+}
+
 impl VfsOps for FatFs {
     fn media(&self) -> Option<&Media> {
         Some(&self.media)
@@ -1583,18 +1608,20 @@ impl VfsOps for FatFs {
         _self_arc: &Arc<Vfs>,
         old_dir: &Arc<VNode>,
         old_name: &[u8],
-        old_mutexinner: &mut VNodeMtxInner,
+        old_ops: &mut dyn VNodeOps,
         new_dir: &Arc<VNode>,
         new_name: &[u8],
-        new_mutexinner: &mut VNodeMtxInner,
+        new_ops: &mut dyn VNodeOps,
     ) -> EResult<super::Dirent> {
         let new_name = FatFs::trim_name(str::from_utf8(new_name).map_err(|_| Errno::EINVAL)?)
             .ok_or(Errno::ENOENT)?;
 
-        let old_ops =
-            unsafe { &mut *(old_mutexinner.ops.as_mut() as *mut dyn VNodeOps as *mut FatVNode) };
-        let new_ops =
-            unsafe { &mut *(new_mutexinner.ops.as_mut() as *mut dyn VNodeOps as *mut FatVNode) };
+        let old_ops = (old_ops as &mut dyn Any)
+            .downcast_mut::<FatVNode>()
+            .unwrap();
+        let new_ops = (new_ops as &mut dyn Any)
+            .downcast_mut::<FatVNode>()
+            .unwrap();
 
         // Find the old dirent.
         let mut old_dent = None;

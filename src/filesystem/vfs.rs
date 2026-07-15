@@ -3,11 +3,11 @@
 // SPDX-License-Identifier: MIT
 
 use core::{
-    any::Any,
-    cell::UnsafeCell,
-    fmt::Debug,
+    any::{Any, TypeId, type_name},
+    fmt::{Debug, Display},
     hint::unlikely,
     ops::Range,
+    panic,
     ptr::{self, NonNull},
     sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering},
     unreachable, write,
@@ -28,7 +28,11 @@ use crate::{
     bindings::error::{EResult, Errno},
     config::PAGE_SIZE,
     dev2::Device,
-    filesystem::{fifo::FifoShared, mount},
+    filesystem::{
+        CacheLoc, VfsLoc,
+        fifo::FifoShared,
+        mount::{self, Mount},
+    },
     kernel::sync::{
         mutex::{Mutex, MutexGuard, SharedMutexGuard},
         waitlist::Waitlist,
@@ -93,7 +97,7 @@ impl Pager for VNodePager<'_> {
 /// A file that is stored in a [`Vfs`].
 pub struct VfsFile {
     /// Underlying vnode.
-    pub(super) vnode: Arc<VNode>,
+    pub(super) loc: VfsLoc,
     /// Current file position.
     pub(super) flags: Mutex<FlagsAndOffset>,
 }
@@ -105,19 +109,19 @@ impl VfsFile {
         mut flags: MutexGuard<'_, FlagsAndOffset>,
         wdata: UserSlice<'_, u8>,
     ) -> EResult<usize> {
-        let pagecache = self.vnode.pagecache.as_ref().unwrap();
-        let mut guard = self.vnode.mtx.lock()?;
+        let pagecache = self.loc.vnode.pagecache.as_ref().unwrap();
+        let mut guard = self.loc.vnode.mtx.lock()?;
         let ops = &mut guard.ops;
 
-        let old_size = ops.get_size(&self.vnode);
+        let old_size = ops.get_size(&self.loc.vnode);
         let new_size = old_size
             .checked_add(wdata.len() as u64)
             .ok_or(Errno::ENOSPC)?;
 
-        ops.resize(&self.vnode, new_size)?;
+        ops.resize(&self.loc.vnode, new_size)?;
         flags.offset = new_size;
         let pager = VNodePager {
-            vnode: &self.vnode,
+            vnode: &self.loc.vnode,
             ops: &*guard.ops,
         };
         pagecache.set_len(new_size);
@@ -132,9 +136,9 @@ impl VfsFile {
         mut flags: MutexGuard<'_, FlagsAndOffset>,
         wdata: UserSlice<'_, u8>,
     ) -> EResult<usize> {
-        let pagecache = self.vnode.pagecache.as_ref().unwrap();
-        let mut guard = self.vnode.mtx.lock_shared()?;
-        let size = guard.ops.get_size(&self.vnode);
+        let pagecache = self.loc.vnode.pagecache.as_ref().unwrap();
+        let mut guard = self.loc.vnode.mtx.lock_shared()?;
+        let size = guard.ops.get_size(&self.loc.vnode);
 
         let new_off = flags
             .offset
@@ -144,15 +148,15 @@ impl VfsFile {
         if new_off > size {
             // The file must be resized.
             drop(guard);
-            let mut mut_guard = self.vnode.mtx.lock()?;
-            mut_guard.ops.resize(&self.vnode, new_off)?;
+            let mut mut_guard = self.loc.vnode.mtx.lock()?;
+            mut_guard.ops.resize(&self.loc.vnode, new_off)?;
             guard = mut_guard.demote();
             pagecache.set_len(new_off);
         }
 
         // Offset updated successfully; perform write.
         let pager = VNodePager {
-            vnode: &self.vnode,
+            vnode: &self.loc.vnode,
             ops: &*guard.ops,
         };
         pagecache.write_bytes(&pager, flags.offset, wdata)?;
@@ -184,10 +188,11 @@ impl File for VfsFile {
         let mut guard = self.flags.unintr_lock();
         if guard.flags & oflags::WRITE_ONLY > newfl & oflags::WRITE_ONLY {
             // Remove the write flag.
-            self.vnode.denywrite.fetch_add(1, Ordering::Relaxed);
+            self.loc.vnode.denywrite.fetch_add(1, Ordering::Relaxed);
         } else if guard.flags & oflags::WRITE_ONLY < newfl & oflags::WRITE_ONLY {
             // Add the write flag; check DENYWRITE.
-            self.vnode
+            self.loc
+                .vnode
                 .denywrite
                 .try_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
                     (x <= 0).then_some(x - 1)
@@ -202,41 +207,51 @@ impl File for VfsFile {
         let mut flags = self.flags.lock()?;
         if flags.flags & oflags::READ_ONLY == 0 {
             return Err(Errno::EBADF);
-        } else if self.vnode.type_ != InodeType::Directory {
+        } else if self.loc.vnode.type_ != InodeType::Directory {
             return Err(Errno::ENOTDIR);
         }
-        let guard = self.vnode.mtx.lock_shared()?;
-        flags.offset = guard.ops.get_dirents(&self.vnode, flags.offset, buffer)?;
+        let guard = self.loc.vnode.mtx.lock_shared()?;
+        flags.offset = guard
+            .ops
+            .get_dirents(&self.loc.vnode, flags.offset, buffer)?;
         Ok(())
     }
 
     fn get_memobject(&self) -> Option<Arc<dyn MemObject>> {
-        if self.vnode.pagecache.is_none() {
+        if self.loc.vnode.pagecache.is_none() {
             return None;
         }
-        Some(self.vnode.clone())
+        Some(self.loc.vnode.clone())
     }
 
     fn get_device(&self) -> Option<Arc<dyn Device>> {
-        self.vnode
+        self.loc
+            .vnode
             .mtx
             .unintr_lock_shared()
             .ops
-            .get_device(&self.vnode)
+            .get_device(&self.loc.vnode)
     }
 
     fn get_part_offset(&self) -> Option<Range<u64>> {
-        self.vnode
+        self.loc
+            .vnode
             .mtx
             .unintr_lock_shared()
             .ops
-            .get_part_offset(&self.vnode)
+            .get_part_offset(&self.loc.vnode)
     }
 
     fn stat(&self) -> EResult<Stat> {
         Ok(Stat {
-            ino: self.vnode.ino,
-            ..self.vnode.mtx.lock_shared()?.ops.stat(&self.vnode)?
+            ino: self.loc.vnode.ino,
+            ..self
+                .loc
+                .vnode
+                .mtx
+                .lock_shared()?
+                .ops
+                .stat(&self.loc.vnode)?
         })
     }
 
@@ -245,9 +260,9 @@ impl File for VfsFile {
     }
 
     fn seek(&self, mode: SeekMode, offset: i64) -> EResult<u64> {
-        let guard = self.vnode.mtx.lock_shared()?;
+        let guard = self.loc.vnode.mtx.lock_shared()?;
         let mut flags = self.flags.lock()?;
-        let size = guard.ops.get_size(&self.vnode);
+        let size = guard.ops.get_size(&self.loc.vnode);
 
         let new_off = match mode {
             SeekMode::Set => offset.clamp(0, size as i64),
@@ -265,14 +280,20 @@ impl File for VfsFile {
         let flags = self.flags.lock()?;
         if flags.flags & oflags::WRITE_ONLY == 0 {
             Err(Errno::EBADF)
-        } else if self.vnode.type_ == InodeType::Directory {
+        } else if self.loc.vnode.type_ == InodeType::Directory {
             return Err(Errno::EISDIR);
-        } else if self.vnode.vfs.is_read_only() {
+        } else if self.loc.vnode.vfs.is_read_only() {
             Err(Errno::EROFS)
         } else if flags.flags & oflags::APPEND != 0 {
-            self.vnode.vfs.check_eio(self.append_write(flags, wdata))
+            self.loc
+                .vnode
+                .vfs
+                .check_eio(self.append_write(flags, wdata))
         } else {
-            self.vnode.vfs.check_eio(self.regular_write(flags, wdata))
+            self.loc
+                .vnode
+                .vfs
+                .check_eio(self.regular_write(flags, wdata))
         }
     }
 
@@ -280,14 +301,14 @@ impl File for VfsFile {
         let mut flags = self.flags.lock()?;
         if flags.flags & oflags::READ_ONLY == 0 {
             return Err(Errno::EBADF);
-        } else if self.vnode.type_ == InodeType::Directory {
+        } else if self.loc.vnode.type_ == InodeType::Directory {
             return Err(Errno::EISDIR);
         }
 
         // Get file ops and size.
-        let pagecache = self.vnode.pagecache.as_ref().unwrap();
-        let guard = self.vnode.mtx.lock_shared()?;
-        let size = guard.ops.get_size(&self.vnode);
+        let pagecache = self.loc.vnode.pagecache.as_ref().unwrap();
+        let guard = self.loc.vnode.mtx.lock_shared()?;
+        let size = guard.ops.get_size(&self.loc.vnode);
 
         // Increment offset and determine read count.
         let offset = flags.offset;
@@ -296,7 +317,7 @@ impl File for VfsFile {
 
         // Perform read on vnode ops.
         let pager = VNodePager {
-            vnode: &self.vnode,
+            vnode: &self.loc.vnode,
             ops: &*guard.ops,
         };
         pagecache.read_bytes(&pager, offset, rdata.subslice_mut(0..readlen))?;
@@ -308,22 +329,23 @@ impl File for VfsFile {
         let mut flags = self.flags.lock()?;
         if flags.flags & oflags::WRITE_ONLY == 0 {
             return Err(Errno::EBADF);
-        } else if self.vnode.vfs.is_read_only() {
+        } else if self.loc.vnode.vfs.is_read_only() {
             return Err(Errno::EROFS);
         }
-        let mut guard = self.vnode.mtx.lock()?;
+        let mut guard = self.loc.vnode.mtx.lock()?;
 
-        let old_size = guard.ops.get_size(&self.vnode);
-        self.vnode
+        let old_size = guard.ops.get_size(&self.loc.vnode);
+        self.loc
+            .vnode
             .vfs
-            .check_eio(guard.ops.resize(&self.vnode, size))?;
+            .check_eio(guard.ops.resize(&self.loc.vnode, size))?;
 
-        if let Some(pagecache) = &self.vnode.pagecache {
+        if let Some(pagecache) = &self.loc.vnode.pagecache {
             // SAFETY: The VNodeOps are locked, preventing another resize, and the smaller size prevents new pages to be mapped for the OOB area.
 
             if size < old_size {
                 // First enforce that the vmspaces don't have the OOB area mapped...
-                for &(vmspace, entry) in self.vnode.mappings.unintr_lock_shared().iter() {
+                for &(vmspace, entry) in self.loc.vnode.mappings.unintr_lock_shared().iter() {
                     // SAFETY: The VmSpaceInner promised to notify us to remove the entries before they become invalid.
                     unsafe { (*vmspace).shrink(entry, size) };
                 }
@@ -337,19 +359,22 @@ impl File for VfsFile {
     }
 
     fn sync(&self) -> EResult<()> {
-        let guard = self.vnode.mtx.lock_shared()?;
-        if let Some(pagecache) = &self.vnode.pagecache {
+        let guard = self.loc.vnode.mtx.lock_shared()?;
+        if let Some(pagecache) = &self.loc.vnode.pagecache {
             let pager = VNodePager {
-                vnode: &self.vnode,
+                vnode: &self.loc.vnode,
                 ops: &*guard.ops,
             };
             pagecache.sync_all(&pager)?;
         }
-        self.vnode.vfs.check_eio(guard.ops.sync(&self.vnode))
+        self.loc
+            .vnode
+            .vfs
+            .check_eio(guard.ops.sync(&self.loc.vnode))
     }
 
-    fn get_vnode(&self) -> Option<Arc<VNode>> {
-        Some(self.vnode.clone())
+    fn get_loc(&self) -> Option<VfsLoc> {
+        Some(self.loc.clone())
     }
 }
 
@@ -357,7 +382,7 @@ impl Drop for VfsFile {
     fn drop(&mut self) {
         if (self.flags.unintr_lock_shared().flags & oflags::WRITE_ONLY) != 0 {
             // Update DENYWRITE.
-            let old = self.vnode.denywrite.fetch_add(1, Ordering::Relaxed);
+            let old = self.loc.vnode.denywrite.fetch_add(1, Ordering::Relaxed);
             debug_assert!(old <= -1);
         }
     }
@@ -401,21 +426,7 @@ pub struct VNode {
 
 impl Debug for VNode {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let realpath = try {
-            self.vfs
-                .mountpoint
-                .as_ref()?
-                .mtx
-                .unintr_lock_shared()
-                .dentcache
-                .clone()?
-                .realpath()
-                .ok()?
-        };
-        let realpath = realpath.unwrap_or(vec![b'/']);
-        write!(f, "VNode {} in VFS at {}", self.ino, unsafe {
-            str::from_utf8_unchecked(&realpath)
-        })
+        write!(f, "VNode {} in VFS {}", self.ino, &self.vfs.ops)
     }
 }
 
@@ -501,13 +512,20 @@ impl VNode {
     /// - If the ops are not of type `U`
     #[inline(always)]
     pub(super) fn get_ops_as<'a, U: VNodeOps>(self: &'a VNode) -> SharedMutexGuard<'a, U> {
-        self.mtx
-            .unintr_lock_shared()
-            .convert(|x| (x.ops.as_ref() as &dyn Any).downcast_ref().unwrap())
+        self.mtx.unintr_lock_shared().convert(|x| {
+            match (x.ops.as_ref() as &dyn Any).downcast_ref::<U>() {
+                Some(x) => x,
+                None => panic!(
+                    "get_ops_as::<{}> failed for {}",
+                    type_name::<U>(),
+                    x.ops.as_ref()
+                ),
+            }
+        })
     }
 
     /// Get the filesystem mounted here, if any.
-    pub fn get_mounted(&self) -> Option<Arc<Vfs>> {
+    pub(super) fn get_mounted(&self) -> Option<Arc<Mount>> {
         self.mtx
             .unintr_lock_shared()
             .dentcache
@@ -517,31 +535,6 @@ impl VNode {
             .unintr_lock_shared()
             .mounted
             .clone()
-    }
-
-    /// Follow mounts here.
-    pub fn follow_mounts(self: &Arc<Self>) -> Arc<Self> {
-        let dentcache = self.mtx.unintr_lock_shared().dentcache.clone();
-        let dentcache = if let Some(dentcache) = dentcache {
-            dentcache
-        } else {
-            return self.clone();
-        };
-        dentcache
-            .follow_mounts()
-            .open_vnode()
-            .unwrap_or(self.clone())
-    }
-
-    /// Get the VFS that this is the root directory of, if any.
-    pub fn is_vfs_root(&self) -> Option<Arc<Vfs>> {
-        self.mtx
-            .unintr_lock_shared()
-            .dentcache
-            .as_ref()?
-            .parent
-            .is_none()
-            .then(|| self.vfs.clone())
     }
 }
 
@@ -563,7 +556,7 @@ impl Drop for VNode {
 }
 
 /// Abstract vnode operations.
-pub trait VNodeOps: Any {
+pub trait VNodeOps: Any + Display {
     /// Get the associated character device, if any.
     fn get_device(&self, _vnode_self: &VNode) -> Option<Arc<dyn Device>> {
         None
@@ -655,13 +648,9 @@ impl dyn VNodeOps {
 /// A mounted virtual filesystem.
 pub struct Vfs {
     /// Instance of the filesystem driver.
-    pub(super) ops: Mutex<Box<dyn VfsOps>>,
+    pub(super) ops: Box<dyn VfsOps>,
     /// Dictionary of VNodes that are opened in this VFS.
     pub(super) vnodes: Mutex<BTreeMap<u64, Weak<VNode>>>,
-    /// Handle of the root directory.
-    pub(super) root: UnsafeCell<Option<Arc<VNode>>>,
-    /// Mountpoint of this VFS.
-    pub(super) mountpoint: Option<Arc<VNode>>,
     /// Mounted filesystem flags.
     pub(super) flags: AtomicU32,
     /// Fake inode counter for filesystems that do not implement inodes.
@@ -669,7 +658,6 @@ pub struct Vfs {
     /// Log-base 2 number of bytes a block is for regular file I/O.
     pub(super) block_size_exp: u8,
 }
-unsafe impl Sync for Vfs {}
 
 impl Vfs {
     pub fn is_read_only(&self) -> bool {
@@ -680,20 +668,14 @@ impl Vfs {
     /// # Panics
     /// - If the ops are not of type `U`
     #[inline(always)]
-    pub(super) fn get_ops_as<'a, U: VfsOps>(self: &'a Vfs) -> SharedMutexGuard<'a, U> {
-        self.ops
-            .unintr_lock_shared()
-            .convert(|x| (x.as_ref() as &dyn Any).downcast_ref().unwrap())
-    }
-
-    /// Helper function to get [`Vfs::root`], which must already be initialized.
-    pub(super) fn root(&self) -> Arc<VNode> {
-        unsafe {
-            self.root
-                .as_ref_unchecked()
-                .clone()
-                .unwrap_unchecked()
-                .clone()
+    pub(super) fn get_ops_as<'a, U: VfsOps>(self: &'a Vfs) -> &'a U {
+        match (self.ops.as_ref() as &dyn Any).downcast_ref::<U>() {
+            Some(x) => x,
+            None => panic!(
+                "get_ops_as::<{}> failed for {}",
+                type_name::<U>(),
+                self.ops.as_ref()
+            ),
         }
     }
 
@@ -709,7 +691,7 @@ impl Vfs {
         dirent: &Dirent,
         dentcache: Option<Arc<DentCache>>,
     ) -> EResult<Arc<VNode>> {
-        let uses_inodes = self.ops.lock_shared()?.uses_inodes();
+        let uses_inodes = self.ops.uses_inodes();
         if let Some(vnode) = self.get_vnode(dirent.ino) {
             return Ok(vnode);
         }
@@ -723,7 +705,7 @@ impl Vfs {
         } // Omitting this for inode-less filesystems works because the `DentCache` also locks its `vnode` field.
 
         // Call the filesystem to open the vnode.
-        let ops = self.ops.lock_shared()?.open(self, dirent)?;
+        let ops = self.ops.open(self, dirent)?;
 
         let fifo = (dirent.type_ == InodeType::Fifo).then(|| FifoShared::new());
         let pagecache =
@@ -788,12 +770,15 @@ impl Vfs {
 
 impl Drop for Vfs {
     fn drop(&mut self) {
-        self.ops.unintr_lock().umount(self);
+        if let Err(x) = self.ops.sync() {
+            logkf!(LogLevel::Error, "Failed to sync: {}", x);
+        }
+        self.ops.umount(self);
     }
 }
 
 /// Filesystem-wide operations for a [`Vfs`]; instance of a [`VfsDriver`].
-pub trait VfsOps: Sync + Any {
+pub trait VfsOps: Display + Send + Sync + Any {
     /// Get the media that this VFS uses.
     fn media(&self) -> Option<&Media>;
     /// Whether this type of filesystem has inode numers.
@@ -822,10 +807,10 @@ pub trait VfsOps: Sync + Any {
         self_arc: &Arc<Vfs>,
         src_dir: &Arc<VNode>,
         src_name: &[u8],
-        src_mutexinner: &mut VNodeMtxInner,
+        src_ops: &mut dyn VNodeOps,
         dest_dir: &Arc<VNode>,
         dest_name: &[u8],
-        dest_mutexinner: &mut VNodeMtxInner,
+        dest_ops: &mut dyn VNodeOps,
     ) -> EResult<Dirent>;
 
     /// Sync the cached changes that are not file- or inode-specific to disk.
@@ -833,11 +818,7 @@ pub trait VfsOps: Sync + Any {
         Ok(())
     }
     /// Called in the [`Drop`] implementation of [`Vfs`].
-    fn umount(&mut self, _vfs_self: &Vfs) {
-        if let Err(x) = self.sync() {
-            logkf!(LogLevel::Error, "Failed to sync: {}", x);
-        }
-    }
+    fn umount(&self, _vfs_self: &Vfs) {}
 }
 
 /// A filesystem driver.
@@ -855,7 +836,7 @@ pub(super) struct DentCacheDir {
     /// Child dentcache nodes.
     pub children: BTreeMap<Box<[u8]>, Weak<DentCache>>,
     /// Filesystem mounted at this location.
-    pub mounted: Option<Arc<Vfs>>,
+    pub mounted: Option<Arc<Mount>>,
 }
 
 impl DentCacheDir {
@@ -962,59 +943,42 @@ impl DentCache {
     }
 
     /// Look up a name in this directory.
-    pub fn lookup(self: &Arc<Self>, component: &[u8]) -> EResult<Arc<DentCache>> {
-        Self::lookup_impl(self.clone(), component)
-    }
+    pub(super) fn lookup(mut loc: CacheLoc, component: &[u8]) -> EResult<CacheLoc> {
+        // Handle `.` and `..` components.
+        if component == b"." {
+            return Ok(loc);
+        } else if component == b".." {
+            loc = Self::exit_mounts(loc);
 
-    #[inline(always)]
-    /// Look up a name in this directory.
-    fn lookup_impl(mut this: Arc<Self>, component: &[u8]) -> EResult<Arc<DentCache>> {
-        // Assert this to be a directory.
-        let mut cache = if let DentCacheType::Directory(x) = &this.type_ {
+            // Get the parent dir.
+            if let Some(x) = &loc.cache.parent {
+                return Ok(CacheLoc {
+                    cache: x.clone(),
+                    mount: loc.mount,
+                });
+            } else {
+                return Ok(loc);
+            }
+        }
+
+        // Handle mounted filesystems.
+        loc = Self::enter_mounts(loc);
+
+        let cache = if let DentCacheType::Directory(x) = &loc.cache.type_ {
             x
         } else {
             return Err(Errno::ENOTDIR);
         };
-        let mut guard = cache.lock_shared()?;
-
-        // Handle mounted filesystems.
-        while let Some(mounted) = guard.mounted.clone() {
-            drop(guard);
-            this = mounted.root().mtx.lock_shared()?.dentcache.clone().unwrap();
-            cache = if let DentCacheType::Directory(x) = &this.type_ {
-                x
-            } else {
-                unreachable!();
-            };
-            guard = cache.lock_shared()?;
-        }
-
-        // Handle `.` and `..` components.
-        if component == b"." {
-            return Ok(this.clone());
-        } else if component == b".." {
-            // Get the parent dir.
-            if let Some(x) = &this.parent {
-                return Ok(x.clone());
-            }
-            // Traverse back up to the parent VFS' mountpoint.
-            drop(guard);
-            while let Some(x) = this.vfs.mountpoint.clone() {
-                this = x.mtx.lock_shared()?.dentcache.clone().unwrap();
-            }
-            // Try again to get the parent dir on the new VFS.
-            if let Some(x) = &this.parent {
-                return Ok(x.clone());
-            } else {
-                return Ok(this.clone());
-            }
-        }
+        let guard = cache.lock_shared()?;
 
         // Try to look up from the cache.
         if let Some(child) = guard.children.get(component) {
-            if let Some(arc) = child.upgrade() {
+            if let Some(cache) = child.upgrade() {
                 // It was cached already.
-                return Ok(arc);
+                return Ok(CacheLoc {
+                    cache,
+                    mount: loc.mount,
+                });
             }
         }
         drop(guard);
@@ -1022,12 +986,15 @@ impl DentCache {
         // Read from the filesystem.
         let mut guard = cache.lock()?;
         if let Some(child) = guard.children.get(component) {
-            if let Some(arc) = child.upgrade() {
+            if let Some(cache) = child.upgrade() {
                 // Race condition: It was cached by another thread while the mutex was not held.
-                return Ok(arc);
+                return Ok(CacheLoc {
+                    cache,
+                    mount: loc.mount,
+                });
             }
         }
-        let self_vnode = this.open_vnode()?;
+        let self_vnode = loc.cache.open_vnode()?;
         let dirent = match self_vnode
             .mtx
             .lock_shared()?
@@ -1038,10 +1005,10 @@ impl DentCache {
             Err(x) => {
                 if x == Errno::ENOENT {
                     // Directory exists but the file requested doesn't.
-                    let value = Arc::try_new(DentCache {
+                    let cache = Arc::try_new(DentCache {
                         type_: DentCacheType::Negative,
-                        vfs: this.vfs.clone(),
-                        parent: Some(this.clone()),
+                        vfs: loc.cache.vfs.clone(),
+                        parent: Some(loc.cache.clone()),
                         vnode: Mutex::new(None),
                         dirent: Dirent {
                             name: component.into(),
@@ -1050,9 +1017,12 @@ impl DentCache {
                     })?;
                     guard
                         .children
-                        .insert(component.into(), Arc::downgrade(&value));
+                        .insert(component.into(), Arc::downgrade(&cache));
 
-                    return Ok(value);
+                    return Ok(CacheLoc {
+                        cache,
+                        mount: loc.mount,
+                    });
                 } else {
                     return Err(x);
                 }
@@ -1062,71 +1032,80 @@ impl DentCache {
         // Insert new entry.
         match dirent.type_ {
             InodeType::Directory => {
-                let value = Arc::try_new(DentCache {
+                let cache = Arc::try_new(DentCache {
                     type_: DentCacheType::Directory(Mutex::new(DentCacheDir::EMPTY)),
-                    parent: Some(this.clone()),
+                    parent: Some(loc.cache.clone()),
                     vnode: Mutex::new(None),
-                    vfs: this.vfs.clone(),
+                    vfs: loc.cache.vfs.clone(),
                     dirent,
                 })?;
                 guard
                     .children
-                    .insert(component.into(), Arc::downgrade(&value));
+                    .insert(component.into(), Arc::downgrade(&cache));
 
-                Ok(value)
+                Ok(CacheLoc {
+                    cache,
+                    mount: loc.mount,
+                })
             }
             InodeType::Symlink => {
                 // Read the symlink first.
                 let vnode = self_vnode.vfs.open(&dirent, None)?;
                 let name = vnode.mtx.lock_shared()?.ops.readlink(&self_vnode)?;
 
-                let value = Arc::try_new(DentCache {
+                let cache = Arc::try_new(DentCache {
                     type_: DentCacheType::Symlink(name),
-                    parent: Some(this.clone()),
+                    parent: Some(loc.cache.clone()),
                     vnode: Mutex::new(Some(Arc::downgrade(&vnode))),
-                    vfs: this.vfs.clone(),
+                    vfs: loc.cache.vfs.clone(),
                     dirent,
                 })?;
                 guard
                     .children
-                    .insert(component.into(), Arc::downgrade(&value));
+                    .insert(component.into(), Arc::downgrade(&cache));
 
-                Ok(value)
+                Ok(CacheLoc {
+                    cache,
+                    mount: loc.mount,
+                })
             }
             _ => {
                 // Neither directory nor symlink.
-                let value = Arc::try_new(DentCache {
+                let cache = Arc::try_new(DentCache {
                     type_: DentCacheType::File,
-                    parent: Some(this.clone()),
+                    parent: Some(loc.cache.clone()),
                     vnode: Mutex::new(None),
-                    vfs: this.vfs.clone(),
+                    vfs: loc.cache.vfs.clone(),
                     dirent,
                 })?;
                 guard
                     .children
-                    .insert(component.into(), Arc::downgrade(&value));
+                    .insert(component.into(), Arc::downgrade(&cache));
 
-                Ok(value)
+                Ok(CacheLoc {
+                    cache,
+                    mount: loc.mount,
+                })
             }
         }
     }
 
-    /// Follow any possible mounts on this dentcache.
-    pub fn follow_mounts(self: &Arc<Self>) -> Arc<Self> {
-        let mut this = self.clone();
-        if let DentCacheType::Directory(cache) = &this.type_ {
+    /// Enter any possible mounts on this dentcache.
+    pub fn enter_mounts(mut loc: CacheLoc) -> CacheLoc {
+        if let DentCacheType::Directory(cache) = &loc.cache.type_ {
             let mut cache = cache;
             let mut guard = cache.unintr_lock_shared();
             while let Some(mounted) = guard.mounted.clone() {
                 drop(guard);
-                this = mounted
-                    .root()
+                loc.cache = mounted
+                    .root
                     .mtx
                     .unintr_lock_shared()
                     .dentcache
                     .clone()
                     .unwrap();
-                cache = if let DentCacheType::Directory(x) = &this.type_ {
+                loc.mount = mounted;
+                cache = if let DentCacheType::Directory(x) = &loc.cache.type_ {
                     x
                 } else {
                     unreachable!();
@@ -1134,24 +1113,18 @@ impl DentCache {
                 guard = cache.unintr_lock_shared();
             }
         }
-        this
+        loc
     }
 
-    /// Un-follow mounts; returns the parent VFS dentcache if this is a VFS root.
+    /// Exit mounts; returns the parent VFS dentcache if this is a VFS root.
     /// Returns self if this is the root directory.
-    pub fn unfollow_mounts(self: &Arc<Self>) -> Arc<Self> {
-        let mut this = self.clone();
-        while self.parent.is_none()
-            && let Some(mountpoint) = self.vfs.mountpoint.clone()
+    pub fn exit_mounts(mut loc: CacheLoc) -> CacheLoc {
+        while let Some(parent) = loc.mount.parent.clone()
+            && loc.cache.dirent.ino == loc.mount.root.ino
         {
-            this = mountpoint
-                .mtx
-                .unintr_lock_shared()
-                .dentcache
-                .clone()
-                .unwrap();
+            loc = parent.to_cache().unwrap();
         }
-        this
+        loc
     }
 
     /// Whether this is the root of a VFS.
@@ -1161,7 +1134,7 @@ impl DentCache {
 
     /// Get or open the associated VNode.
     pub fn open_vnode(self: &Arc<Self>) -> EResult<Arc<VNode>> {
-        let uses_inodes = self.vfs.ops.lock_shared()?.uses_inodes();
+        let uses_inodes = self.vfs.ops.uses_inodes();
         if let Some(weak) = &*self.vnode.lock_shared()? {
             if let Some(arc) = weak.upgrade() {
                 return Ok(arc);

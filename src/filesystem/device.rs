@@ -7,38 +7,17 @@ use super::*;
 
 /// A character device bound to a VNode.
 pub struct CharDevFile {
-    /// The character device associated with this file.
     char_dev: Arc<dyn CharDevice>,
-    /// The VNode at which this device is bound.
-    vnode: Option<Arc<VNode>>,
-    /// Mode flags.
+    loc: Option<VfsLoc>,
     flags: Mutex<u32>,
 }
 
 impl CharDevFile {
     /// Create a new character device file from a VNode.
-    pub(super) fn new(vnode: Arc<VNode>, flags: u32) -> Self {
-        Self {
-            char_dev: vnode
-                .clone()
-                .mtx
-                .unintr_lock_shared()
-                .ops
-                .get_device(&vnode)
-                .unwrap()
-                .try_as_arc::<dyn CharDevice>()
-                .unwrap()
-                .clone(),
-            vnode: Some(vnode),
-            flags: Mutex::new(flags),
-        }
-    }
-
-    /// Create a new character device file from a device handler.
-    pub fn new_raw(char_dev: Arc<dyn CharDevice>, flags: u32) -> Self {
+    pub fn new(loc: Option<VfsLoc>, char_dev: Arc<dyn CharDevice>, flags: u32) -> Self {
         Self {
             char_dev,
-            vnode: None,
+            loc,
             flags: Mutex::new(flags),
         }
     }
@@ -75,8 +54,8 @@ impl File for CharDevFile {
     }
 
     fn stat(&self) -> EResult<Stat> {
-        if let Some(vnode) = &self.vnode {
-            vnode.mtx.lock_shared()?.ops.stat(&vnode)
+        if let Some(ref loc) = self.loc {
+            loc.vnode.mtx.lock_shared()?.ops.stat(&loc.vnode)
         } else {
             Ok(Stat::default())
         }
@@ -115,8 +94,8 @@ impl File for CharDevFile {
         Ok(())
     }
 
-    fn get_vnode(&self) -> Option<Arc<VNode>> {
-        self.vnode.clone()
+    fn get_loc(&self) -> Option<VfsLoc> {
+        self.loc.clone()
     }
 
     fn get_device(&self) -> Option<Arc<dyn Device>> {
@@ -126,29 +105,27 @@ impl File for CharDevFile {
 
 /// A block device bound to a VNode.
 pub(super) struct BlockDevFile {
-    /// The block device associated with this file.
     block_dev: Arc<dyn BlockDevice>,
-    /// The VNode at which this device is bound.
-    vnode: Arc<VNode>,
-    /// Mode flags.
+    loc: VfsLoc,
     flags: Mutex<FlagsAndOffset>,
 }
 
 impl BlockDevFile {
     /// Create a new block device file.
-    pub fn new(vnode: Arc<VNode>, flags: u32) -> Self {
+    pub fn new(loc: VfsLoc, flags: u32) -> Self {
         Self {
-            block_dev: vnode
+            block_dev: loc
+                .vnode
                 .clone()
                 .mtx
                 .unintr_lock_shared()
                 .ops
-                .get_device(&vnode)
+                .get_device(&loc.vnode)
                 .unwrap()
                 .try_as_arc::<dyn BlockDevice>()
                 .unwrap()
                 .clone(),
-            vnode,
+            loc,
             flags: Mutex::new(FlagsAndOffset { offset: 0, flags }),
         }
     }
@@ -182,7 +159,7 @@ impl File for BlockDevFile {
     }
 
     fn stat(&self) -> EResult<Stat> {
-        self.vnode.mtx.lock_shared()?.ops.stat(&self.vnode)
+        self.loc.vnode.mtx.lock_shared()?.ops.stat(&self.loc.vnode)
     }
 
     fn tell(&self) -> EResult<u64> {
@@ -248,8 +225,8 @@ impl File for BlockDevFile {
         self.block_dev.sync_all(false)
     }
 
-    fn get_vnode(&self) -> Option<Arc<VNode>> {
-        Some(self.vnode.clone())
+    fn get_loc(&self) -> Option<VfsLoc> {
+        Some(self.loc.clone())
     }
 
     fn get_device(&self) -> Option<Arc<dyn Device>> {

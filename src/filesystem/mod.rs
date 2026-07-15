@@ -24,7 +24,7 @@ use crate::{
     dev2::{Device, class::block::BlockDevice},
     filesystem::{
         fifo::{Fifo, FifoShared},
-        mount::{MountTable, root_vnode_unlocked},
+        mount::{Mount, MountTable, root_loc_unlocked},
         vfs::{VNodeMtxInner, vnflags},
     },
     kernel::sync::{mutex::Mutex, waitlist::Waitlist},
@@ -348,8 +348,8 @@ pub trait File: Sync {
     fn resize(&self, size: u64) -> EResult<()>;
     /// Sync the underlying caches to disk.
     fn sync(&self) -> EResult<()>;
-    /// Get the underlying vnode (if it exists).
-    fn get_vnode(&self) -> Option<Arc<VNode>>;
+    /// Get the underlying location (if it exists).
+    fn get_loc(&self) -> Option<VfsLoc>;
 }
 
 impl dyn File + '_ {
@@ -392,6 +392,35 @@ impl dyn File + '_ {
         }
         Ok(rdata)
     }
+}
+
+/// Location in the VFS with a [`VNode`].
+#[derive(Clone)]
+pub struct VfsLoc {
+    pub vnode: Arc<VNode>,
+    pub mount: Arc<Mount>,
+}
+
+impl VfsLoc {
+    pub fn to_cache(self) -> EResult<CacheLoc> {
+        Ok(CacheLoc {
+            cache: self
+                .vnode
+                .mtx
+                .unintr_lock_shared()
+                .dentcache
+                .clone()
+                .ok_or(Errno::ENOTDIR)?,
+            mount: self.mount,
+        })
+    }
+}
+
+/// Location in the VFS with a [`DentCache`].
+#[derive(Clone)]
+pub struct CacheLoc {
+    pub cache: Arc<DentCache>,
+    pub mount: Arc<Mount>,
 }
 
 #[derive(Clone)]
@@ -485,26 +514,26 @@ pub const NAME_MAX: usize = 255;
 pub static FSDRIVERS: Mutex<BTreeMap<String, Box<dyn VfsDriver>>> = Mutex::new(BTreeMap::new());
 
 /// Helper function that gets the VNode for `at` parameters.
-fn at_vnode_unlocked(at: Option<&dyn File>, guard: &MountTable) -> EResult<Arc<VNode>> {
+fn vfs_loc_unlocked(at: Option<&dyn File>, guard: &MountTable) -> EResult<VfsLoc> {
     debug_assert!(ptr::addr_eq(guard, unsafe { mount::MOUNT_TABLE.data() }));
     match at {
-        Some(x) => x.get_vnode().ok_or(Errno::ENOTDIR),
-        None => root_vnode_unlocked(guard),
+        Some(x) => x.get_loc().ok_or(Errno::ENOTDIR),
+        None => root_loc_unlocked(guard),
     }
 }
 
 /// Helper function that gets the VNode for `at` parameters.
-fn at_vnode(at: Option<&dyn File>) -> EResult<Arc<VNode>> {
-    at_vnode_unlocked(at, &*mount::MOUNT_TABLE.lock_shared()?)
+fn vfs_loc(at: Option<&dyn File>) -> EResult<VfsLoc> {
+    vfs_loc_unlocked(at, &*mount::MOUNT_TABLE.lock_shared()?)
 }
 
 /// Walk down the filesystem to a certain path.
 fn walk_unlocked(
-    mut at: Arc<DentCache>,
+    mut loc: CacheLoc,
     path: &[u8],
     follow_last_symlink: bool,
     guard: &MountTable,
-) -> EResult<Arc<DentCache>> {
+) -> EResult<CacheLoc> {
     debug_assert!(ptr::addr_eq(guard, unsafe { mount::MOUNT_TABLE.data() }));
     if path.len() > PATH_MAX {
         // There is no distinction between the errno for NAME_MAX exceeded or PATH_MAX exceeded.
@@ -547,12 +576,7 @@ fn walk_unlocked(
     if path.len() == 0 {
         return Err(Errno::ENOENT);
     } else if path[0] == b'/' {
-        at = root_vnode_unlocked(guard)?
-            .mtx
-            .lock_shared()?
-            .dentcache
-            .clone()
-            .unwrap();
+        loc = root_loc_unlocked(guard)?.to_cache().unwrap();
     }
 
     loop {
@@ -566,7 +590,7 @@ fn walk_unlocked(
             }
         } else if stack[depth].name()[stack[depth].offset] == b'/' {
             // Skip forward slashes.
-            match &at.type_ {
+            match &loc.cache.type_ {
                 DentCacheType::Negative => return Err(Errno::ENOENT),
                 DentCacheType::Directory(_) => (),
                 _ => return Err(Errno::ENOTDIR),
@@ -587,11 +611,11 @@ fn walk_unlocked(
         }
 
         // Get next component.
-        let next = at.lookup(&name[offset..offset + component_len])?;
+        let next: CacheLoc = DentCache::lookup(loc.clone(), &name[offset..offset + component_len])?;
         stack[depth].offset += component_len;
 
         let has_more_path = depth > 0 || stack[depth].offset < stack[depth].name().len();
-        match &next.type_ {
+        match &next.cache.type_ {
             DentCacheType::Negative if has_more_path => return Err(Errno::ENOENT),
             DentCacheType::Symlink(_) => {
                 if follow_last_symlink || has_more_path {
@@ -602,32 +626,27 @@ fn walk_unlocked(
                     links_passed += 1;
                     depth += 1;
                     stack[depth] = LinkEntry {
-                        name: LinkValue::Dent(next.clone()),
+                        name: LinkValue::Dent(next.cache.clone()),
                         offset: 0,
                     };
-                    if next.readlink()?.len() == 0 {
+                    if next.cache.readlink()?.len() == 0 {
                         return Err(Errno::ENOENT);
-                    } else if next.readlink()?[0] == b'/' {
-                        at = root_vnode_unlocked(guard)?
-                            .mtx
-                            .lock_shared()?
-                            .dentcache
-                            .clone()
-                            .unwrap();
+                    } else if next.cache.readlink()?[0] == b'/' {
+                        loc = root_loc_unlocked(guard)?.to_cache()?;
                     }
                 }
             }
-            _ => at = next,
+            _ => loc = next,
         }
     }
 
-    Ok(at)
+    Ok(loc)
 }
 
 /// Walk down the filesystem to a certain path.
-fn walk(at: Arc<DentCache>, path: &[u8], follow_last_symlink: bool) -> EResult<Arc<DentCache>> {
+fn walk(loc: CacheLoc, path: &[u8], follow_last_symlink: bool) -> EResult<CacheLoc> {
     walk_unlocked(
-        at,
+        loc,
         path,
         follow_last_symlink,
         &*mount::MOUNT_TABLE.lock_shared()?,
@@ -636,7 +655,7 @@ fn walk(at: Arc<DentCache>, path: &[u8], follow_last_symlink: bool) -> EResult<A
 
 /// Helper function for [`oflags::CREATE`] logic in [`open`].
 fn o_creat_helper(to_create: Arc<DentCache>, exclusive: bool) -> EResult<Arc<VNode>> {
-    let uses_inodes = to_create.vfs.ops.lock_shared()?.uses_inodes();
+    let uses_inodes = to_create.vfs.ops.uses_inodes();
     let dir_cache = to_create.parent.clone().unwrap();
     let mut guard = dir_cache.type_.as_dir().unwrap().lock()?;
 
@@ -751,26 +770,21 @@ pub fn open(at: Option<&dyn File>, path: &[u8], mut oflags: OFlags) -> EResult<A
     }
 
     // Find target file.
-    let at = at_vnode(at)?;
-    let cache = walk(
-        at.mtx
-            .lock_shared()?
-            .dentcache
-            .clone()
-            .ok_or(Errno::ENOTDIR)?,
+    let loc = walk(
+        vfs_loc(at)?.to_cache()?,
         path,
         oflags & oflags::NOFOLLOW == 0,
     )?;
 
     // Open the target VNode.
-    let vnode = match &cache.type_ {
+    let vnode = match &loc.cache.type_ {
         DentCacheType::Negative => {
             if oflags & oflags::CREATE == 0 {
                 return Err(Errno::ENOENT);
-            } else if cache.vfs.is_read_only() {
+            } else if loc.cache.vfs.is_read_only() {
                 return Err(Errno::EROFS);
             }
-            o_creat_helper(cache.clone(), oflags & oflags::EXCLUSIVE != 0)?
+            o_creat_helper(loc.cache.clone(), oflags & oflags::EXCLUSIVE != 0)?
         }
         DentCacheType::Directory(_) => {
             if oflags & oflags::EXCLUSIVE != 0 {
@@ -778,41 +792,53 @@ pub fn open(at: Option<&dyn File>, path: &[u8], mut oflags: OFlags) -> EResult<A
             } else if oflags & oflags::FILE_ONLY != 0 {
                 return Err(Errno::EISDIR);
             } else {
-                cache.open_vnode()?
+                loc.cache.open_vnode()?
             }
         }
         _ => {
             if oflags & oflags::DIR_ONLY != 0 {
                 return Err(Errno::ENOTDIR);
             } else {
-                cache.open_vnode()?
+                loc.cache.open_vnode()?
             }
         }
     };
 
-    match vnode.type_ {
+    let open_loc = VfsLoc {
+        vnode,
+        mount: loc.mount,
+    };
+
+    match open_loc.vnode.type_ {
         InodeType::Fifo => {
             // FIFO file ops.
-            Ok(Box::<dyn File>::from(Box::try_new(Fifo::new(
-                Some(vnode.clone()),
-                oflags,
-                vnode.fifo.clone().unwrap(),
-            )?)?)
-            .into())
+            let fifo = open_loc.vnode.fifo.clone().unwrap();
+            Ok(
+                Box::<dyn File>::from(Box::try_new(Fifo::new(Some(open_loc), oflags, fifo)?)?)
+                    .into(),
+            )
         }
         InodeType::CharDev => {
             // Character device file ops.
-            Ok(
-                Box::<dyn File>::from(Box::try_new(CharDevFile::new(vnode.clone(), oflags))?)
-                    .into(),
-            )
+            let char_dev = open_loc
+                .vnode
+                .mtx
+                .lock_shared()?
+                .ops
+                .get_device(&open_loc.vnode)
+                .ok_or(Errno::ENODEV)?
+                .try_as_arc()
+                .ok_or(Errno::ENOSYS)?;
+            Ok(Box::<dyn File>::from(Box::try_new(CharDevFile::new(
+                Some(open_loc),
+                char_dev,
+                oflags,
+            ))?)
+            .into())
         }
         InodeType::BlockDev => {
             // Block device file ops.
-            Ok(
-                Box::<dyn File>::from(Box::try_new(BlockDevFile::new(vnode.clone(), oflags))?)
-                    .into(),
-            )
+            Ok(Box::<dyn File>::from(Box::try_new(BlockDevFile::new(open_loc, oflags))?).into())
         }
         InodeType::UnixSocket => {
             logkf!(LogLevel::Warning, "TODO: UNIX domain socket file ops");
@@ -820,14 +846,15 @@ pub fn open(at: Option<&dyn File>, path: &[u8], mut oflags: OFlags) -> EResult<A
         }
         _ => {
             // Regular file ops.
-            if vnode.vfs.flags.load(Ordering::Relaxed) & mount::READ_ONLY != 0
+            if open_loc.vnode.vfs.flags.load(Ordering::Relaxed) & mount::READ_ONLY != 0
                 && oflags & oflags::WRITE_ONLY != 0
             {
                 return Err(Errno::EROFS);
             }
             if oflags & oflags::WRITE_ONLY != 0 {
                 // Update DENYWRITE.
-                vnode
+                open_loc
+                    .vnode
                     .denywrite
                     .try_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
                         (x <= 0).then_some(x - 1)
@@ -835,7 +862,7 @@ pub fn open(at: Option<&dyn File>, path: &[u8], mut oflags: OFlags) -> EResult<A
                     .map_err(|_| Errno::ETXTBSY)?;
             }
             Ok(Box::<dyn File>::from(Box::try_new(VfsFile {
-                vnode,
+                loc: open_loc,
                 flags: Mutex::new(FlagsAndOffset {
                     offset: 0,
                     flags: oflags,
@@ -855,28 +882,10 @@ pub fn link(
     flags: LinkFlags,
 ) -> EResult<()> {
     // Find source and destination.
-    let old_at = at_vnode(old_at)?;
-    let new_at = at_vnode(new_at)?;
-    let old = walk(
-        old_at
-            .mtx
-            .lock_shared()?
-            .dentcache
-            .clone()
-            .ok_or(Errno::ENOTDIR)?,
-        old_path,
-        flags & linkflags::FOLLOW_LINKS != 0,
-    )?;
-    let new = walk(
-        new_at
-            .mtx
-            .lock_shared()?
-            .dentcache
-            .clone()
-            .ok_or(Errno::ENOTDIR)?,
-        new_path,
-        flags & linkflags::FOLLOW_LINKS != 0,
-    )?;
+    let old_at = vfs_loc(old_at)?.to_cache()?;
+    let new_at = vfs_loc(new_at)?.to_cache()?;
+    let old = walk(old_at, old_path, flags & linkflags::FOLLOW_LINKS != 0)?.cache;
+    let new = walk(new_at, new_path, flags & linkflags::FOLLOW_LINKS != 0)?.cache;
 
     if old.type_.as_dir().is_some() {
         return Err(Errno::EISDIR);
@@ -912,7 +921,7 @@ pub fn link(
     new_guard
         .unwrap_or(old_guard)
         .children
-        .remove(&*new.dirent.name);
+        .remove(&new.dirent.name);
 
     Ok(())
 }
@@ -921,16 +930,8 @@ pub fn link(
 /// Uses POSIX `rmdir` semantics iff `is_rmdir`, otherwise POSIX unlink semantics.
 pub fn unlink(at: Option<&dyn File>, path: &[u8], is_rmdir: bool) -> EResult<()> {
     // Find target file.
-    let at = at_vnode(at)?;
-    let to_remove = walk(
-        at.mtx
-            .lock_shared()?
-            .dentcache
-            .clone()
-            .ok_or(Errno::ENOTDIR)?,
-        path,
-        false,
-    )?;
+    let at = vfs_loc(at)?.to_cache()?;
+    let to_remove = walk(at, path, false)?.cache;
 
     // Get parent dirent cache.
     let dir_cache = to_remove.parent.clone().ok_or(
@@ -979,17 +980,9 @@ pub fn unlink(at: Option<&dyn File>, path: &[u8], is_rmdir: bool) -> EResult<()>
 /// Create a new file or directory.
 pub fn make_file(at: Option<&dyn File>, path: &[u8], spec: MakeFileSpec) -> EResult<()> {
     // Find target file.
-    let at = at_vnode(at)?;
-    let to_create = walk(
-        at.mtx
-            .lock_shared()?
-            .dentcache
-            .clone()
-            .ok_or(Errno::ENOTDIR)?,
-        path,
-        false,
-    )?;
-    let uses_inodes = to_create.vfs.ops.lock_shared()?.uses_inodes();
+    let at = vfs_loc(at)?.to_cache()?;
+    let to_create = walk(at, path, false)?.cache;
+    let uses_inodes = to_create.vfs.ops.uses_inodes();
 
     let dir_cache = to_create.parent.clone().ok_or(Errno::EEXIST)?;
     let mut guard = dir_cache.type_.as_dir().unwrap().lock()?;
@@ -1120,31 +1113,13 @@ fn rename_impl(
     flags: u32,
 ) -> EResult<()> {
     // Find source and destination.
-    let old_at = at_vnode(old_at)?;
-    let new_at = at_vnode(new_at)?;
-    let old = walk(
-        old_at
-            .mtx
-            .lock_shared()?
-            .dentcache
-            .clone()
-            .ok_or(Errno::ENOTDIR)?,
-        old_path,
-        false,
-    )?;
+    let old_at = vfs_loc(old_at)?.to_cache()?;
+    let new_at = vfs_loc(new_at)?.to_cache()?;
+    let old = walk(old_at, old_path, false)?.cache;
     if old.type_.is_negative() {
         return Err(Errno::ENOENT);
     }
-    let new = walk(
-        new_at
-            .mtx
-            .lock_shared()?
-            .dentcache
-            .clone()
-            .ok_or(Errno::ENOTDIR)?,
-        new_path,
-        false,
-    )?;
+    let new = walk(new_at, new_path, false)?.cache;
 
     // Get parent dirent caches.
     let old_dir_cache = old.parent.clone().ok_or(Errno::EBUSY)?;
@@ -1229,14 +1204,14 @@ fn rename_impl(
             new_guard.check_for_entry(&new)?
         }
 
-        let dirent = old_dir_cache.vfs.ops.lock_shared()?.rename(
+        let dirent = old_dir_cache.vfs.ops.rename(
             &old_dir_cache.vfs,
             &old_dir_vnode,
             &old.dirent.name,
-            &mut *old_dir_guard,
+            &mut *old_dir_guard.ops,
             &new_dir_vnode,
             &new.dirent.name,
-            &mut *new_dir_guard,
+            &mut *new_dir_guard.ops,
         )?;
         (Some(new_guard), dirent)
     };
@@ -1295,17 +1270,9 @@ fn rename_impl(
 
 /// Get the real path from some canonical path.
 pub fn realpath(at: Option<&dyn File>, path: &[u8], follow_last_symlink: bool) -> EResult<Vec<u8>> {
-    let at = at_vnode(at)?;
-    let cache = walk(
-        at.mtx
-            .lock_shared()?
-            .dentcache
-            .clone()
-            .ok_or(Errno::ENOTDIR)?,
-        path,
-        follow_last_symlink,
-    )?;
-    cache.realpath()
+    let at = vfs_loc(at)?.to_cache()?;
+    let cache = walk(at, path, follow_last_symlink)?;
+    cache.cache.realpath()
 }
 
 /// Convert into an absolute path.

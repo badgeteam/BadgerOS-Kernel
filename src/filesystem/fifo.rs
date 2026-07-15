@@ -14,6 +14,7 @@ use crate::{
         spinlock::Spinlock,
     },
     cpu::irq,
+    filesystem::VfsLoc,
     kernel::sync::{mutex::Mutex, waitlist::Waitlist},
     process::{
         syscall::fs::DentBuffer,
@@ -21,7 +22,7 @@ use crate::{
     },
 };
 
-use super::{File, SeekMode, Stat, VNode, oflags, poll};
+use super::{File, SeekMode, Stat, oflags, poll};
 
 pub type FifoBuffer = badgelib::fifo::Fifo;
 
@@ -249,7 +250,7 @@ unsafe impl Sync for FifoShared {}
 /// A FIFO or a pipe file descriptor.
 pub struct Fifo {
     /// VNode, if any.
-    vnode: Option<Arc<VNode>>,
+    loc: Option<VfsLoc>,
     /// Mode flags.
     flags: Mutex<u32>,
     /// Handle to the FIFO data buffer.
@@ -257,18 +258,14 @@ pub struct Fifo {
 }
 
 impl Fifo {
-    pub(super) fn new(
-        vnode: Option<Arc<VNode>>,
-        flags: u32,
-        shared: Arc<FifoShared>,
-    ) -> EResult<Self> {
+    pub(super) fn new(vnode: Option<VfsLoc>, flags: u32, shared: Arc<FifoShared>) -> EResult<Self> {
         shared.open(
             flags & oflags::NONBLOCK != 0,
             flags & oflags::READ_ONLY != 0,
             flags & oflags::WRITE_ONLY != 0,
         )?;
         Ok(Self {
-            vnode,
+            loc: vnode,
             flags: Mutex::new(flags),
             shared,
         })
@@ -328,8 +325,8 @@ impl File for Fifo {
     }
 
     fn stat(&self) -> EResult<Stat> {
-        if let Some(vnode) = &self.vnode {
-            vnode.mtx.lock_shared()?.ops.stat(&vnode)
+        if let Some(loc) = &self.loc {
+            loc.vnode.mtx.lock_shared()?.ops.stat(&loc.vnode)
         } else {
             Ok(Stat::default())
         }
@@ -392,7 +389,7 @@ impl File for Fifo {
         Err(Errno::ESPIPE)
     }
 
-    fn get_vnode(&self) -> Option<Arc<VNode>> {
-        self.vnode.clone()
+    fn get_loc(&self) -> Option<VfsLoc> {
+        self.loc.clone()
     }
 }
