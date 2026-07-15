@@ -25,8 +25,10 @@ const BADGEROS_MIN_BASE_REV: u64 = 5;
 #[cfg(any(target_arch = "aarch64", target_arch = "loongarch64"))]
 const BADGEROS_MIN_BASE_REV: u64 = 6;
 
+#[used]
 #[unsafe(link_section = ".requests_start")]
 static START_MARKER: RequestsStartMarker = RequestsStartMarker::new();
+#[used]
 #[unsafe(link_section = ".requests_end")]
 static END_MARKER: RequestsEndMarker = RequestsEndMarker::new();
 
