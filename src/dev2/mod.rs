@@ -2,7 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use alloc::sync::Arc;
+use alloc::{string::String, sync::Arc};
 use core::{
     any::{Any, TypeId},
     cmp::Ordering,
@@ -59,6 +59,10 @@ macro_rules! device_get_trait_vtable {
 pub struct DeviceBase {
     /// ID assigned by the device registry.
     id: NonZeroU32,
+    /// Requested device node name.
+    node_name: Option<String>,
+    /// Whether to use a singleton device node.
+    is_singleton: bool,
 }
 
 impl DeviceBase {
@@ -66,6 +70,17 @@ impl DeviceBase {
     pub fn new() -> Self {
         Self {
             id: registry::alloc_device_id(),
+            node_name: None,
+            is_singleton: false,
+        }
+    }
+
+    /// Create a device base with a requested node name.
+    pub fn with_node_name(node_name: String, is_singleton: bool) -> Self {
+        Self {
+            id: registry::alloc_device_id(),
+            node_name: Some(node_name),
+            is_singleton,
         }
     }
 

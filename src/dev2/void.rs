@@ -45,6 +45,10 @@ impl Device for CharVoid {
 }
 
 impl CharDevice for CharVoid {
+    fn is_tty(&self) -> bool {
+        false
+    }
+
     fn poll(&self) -> u32 {
         if self.reads_zeroes {
             poll::IN | poll::OUT
@@ -91,11 +95,11 @@ pub fn zero_instance() -> Arc<dyn CharDevice> {
 /// Create `/dev/null` and `/dev/zero`.
 pub(super) unsafe fn init() {
     let null = Arc::new(CharVoid {
-        base: DeviceBase::new(),
+        base: DeviceBase::with_node_name("null".into(), true),
         reads_zeroes: false,
     });
     let zero = Arc::new(CharVoid {
-        base: DeviceBase::new(),
+        base: DeviceBase::with_node_name("zero".into(), true),
         reads_zeroes: true,
     });
 

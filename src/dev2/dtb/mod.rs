@@ -31,7 +31,7 @@ pub fn get() -> &'static Dtb {
 /// Get the closest interrupt parent for a node.
 pub fn irq_parent(node: &'static DtbNode) -> Option<&'static DtbNode> {
     let dtb = get();
-    let irq_parent = node.prop("interrupt-parent")?;
+    let irq_parent = node.inherit_prop("interrupt-parent")?;
     let Some(phandle) = irq_parent.read_u32() else {
         logkf!(LogLevel::Error, "{}: interrupt-parent malformed", node);
         return None;
