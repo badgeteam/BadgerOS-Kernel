@@ -6,7 +6,7 @@ use alloc::{boxed::Box, collections::btree_set::BTreeSet, sync::Arc, vec::Vec};
 
 use crate::{
     bindings::{log::LogLevel, raw::timestamp_us_t},
-    kernel::{
+    kcore::{
         sched::Thread,
         sync::{mutex::Mutex, waitlist::Waitlist},
     },

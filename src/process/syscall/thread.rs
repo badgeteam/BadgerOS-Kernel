@@ -6,7 +6,7 @@ use crate::{
         error::{EResult, Errno},
         raw::timestamp_us_t,
     },
-    kernel::sched::{Thread, thread_sleep, thread_yield},
+    kcore::sched::{Thread, thread_sleep, thread_yield},
     process::{
         TID,
         uapi::{

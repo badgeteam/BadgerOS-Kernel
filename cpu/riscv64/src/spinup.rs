@@ -6,7 +6,7 @@ use core::arch::{asm, naked_asm};
 
 use crate::{
     bindings::raw::limine_smp_info, boot::spinup::common_cpu_spinup,
-    kernel::smp::limine_trampoline_2,
+    kcore::smp::limine_trampoline_2,
 };
 
 unsafe extern "C" {

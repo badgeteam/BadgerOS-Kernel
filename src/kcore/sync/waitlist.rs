@@ -14,7 +14,7 @@ use crate::{
         raw::timestamp_us_t,
     },
     impl_has_list_node,
-    kernel::sched::{Thread, tflags, thread_yield},
+    kcore::sched::{Thread, tflags, thread_yield},
     util::list::{InvasiveList, InvasiveListNode},
 };
 

@@ -7,7 +7,7 @@ use crate::{
     LogLevel,
     cpu::timer::time_us,
     device::{Device, class::block::BlockDevice, devtmpfs, registry},
-    kernel::sched::thread_sleep,
+    kcore::sched::thread_sleep,
     misc::kparam,
     util,
 };

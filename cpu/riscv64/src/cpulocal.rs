@@ -4,7 +4,7 @@
 
 use core::arch::asm;
 
-use crate::kernel::cpulocal::CpuLocal;
+use crate::kcore::cpulocal::CpuLocal;
 
 /// Architecture-specific CPU-local data.
 #[repr(C)]

@@ -29,7 +29,7 @@ use crate::{
         registry,
     },
     device_get_trait_vtable,
-    kernel::smp,
+    kcore::smp,
     register_kmodule,
 };
 

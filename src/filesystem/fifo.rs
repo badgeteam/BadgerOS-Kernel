@@ -15,7 +15,7 @@ use crate::{
     },
     cpu::irq,
     filesystem::VfsLoc,
-    kernel::sync::{mutex::Mutex, waitlist::Waitlist},
+    kcore::sync::{mutex::Mutex, waitlist::Waitlist},
     process::usercopy::{UserSlice, UserSliceMut},
 };
 

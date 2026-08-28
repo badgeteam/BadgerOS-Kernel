@@ -54,7 +54,7 @@ pub mod misc;
 pub mod ktest;
 pub mod device;
 pub mod driver;
-pub mod kernel;
+pub mod kcore;
 pub mod mem;
 pub mod process;
 pub mod util;

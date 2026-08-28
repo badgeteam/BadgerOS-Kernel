@@ -9,7 +9,7 @@ use crate::{
     bindings::{error::EResult, log::LogLevel},
     cpu::irq,
     device::Device,
-    kernel::sync::spinlock::Spinlock,
+    kcore::sync::spinlock::Spinlock,
 };
 
 /// Base interrupt controller struct; intended for use by implementers of [`IrqCtlDevice`].

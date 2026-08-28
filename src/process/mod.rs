@@ -40,7 +40,7 @@ use crate::{
     cpu::{thread::GpRegfile, usermode::call_usermode},
     device::{self, class::char::CharDevice},
     filesystem::{self, File, SeekMode, device::CharDevFile, mode, oflags},
-    kernel::{
+    kcore::{
         sched::Thread,
         sync::{
             mutex::{Mutex, SharedMutexGuard},

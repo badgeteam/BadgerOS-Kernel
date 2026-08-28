@@ -13,7 +13,7 @@ use crate::{
     cpu::{self, spinup::arch_cpu_spinup},
     device,
     filesystem::mount_root::mount_root_fs,
-    kernel::{
+    kcore::{
         cpulocal::CpuLocal,
         sched::{Scheduler, Thread},
         sync::mutex::Mutex,

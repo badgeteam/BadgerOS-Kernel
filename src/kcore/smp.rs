@@ -25,7 +25,7 @@ use crate::{
         spinup::{arch_cpu_spinup, limine_trampoline_1},
     },
     device::class::irqctl::IrqCtlDevice,
-    kernel::{
+    kcore::{
         cpulocal::CpuLocal,
         sched::{Scheduler, thread_yield},
         sync::mutex::{Mutex, SharedMutexGuard},

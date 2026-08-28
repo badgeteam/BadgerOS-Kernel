@@ -5,7 +5,7 @@
 use alloc::sync::Arc;
 
 use crate::{
-    kernel::sched::{SchedAlgorithm, Thread},
+    kcore::sched::{SchedAlgorithm, Thread},
     util::list::ArcInvasiveList,
 };
 

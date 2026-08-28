@@ -17,7 +17,7 @@ use crate::{
         log::LogLevel,
     },
     device::probe,
-    kernel::sync::mutex::{Mutex, SharedMutexGuard},
+    kcore::sync::mutex::{Mutex, SharedMutexGuard},
     util::id_alloc::IdAlloc,
 };
 

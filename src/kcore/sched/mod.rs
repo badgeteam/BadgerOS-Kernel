@@ -20,7 +20,7 @@ use crate::{
         usermode::ThreadUContext,
     },
     impl_has_list_node,
-    kernel::{
+    kcore::{
         cpulocal::CpuLocal,
         smp,
         sync::{

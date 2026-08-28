@@ -26,7 +26,7 @@ use crate::{
         mount::{Mount, MountTable, root_loc_unlocked},
         vfs::{VNodeMtxInner, vnflags},
     },
-    kernel::sync::{mutex::Mutex, waitlist::Waitlist},
+    kcore::sync::{mutex::Mutex, waitlist::Waitlist},
     mem::{pagecache::PageCache, vmm::memobject::MemObject},
     process::{
         uapi::stat::stat,

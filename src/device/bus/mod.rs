@@ -21,7 +21,7 @@ use crate::{
         raw::timestamp_us_t,
     },
     device::Device,
-    kernel::sync::{mutex::Mutex, waitlist::Waitlist},
+    kcore::sync::{mutex::Mutex, waitlist::Waitlist},
 };
 
 use super::registry;

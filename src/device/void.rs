@@ -11,7 +11,7 @@ use crate::{
     device::{Device, DeviceBase, class::char::CharDevice, registry},
     device_get_trait_vtable,
     filesystem::poll,
-    kernel::sync::waitlist::Waitlist,
+    kcore::sync::waitlist::Waitlist,
     process::usercopy::{UserSlice, UserSliceMut},
 };
 

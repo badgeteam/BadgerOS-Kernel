@@ -14,7 +14,7 @@ use crate::{
     device::{Device, DeviceBase, registry},
     device_get_trait_vtable,
     filesystem::partition::{VolumeInfo, get_volume_info},
-    kernel::sync::mutex::{Mutex, MutexGuard, SharedMutexGuard},
+    kcore::sync::mutex::{Mutex, MutexGuard, SharedMutexGuard},
     mem::{
         dma::{DmaFromBuffer, DmaTarget},
         pagecache::{PageCache, Pager},

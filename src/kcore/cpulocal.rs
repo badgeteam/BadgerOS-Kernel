@@ -7,7 +7,7 @@ use alloc::{sync::Arc, vec::Vec};
 use crate::{
     cpu::{CpuFeatures, PhysCpuID, cpulocal::ArchCpuLocal},
     device::class::irqctl::IrqCtlDevice,
-    kernel::sched::{Scheduler, Thread},
+    kcore::sched::{Scheduler, Thread},
 };
 
 /// All CPU-local data.

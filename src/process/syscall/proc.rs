@@ -12,7 +12,7 @@ use crate::{
         self,
         thread::{GpRegfile, SpRegfile},
     },
-    kernel::sched::Thread,
+    kcore::sched::Thread,
     process::{
         Cmdline, PID, PROCESSES, current,
         signal::signal_die,

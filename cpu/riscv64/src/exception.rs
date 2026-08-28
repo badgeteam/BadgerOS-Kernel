@@ -10,7 +10,7 @@ use crate::{
         thread::{GpRegfile, SpRegfile},
         usermode::exit_usermode,
     },
-    kernel::{
+    kcore::{
         cpulocal::CpuLocal,
         sched::{Scheduler, Thread},
     },

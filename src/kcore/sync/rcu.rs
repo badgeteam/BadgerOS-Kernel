@@ -4,7 +4,7 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::kernel::sched::{RUNNING_SCHED_COUNT, thread_yield};
+use crate::kcore::sched::{RUNNING_SCHED_COUNT, thread_yield};
 
 use super::spinlock::Spinlock;
 
@@ -16,7 +16,7 @@ static RCU_OUTSTANDING: AtomicU32 = AtomicU32::new(1);
 static RCU_PARTICIPATING: Spinlock<u32> = Spinlock::new(0);
 
 /// Per-scheduler RCU context.
-pub(in crate::kernel) struct RcuCtx {
+pub(in crate::kcore) struct RcuCtx {
     /// What RCU generation this scheduler is on.
     generation: u32,
 }

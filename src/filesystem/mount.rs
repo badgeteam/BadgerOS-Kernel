@@ -20,7 +20,7 @@ use crate::{
         media::Media,
         vfs::{VNode, VNodeMtxInner, Vfs, VfsDriver},
     },
-    kernel::sync::mutex::Mutex,
+    kcore::sync::mutex::Mutex,
 };
 
 use super::vfs::VfsOps;

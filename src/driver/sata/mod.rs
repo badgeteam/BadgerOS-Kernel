@@ -27,7 +27,7 @@ use crate::{
     },
     device_get_trait_vtable,
     driver::sata::port::Port,
-    kernel::{sched::thread_sleep, sync::spinlock::RawSpinlock},
+    kcore::{sched::thread_sleep, sync::spinlock::RawSpinlock},
     mem::dma::DmaTarget,
     register_kmodule,
 };

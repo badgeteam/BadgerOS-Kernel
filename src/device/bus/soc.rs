@@ -34,7 +34,7 @@ use crate::{
 use crate::{
     cpu::PhysCpuID,
     device::{self, dtb::DeviceNode, registry},
-    kernel::smp,
+    kcore::smp,
 };
 
 use super::BusBase;

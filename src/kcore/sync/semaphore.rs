@@ -6,7 +6,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::{
     bindings::{error::EResult, raw::timestamp_us_t},
-    kernel::sync::waitlist::Waitlist,
+    kcore::sync::waitlist::Waitlist,
 };
 
 /// A counting semaphore.

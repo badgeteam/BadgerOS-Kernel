@@ -11,7 +11,7 @@ use alloc::{boxed::Box, vec::Vec};
 
 use crate::{
     bindings::{error::EResult, raw::timestamp_us_t},
-    kernel::sync::waitlist::Waitlist,
+    kcore::sync::waitlist::Waitlist,
     process::usercopy::{AccessResult, UserSlice, UserSliceMut},
 };
 

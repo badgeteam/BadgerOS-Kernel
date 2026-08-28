@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 use crate::{
     bindings::error::EResult,
     device::Device,
-    kernel::sync::waitlist::Waitlist,
+    kcore::sync::waitlist::Waitlist,
     process::usercopy::{UserSlice, UserSliceMut},
 };
 

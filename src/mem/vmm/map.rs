@@ -11,7 +11,7 @@ use crate::{
     config::PAGE_SIZE,
     cpu::mmu,
     impl_has_list_node,
-    kernel::sync::spinlock::Spinlock,
+    kcore::sync::spinlock::Spinlock,
     mem::{
         pmm::{self, PAddrr},
         vmm::physmap::{PhysMap, Virt2Phys, higher_half_vaddr, is_canon_user_range},

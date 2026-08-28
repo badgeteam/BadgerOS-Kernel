@@ -24,7 +24,7 @@ use crate::{
     bindings::error::{EResult, Errno},
     device::Device,
     filesystem::mount,
-    kernel::sync::mutex::Mutex,
+    kcore::sync::mutex::Mutex,
     process::usercopy::{UserSlice, UserSliceMut},
     register_kmodule,
     util::MaybeMut,

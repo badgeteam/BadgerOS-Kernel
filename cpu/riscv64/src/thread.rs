@@ -11,7 +11,7 @@ use core::{
 use alloc::boxed::Box;
 use bytemuck_derive::{AnyBitPattern, NoUninit};
 
-use crate::kernel::sched::Thread;
+use crate::kcore::sched::Thread;
 
 /// Special registers state for threads.
 #[repr(C)]

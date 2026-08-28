@@ -22,7 +22,7 @@ use crate::{
     cpu,
     device::{Device, class::block::BlockDevice},
     filesystem::mount,
-    kernel::sync::mutex::Mutex,
+    kcore::sync::mutex::Mutex,
     process::usercopy::{UserSlice, UserSliceMut},
     register_kmodule,
 };

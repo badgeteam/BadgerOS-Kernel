@@ -33,7 +33,7 @@ use crate::{
         fifo::FifoShared,
         mount::{self, Mount},
     },
-    kernel::sync::{
+    kcore::sync::{
         mutex::{Mutex, MutexGuard, SharedMutexGuard},
         waitlist::Waitlist,
     },

@@ -15,7 +15,7 @@ use crate::{
         raw::{errno_t, timestamp_us_t},
         time_us,
     },
-    kernel::sync::waitlist::Waitlist,
+    kcore::sync::waitlist::Waitlist,
 };
 
 /// Raw mutually-exclusive resource access guard.

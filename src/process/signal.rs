@@ -10,7 +10,7 @@ use crate::{
         thread::{GpRegfile, SpRegfile},
         usermode::enter_signal,
     },
-    kernel::sched::Thread,
+    kcore::sched::Thread,
     process::{self, uapi::wait::w_signalled},
 };
 

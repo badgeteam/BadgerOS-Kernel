@@ -19,7 +19,7 @@ use crate::{
         raw::timestamp_us_t,
     },
     config::PAGE_SIZE,
-    kernel::sync::{mutex::Mutex, spinlock::Spinlock, waitlist::Waitlist},
+    kcore::sync::{mutex::Mutex, spinlock::Spinlock, waitlist::Waitlist},
     mem::pmm::{self, PAddrr},
     process::usercopy::{UserSlice, UserSliceMut},
     util::rtree::RadixTree,

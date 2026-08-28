@@ -11,7 +11,7 @@ use core::{
     ptr::{DynMetadata, NonNull, Pointee},
 };
 
-use crate::kernel::sync::mutex::Mutex;
+use crate::kcore::sync::mutex::Mutex;
 
 #[cfg(feature = "acpi")]
 pub mod acpi;

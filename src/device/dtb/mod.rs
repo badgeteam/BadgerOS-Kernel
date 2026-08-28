@@ -14,7 +14,7 @@ use crate::{
     },
     cpu,
     device::{probe, registry},
-    kernel::{self},
+    kcore::{self},
     misc::kparam,
 };
 
@@ -303,7 +303,7 @@ pub unsafe fn init(fdt: *const FdtHeader) {
     // Set up the CPU-local timers.
     cpu::timer::init_dtb(cpus);
     // Discover CPUs; this sets up the per-hart CpuLocal state used for interrupt routing.
-    kernel::smp::init_dtb(cpus);
+    kcore::smp::init_dtb(cpus);
 
     // Devices under /proc are probed first, any nested devices are to be recursively probed by appropriate drivers.
     unsafe {

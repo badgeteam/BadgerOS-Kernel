@@ -15,7 +15,7 @@ use crate::{
     bindings::error::{EResult, Errno},
     device::Device,
     filesystem::{fatfs::spec::attr2, vfs::vnflags},
-    kernel::sync::mutex::Mutex,
+    kcore::sync::mutex::Mutex,
     mem::vmm::zeroes,
     process::usercopy::{UserSlice, UserSliceMut},
     register_kmodule,

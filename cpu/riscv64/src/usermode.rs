@@ -9,7 +9,7 @@ use crate::{
         irq,
         thread::{GpRegfile, SpRegfile},
     },
-    kernel::{cpulocal::CpuLocal, sched::Thread},
+    kcore::{cpulocal::CpuLocal, sched::Thread},
     process::{
         uapi::signal::{siginfo_t, ucontext_t},
         usercopy::{AccessResult, UserCopyable, UserPtr},

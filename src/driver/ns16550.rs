@@ -29,7 +29,7 @@ use crate::{
     },
     device_get_trait_vtable,
     filesystem::poll,
-    kernel::sync::{spinlock::Spinlock, waitlist::Waitlist},
+    kcore::sync::{spinlock::Spinlock, waitlist::Waitlist},
     process::{
         uapi::termios,
         usercopy::{UserSlice, UserSliceMut},

@@ -10,7 +10,7 @@ use crate::{
     badgelib::irq::IrqGuard,
     bindings::raw::timestamp_us_t,
     device::{bus::ata::AtaBus, registry},
-    kernel::{
+    kcore::{
         sched::{Thread, thread_yield},
         sync::{semaphore::Semaphore, spinlock::RawSpinlock, waitlist::Waitlist},
     },
