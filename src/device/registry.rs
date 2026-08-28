@@ -212,6 +212,7 @@ pub fn bus_by_id(id: NonZeroU32) -> Option<Arc<dyn Bus>> {
 }
 
 /// Get a bus by DTB node.
+#[cfg(feature = "dtb")]
 pub fn bus_by_node(node: &'static DtbNode) -> Option<Arc<dyn Bus>> {
     let id = *BUS_BY_DTB
         .unintr_lock_shared()

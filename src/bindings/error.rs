@@ -1,6 +1,7 @@
 use core::{error::Error, fmt::Display, str};
 
 use alloc::{alloc::AllocError, collections::TryReserveError};
+#[cfg(feature = "dtb")]
 use dtb::DtbError;
 
 use super::raw;
@@ -316,6 +317,7 @@ impl From<TryReserveError> for Errno {
     }
 }
 
+#[cfg(feature = "dtb")]
 impl From<DtbError> for Errno {
     fn from(value: DtbError) -> Self {
         match value {

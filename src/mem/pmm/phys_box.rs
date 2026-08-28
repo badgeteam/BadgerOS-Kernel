@@ -9,7 +9,6 @@ use alloc::sync::Arc;
 use crate::{
     bindings::error::EResult,
     config::PAGE_SIZE,
-    cpu,
     mem::{
         pmm,
         vmm::{self, kernel_mm, map::Mapping, memobject::RawMemory},
@@ -90,6 +89,8 @@ impl<T: Sized> Drop for PhysBox<T> {
 }
 
 vmm_ktest! { PHYS_BOX,
+    use crate::cpu;
+
     const SIZE: usize = 0x2000;
     let mut mem = unsafe { PhysBox::<[u8; SIZE]>::try_new(false, false)? };
 

@@ -29,7 +29,7 @@ impl SchedAlgorithm for RoundRobinAlgorithm {
         self.queue.push_back(thread).unwrap();
     }
 
-    fn remove_thread(&mut self, thread: Arc<Thread>) {
+    fn remove_thread(&mut self, _thread: Arc<Thread>) {
         todo!()
     }
 

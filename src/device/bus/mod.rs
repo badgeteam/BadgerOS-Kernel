@@ -12,6 +12,7 @@ use core::{
 };
 
 use alloc::sync::{Arc, Weak};
+#[cfg(feature = "dtb")]
 use dtb::DtbNode;
 
 use crate::{
@@ -94,6 +95,7 @@ pub trait Bus: Display + Any + Send + Sync + 'static {
     unsafe fn uninstall_irq(&self, irq_id: u128, device: *const dyn Device);
 
     /// Associated DTB node, if any.
+    #[cfg(feature = "dtb")]
     fn dtb_node(&self) -> Option<&'static DtbNode>;
 
     /// ID assigned by the device registry.
@@ -290,6 +292,7 @@ impl<T: ?Sized + Bus> BusResv<T> {
     }
 
     /// Associated DTB node, if any.
+    #[cfg(feature = "dtb")]
     pub fn dtb_node(&self) -> Option<&'static DtbNode> {
         self.0.bus.dtb_node()
     }

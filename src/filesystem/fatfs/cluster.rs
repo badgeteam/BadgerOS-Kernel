@@ -13,7 +13,6 @@ use core::{
 use alloc::{collections::TryReserveError, vec::Vec};
 
 use crate::{
-    LogLevel,
     bindings::error::{EResult, Errno},
     process::usercopy::{UserSlice, UserSliceMut},
 };
@@ -50,7 +49,7 @@ impl ClusterAlloc {
         if prev & mask != 0 {
             #[cfg(debug_assertions)]
             logkf!(
-                LogLevel::Warning,
+                crate::LogLevel::Warning,
                 "Cluster {} marked as usable twice",
                 cluster
             );

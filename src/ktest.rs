@@ -139,11 +139,11 @@ macro_rules! rootfs_ktest {
 
 /// Register a kernel test case.
 #[macro_export]
-#[cfg(feature = "ktest")]
 macro_rules! ktest {
     ($when: expr, $name: ident, $($code: tt)*) => {
         #[used]
         #[unsafe(link_section = ".ktests")]
+        #[cfg(feature = "ktest")]
         static $name: crate::ktest::KTest = crate::ktest::KTest {
             when: $when,
             name: stringify!($name),
@@ -156,13 +156,6 @@ macro_rules! ktest {
             },
         };
     };
-}
-
-/// Dummy macro; registers tests if ktest feature is enabled.
-#[macro_export]
-#[cfg(not(feature = "ktest"))]
-macro_rules! ktest {
-    ($when: expr, $name: ident, $($code: tt)*) => {};
 }
 
 /// Assert that some expression has a certain relation.

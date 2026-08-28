@@ -71,7 +71,7 @@ impl dyn PciCtlDevice {
         }
 
         let res = try {
-            let bus = PciBus::new(self.clone(), addr, None)?;
+            let bus = PciBus::new(self.clone(), addr)?;
             registry::register_bus(bus.clone())?;
             bus
         };

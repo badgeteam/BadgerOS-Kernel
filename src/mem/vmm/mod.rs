@@ -11,7 +11,7 @@ use memobject::{MappablePage, RawMemory};
 use crate::{
     bindings::log::LogLevel,
     config::PAGE_SIZE,
-    cpu::{mmu, usercopy::fallible_store_u8},
+    cpu::mmu,
     mem::pmm::{self, PAddrr},
 };
 
@@ -247,6 +247,8 @@ pub unsafe fn init() {
 }
 
 vmm_ktest! { MAP_BASIC,
+    use crate::cpu::usercopy::fallible_store_u8;
+
     unsafe {
         let size  = 0x8000;
         let vaddr = kernel_mm().map(size, 0, map::SHARED, prot::READ | prot::WRITE, None)?;

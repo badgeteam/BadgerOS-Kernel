@@ -2,8 +2,12 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
+#[cfg(feature = "ktest")]
 use alloc::vec::Vec;
 
+use crate::rootfs_ktest;
+
+#[cfg(feature = "ktest")]
 use crate::{
     bindings::error::Errno,
     config::PAGE_SIZE,
@@ -15,7 +19,6 @@ use crate::{
         map::{self, Mapping},
         prot, zeroes,
     },
-    rootfs_ktest,
 };
 
 rootfs_ktest! { FILE_READ_BLOCK,

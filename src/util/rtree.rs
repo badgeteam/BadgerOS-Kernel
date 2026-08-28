@@ -9,7 +9,7 @@ use core::{
     ptr::{NonNull, null_mut},
 };
 
-use alloc::{alloc::AllocError, boxed::Box, string::String};
+use alloc::{alloc::AllocError, boxed::Box};
 use num::PrimInt;
 
 /// A generic radix tree with an integer key type.
@@ -500,6 +500,8 @@ where
 }
 
 heap_ktest! {RTREE_BASIC,
+    use alloc::string::String;
+
     let mut tree = RadixTree::<u32, String>::new();
 
     ktest_assert!(tree.insert(0, "Initial".into())?.is_none());

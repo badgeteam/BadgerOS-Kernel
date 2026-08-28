@@ -9,9 +9,8 @@ use core::{
     ops::{Deref, DerefMut, Range},
 };
 
-#[cfg(feature = "dtb")]
-use alloc::vec::Vec;
 use alloc::{boxed::Box, sync::Arc};
+#[cfg(feature = "dtb")]
 use dtb::DtbNode;
 
 use crate::{
@@ -77,6 +76,7 @@ pub struct SocBus {
     /// Base bus struct.
     base: BusBase,
     /// Associated DTB node, if any.
+    #[cfg(feature = "dtb")]
     dtb_node: Option<&'static DtbNode>,
     /// Physical addresses in this MMIO bus.
     paddr: Box<[Range<PAddrr>]>,
@@ -88,14 +88,30 @@ pub struct SocBus {
 
 impl SocBus {
     pub fn new(
-        dtb_node: Option<&'static DtbNode>,
         paddr: Box<[Range<PAddrr>]>,
         irq_ext: Box<[SocIrqExt]>,
         irq_map: Option<SocIrqMap>,
     ) -> Self {
         Self {
             base: BusBase::new(),
-            dtb_node,
+            #[cfg(feature = "dtb")]
+            dtb_node: None,
+            paddr,
+            irq_ext,
+            irq_map,
+        }
+    }
+
+    #[cfg(feature = "dtb")]
+    pub fn new_dtb(
+        dtb_node: &'static DtbNode,
+        paddr: Box<[Range<PAddrr>]>,
+        irq_ext: Box<[SocIrqExt]>,
+        irq_map: Option<SocIrqMap>,
+    ) -> Self {
+        Self {
+            base: BusBase::new(),
+            dtb_node: Some(dtb_node),
             paddr,
             irq_ext,
             irq_map,
@@ -193,6 +209,7 @@ impl Bus for SocBus {
         None
     }
 
+    #[cfg(feature = "dtb")]
     fn dtb_node(&self) -> Option<&'static DtbNode> {
         self.dtb_node
     }
@@ -233,11 +250,14 @@ impl Bus for SocBus {
 
 impl Display for SocBus {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        #[cfg(feature = "dtb")]
         if let Some(node) = self.dtb_node {
             Display::fmt(node, f)
         } else {
             f.write_fmt(format_args!("SocBus {}", self.id()))
         }
+        #[cfg(not(feature = "dtb"))]
+        f.write_fmt(format_args!("SocBus {}", self.id()))
     }
 }
 
@@ -245,6 +265,8 @@ impl Display for SocBus {
 impl SocBus {
     /// Bus factory for [`device::dtb::probe()`] the generates [`SocBus`] instances.
     pub unsafe fn factory(node: DeviceNode) -> EResult<Arc<dyn Bus>> {
+        use alloc::vec::Vec;
+
         fn get_parent(node: &'static DtbNode) -> EResult<Option<SocIrqParent>> {
             let cpus = device::dtb::get().node("cpus").unwrap();
 
@@ -316,8 +338,8 @@ impl SocBus {
             irq_map = None;
         }
 
-        let bus = Arc::try_new(SocBus::new(
-            Some(node.node),
+        let bus = Arc::try_new(SocBus::new_dtb(
+            node.node,
             node.reg
                 .into_iter()
                 .map(|x| x.start as PAddrr..x.end as PAddrr)

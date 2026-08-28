@@ -5,7 +5,7 @@
 use core::{
     cell::UnsafeCell,
     ops::{Range, Sub},
-    ptr::{NonNull, slice_from_raw_parts_mut},
+    ptr::NonNull,
     sync::atomic::{AtomicU32, AtomicUsize, Ordering},
 };
 
@@ -17,7 +17,7 @@ use crate::{
         spinlock::Spinlock,
     },
     config::PAGE_SIZE,
-    mem::vmm::{self, HHDM_OFFSET},
+    mem::vmm,
 };
 
 use super::vmm::memobject::MemObject;
@@ -502,6 +502,9 @@ pmm_ktest!(PMM_BASIC, unsafe {
 });
 
 pmm_ktest!(PMM_MANYPAGES, unsafe {
+    use crate::mem::vmm::HHDM_OFFSET;
+    use core::ptr::slice_from_raw_parts_mut;
+
     let l2_paddr = page_alloc(0, PageUsage::KernelAnon)?;
 
     let l2 = &mut *slice_from_raw_parts_mut((l2_paddr + HHDM_OFFSET) as *mut PAddrr, 32);

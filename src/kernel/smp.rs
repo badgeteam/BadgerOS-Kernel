@@ -21,7 +21,7 @@ use crate::{
     },
     config,
     cpu::{
-        self, PhysCpuID,
+        PhysCpuID,
         spinup::{arch_cpu_spinup, limine_trampoline_1},
     },
     device::class::irqctl::IrqCtlDevice,
@@ -122,7 +122,7 @@ pub fn init_dtb(cpus_node: &dtb::DtbNode) {
     let mut smp_counter = 1u32;
     for cpu in cpus_node.nodes.values() {
         let _ = try {
-            let features = cpu::dtb::is_usable(cpu)?;
+            let features = crate::cpu::dtb::is_usable(cpu)?;
             let cpuid: PhysCpuID = cpu.prop_uint("reg")? as PhysCpuID;
 
             let smp_index: u32;
@@ -234,12 +234,12 @@ fn poweron_from_prehandover<'a>(index: u32, mut maps: MutexGuard<'a, SmpMaps>) -
 }
 
 /// Power on another CPU from [`PowerState::Suspended`].
-fn poweron_from_suspended<'a>(index: u32, mut maps: MutexGuard<'a, SmpMaps>) -> EResult<()> {
+fn poweron_from_suspended<'a>(_index: u32, _maps: MutexGuard<'a, SmpMaps>) -> EResult<()> {
     todo!()
 }
 
 /// Power on another CPU from [`PowerState::PowerOff`].
-fn poweron_from_poweroff<'a>(index: u32, mut maps: MutexGuard<'a, SmpMaps>) -> EResult<()> {
+fn poweron_from_poweroff<'a>(_index: u32, _maps: MutexGuard<'a, SmpMaps>) -> EResult<()> {
     todo!()
 }
 

@@ -8,7 +8,6 @@ use addr::{PciAddr, PciIrq, PciPAddr};
 use alloc::sync::Arc;
 use bar::BarInfo;
 use classcode::ClassCode;
-use dtb::DtbNode;
 
 use crate::{
     bindings::{
@@ -29,8 +28,6 @@ pub mod classcode;
 pub struct PciBus {
     /// Base bus struct.
     base: BusBase,
-    /// Associated DTB node, if any.
-    dtb_node: Option<&'static DtbNode>,
     /// PCI address.
     pub addr: PciAddr,
     /// PCI vendor ID.
@@ -44,11 +41,7 @@ pub struct PciBus {
 }
 
 impl PciBus {
-    pub fn new(
-        ctrl: Arc<dyn PciCtlDevice>,
-        addr: PciAddr,
-        dtb_node: Option<&'static DtbNode>,
-    ) -> EResult<Arc<Self>> {
+    pub fn new(ctrl: Arc<dyn PciCtlDevice>, addr: PciAddr) -> EResult<Arc<Self>> {
         let device = ctrl.config_read(addr, cfg::common::DEVICE)?;
         let vendor = ctrl.config_read(addr, cfg::common::VENDOR)?;
         let progif = ctrl.config_read(addr, cfg::common::PROGIF)?;
@@ -57,7 +50,6 @@ impl PciBus {
 
         let this = Arc::try_new(Self {
             base: BusBase::new(),
-            dtb_node,
             addr,
             vendor,
             device,
@@ -225,8 +217,9 @@ impl Bus for PciBus {
         }
     }
 
-    fn dtb_node(&self) -> Option<&'static DtbNode> {
-        self.dtb_node
+    #[cfg(feature = "dtb")]
+    fn dtb_node(&self) -> Option<&'static dtb::DtbNode> {
+        None
     }
 }
 

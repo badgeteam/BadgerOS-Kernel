@@ -23,7 +23,7 @@ use crate::{
     kernel::sync::mutex::Mutex,
 };
 
-use super::{CacheLoc, vfs::VfsOps};
+use super::vfs::VfsOps;
 
 /// Filesystem is read-only.
 pub const READ_ONLY: u32 = 0x0000_0001;
@@ -289,7 +289,7 @@ pub fn mount(
 }
 
 /// Unmount an existing filesystem by mountpoint or device.
-pub fn umount(at: Option<&dyn File>, path: &[u8], flags: u32) -> EResult<()> {
+pub fn umount(_at: Option<&dyn File>, _path: &[u8], _flags: u32) -> EResult<()> {
     logkf!(LogLevel::Warning, "TODO: mount::umount()");
     Err(Errno::ENOSYS)
 }

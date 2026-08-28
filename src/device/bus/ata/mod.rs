@@ -5,6 +5,7 @@
 use core::fmt::Display;
 
 use alloc::sync::Arc;
+#[cfg(feature = "dtb")]
 use dtb::DtbNode;
 
 use crate::{
@@ -92,6 +93,7 @@ impl Bus for AtaBus {
         unreachable!()
     }
 
+    #[cfg(feature = "dtb")]
     fn dtb_node(&self) -> Option<&'static DtbNode> {
         None
     }
