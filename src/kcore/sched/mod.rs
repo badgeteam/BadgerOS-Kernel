@@ -166,6 +166,8 @@ pub struct Thread {
     /// Queued asynchronous signals.
     /// **WARNING:** Despite being a spinlock, this may NOT be acquired from interrupts.
     pub sigqueue: Spinlock<LinkedList<siginfo_t>>,
+    /// Preemption disable counter; if non-zero, the current thread will not be preempted on this CPU.
+    pub no_preempt: UnsafeCell<i32>,
 }
 impl_has_list_node!(Thread, node);
 unsafe impl Send for Thread {}
@@ -205,6 +207,7 @@ impl Thread {
             process,
             name,
             sigqueue: Spinlock::new(LinkedList::new()),
+            no_preempt: UnsafeCell::new(0),
         })?;
 
         Ok(tcb)

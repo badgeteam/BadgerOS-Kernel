@@ -38,6 +38,7 @@
 #![feature(macro_metavar_expr_concat)]
 #![feature(iter_collect_into)]
 #![feature(downcast_unchecked)]
+#![feature(const_trait_impl)]
 
 #[macro_use]
 extern crate alloc;
@@ -45,17 +46,19 @@ extern crate chrono;
 
 #[macro_use]
 pub mod bindings;
+#[macro_use]
+pub mod ktest;
+
+pub mod arch;
 pub mod badgelib;
 pub mod boot;
 pub mod config;
-pub mod filesystem;
-pub mod misc;
-#[macro_use]
-pub mod ktest;
 pub mod device;
 pub mod driver;
+pub mod filesystem;
 pub mod kcore;
 pub mod mem;
+pub mod misc;
 pub mod process;
 pub mod util;
 
