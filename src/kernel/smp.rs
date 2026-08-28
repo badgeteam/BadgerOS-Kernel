@@ -11,8 +11,6 @@ use core::{
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc};
 
 #[cfg(feature = "dtb")]
-use crate::bindings::device::dtb::DtbNode;
-#[cfg(feature = "dtb")]
 use dtb;
 
 use crate::{
@@ -104,70 +102,6 @@ static mut SMP_REQ: limine_smp_request = limine_smp_request {
 
 /// Initialize the SMP subsystem from DTB.
 #[cfg(feature = "dtb")]
-pub fn init_dtb(cpus_node: &DtbNode) {
-    let bsp_cpuid: PhysCpuID;
-    unsafe {
-        if SMP_REQ.response.is_null() {
-            panic!("Missing Limine SMP response");
-        }
-        #[cfg(target_arch = "riscv64")]
-        {
-            bsp_cpuid = (*SMP_REQ.response).bsp_hartid as PhysCpuID;
-        }
-        #[cfg(target_arch = "x86_64")]
-        {
-            bsp_cpuid = (*SMP_REQ.response).bsp_lapic_id as PhysCpuID;
-        }
-    };
-
-    let mut maps = SMP_MAPS.unintr_lock();
-    let mut smp_counter = 1u32;
-    for cpu in cpus_node.child_nodes() {
-        let _ = try {
-            let features = cpu::dtb::is_usable(cpu)?;
-            let reg = cpu.get_prop("reg")?;
-            let cpuid: PhysCpuID = reg.read_uint() as PhysCpuID;
-
-            let smp_index: u32;
-            let power;
-            if cpuid == bsp_cpuid {
-                smp_index = 0;
-                power = PowerState::Online;
-            } else {
-                smp_index = smp_counter;
-                smp_counter += 1;
-                power = PowerState::PreHandover;
-            }
-            logkf!(
-                LogLevel::Info,
-                "Detected CPU{} (CPUID {})",
-                smp_index,
-                cpuid
-            );
-
-            let mut status = SmpStatus {
-                cpulocal: Box::new(CpuLocal {
-                    smp_index,
-                    features,
-                    ..Default::default()
-                }),
-                power: AtomicU32::new(power as u32),
-            };
-
-            status.cpulocal.smp_index = smp_index;
-            status.cpulocal.cpuid = cpuid;
-
-            maps.by_index.insert(smp_index, status);
-            maps.by_cpuid.insert(cpuid, smp_index);
-        };
-    }
-
-    maps.cpu_index_end = smp_counter;
-    init_common(&mut maps);
-}
-
-/// Initialize the SMP subsystem from DTB.
-#[cfg(feature = "dtb")]
 pub fn init_dtb2(cpus_node: &dtb::DtbNode) {
     let bsp_cpuid: PhysCpuID;
     unsafe {
@@ -254,7 +188,6 @@ fn init_common(maps: &mut SmpMaps) {
         old_cpulocal.features = new_cpulocal.features;
         swap(new_cpulocal.as_mut(), old_cpulocal);
         CpuLocal::set(new_cpulocal.as_mut());
-        c_api::smp_count = maps.by_cpuid.len() as i32;
     }
 }
 
@@ -378,46 +311,4 @@ pub fn get_sched_for(cpu: u32) -> Option<SharedMutexGuard<'static, Scheduler>> {
 
 pub fn cur_cpu() -> u32 {
     unsafe { (*CpuLocal::get()).smp_index }
-}
-
-mod c_api {
-    #[cfg(feature = "dtb")]
-    use crate::bindings::raw::dtb_node_t;
-    use crate::bindings::{
-        device::{BaseDevice, DeviceFromRaw},
-        raw::device_t,
-    };
-
-    use super::*;
-
-    #[unsafe(no_mangle)]
-    pub(super) static mut smp_count: i32 = 0;
-
-    #[cfg(feature = "dtb")]
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn smp_init_dtb(node: *const dtb_node_t) {
-        init_dtb(unsafe { &*(node as *const DtbNode) });
-    }
-
-    #[unsafe(no_mangle)]
-    extern "C" fn smp_cur_cpu() -> u32 {
-        unsafe { (*CpuLocal::get()).smp_index }
-    }
-
-    #[unsafe(no_mangle)]
-    extern "C" fn smp_get_cpu(cpuid: usize) -> u32 {
-        by_phys_id(cpuid as PhysCpuID).unwrap_or(u32::MAX)
-    }
-
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn cpulocal_set_irqctl(index: u32, device: *mut device_t) {
-        let device = unsafe { BaseDevice::from_raw(device) };
-        SMP_MAPS
-            .unintr_lock()
-            .by_index
-            .get_mut(&index)
-            .unwrap()
-            .cpulocal
-            .irqctl = Some(device);
-    }
 }

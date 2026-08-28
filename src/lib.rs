@@ -48,7 +48,6 @@ pub mod bindings;
 pub mod badgelib;
 pub mod boot;
 pub mod config;
-pub mod device;
 pub mod filesystem;
 pub mod misc;
 #[macro_use]

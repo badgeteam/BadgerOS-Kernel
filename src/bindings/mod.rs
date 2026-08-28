@@ -8,8 +8,6 @@ use raw::timestamp_us_t;
 #[allow(non_upper_case_globals)]
 pub mod raw;
 
-pub mod device;
-
 pub mod dlist;
 #[macro_use]
 pub mod log;

@@ -121,14 +121,6 @@ set(kernel_src
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/spinlock.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/nanoprintf.c
     
-    ${CMAKE_CURRENT_LIST_DIR}/src/device/builtin_driver/pcie.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/device/class/block.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/device/class/char.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/device/class/pcictl.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/device/class/tty.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/device/builtin_drivers.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/device/device.c
-    
     ${CMAKE_CURRENT_LIST_DIR}/src/freestanding/int_routines.c
     ${CMAKE_CURRENT_LIST_DIR}/src/freestanding/string.c
     
@@ -147,24 +139,6 @@ set(kernel_include
     ${CMAKE_CURRENT_LIST_DIR}/include/badgelib
     ${CMAKE_CURRENT_LIST_DIR}/.config
 )
-
-if(${CONFIG_ENABLE_ACPI})
-    include(lib/uacpi/uacpi.cmake)
-    set(kernel_src ${kernel_src}
-        ${CMAKE_CURRENT_LIST_DIR}/src/device/uacpi_kernel_api.c
-        ${UACPI_SOURCES}
-    )
-    set(kernel_include ${kernel_include} ${UACPI_INCLUDES})
-endif()
-
-if(${CONFIG_ENABLE_DTB})
-    include(lib/uacpi/uacpi.cmake)
-    set(kernel_src ${kernel_src}
-        ${CMAKE_CURRENT_LIST_DIR}/src/device/dtb/dtb.c
-        ${CMAKE_CURRENT_LIST_DIR}/src/device/dtb/dtparse.c
-    )
-    set(kernel_include ${kernel_include} ${UACPI_INCLUDES})
-endif()
 
 add_executable(badger-os.elf
     ${kernel_src}

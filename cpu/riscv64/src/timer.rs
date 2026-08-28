@@ -2,11 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use crate::{
-    bindings::{device::dtb::DtbNode, log::LogLevel},
-    config,
-    cpu::sbi,
-};
+use crate::{bindings::log::LogLevel, config, cpu::sbi};
 use core::arch::asm;
 
 /// Whether the new SBI timer extension is in use.
@@ -94,17 +90,6 @@ pub fn init_dtb2(cpus_node: &dtb::DtbNode) {
     init_common();
 }
 
-/// Inititalize CPU-local timers from DTB.
-#[cfg(feature = "dtb")]
-pub fn init_dtb(cpus_node: &DtbNode) {
-    let timebase_freq = cpus_node
-        .get_prop("timebase-frequency")
-        .expect("Missing DTB prop /cpus/timebase-frequency");
-    // SAFETY: This value is only written to during initialization.
-    unsafe { TICKS_PER_SEC = timebase_freq.read_uint() as u64 };
-    init_common();
-}
-
 fn init_common() {
     let sbi_time = sbi::timer::probe();
     let base_tick = time_ticks();
@@ -145,13 +130,4 @@ pub fn start_tick_timer() {
 
     // SAFETY: This enables the timer interrupt, not interrupts globally.
     unsafe { asm!("csrs sie, {}", in(reg)(1 << 5)) };
-}
-
-mod c_api {
-    use crate::bindings::device::dtb::DtbNode;
-
-    #[unsafe(no_mangle)]
-    pub extern "C" fn time_init_dtb(cpus_node: &DtbNode) {
-        super::init_dtb(cpus_node);
-    }
 }

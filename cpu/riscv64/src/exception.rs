@@ -5,7 +5,6 @@
 use core::{hint::unreachable_unchecked, ptr::null_mut};
 
 use crate::{
-    bindings::{device::HasBaseDevice, raw::irqno_t},
     cpu::{
         self, irq,
         thread::{GpRegfile, SpRegfile},
@@ -146,10 +145,6 @@ unsafe fn riscv_exception_handler_impl(regs: &mut GpRegfile, sregs: &mut SpRegfi
             let mut handled = false;
             for ctl in &cpulocal.dev2_ext_irqctls {
                 handled |= ctl.interrupt(cause);
-            }
-            // Fall back to the legacy interrupt controller during migration.
-            if !handled && let Some(irqctl) = cpulocal.irqctl.as_ref() {
-                handled = irqctl.interrupt(sregs.scause as irqno_t);
             }
             if !handled {
                 unhandled_trap(regs, sregs);
