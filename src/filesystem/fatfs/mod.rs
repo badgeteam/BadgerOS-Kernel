@@ -17,15 +17,12 @@ use crate::{
     filesystem::{fatfs::spec::attr2, vfs::vnflags},
     kernel::sync::mutex::Mutex,
     mem::vmm::zeroes,
-    process::{
-        syscall::fs::DentBuffer,
-        usercopy::{UserSlice, UserSliceMut},
-    },
+    process::usercopy::{UserSlice, UserSliceMut},
     register_kmodule,
 };
 
 use super::{
-    FSDRIVERS, InodeType, MakeFileSpec, NAME_MAX, Stat, UnlinkMode,
+    DentBuffer, FSDRIVERS, InodeType, MakeFileSpec, NAME_MAX, Stat, UnlinkMode,
     media::Media,
     vfs::{VNode, VNodeOps, Vfs, VfsDriver, VfsOps},
 };
@@ -712,7 +709,7 @@ impl VNodeOps for FatVNode {
         &self,
         vnode_self: &VNode,
         offset: u64,
-        buffer: &mut DentBuffer<'_>,
+        buffer: &mut dyn DentBuffer,
     ) -> EResult<u64> {
         let mut offset = offset as u32;
         offset -= offset % 32;
@@ -961,11 +958,7 @@ impl VNodeOps for FatVNode {
         } as u64;
 
         Ok(Stat {
-            dev: fatfs
-                .media
-                .device()
-                .map(|dev| (Into::<u32>::into((&*dev as &dyn Device).id()) as u64) << 32)
-                .unwrap_or(0),
+            dev: (<dyn Device>::id(&*fatfs.media.device()).get() as u64) << 32,
             ino: 0,
             mode: 0777,
             nlink: 1,
@@ -1075,30 +1068,6 @@ struct FatFs {
     legacy_root_size: u32,
     /// Mutex used to protect FAT12 read-modify-write.
     fat12_mutex: Mutex<()>,
-}
-
-impl Debug for FatFs {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("FatFS")
-            .field("media", &self.media)
-            .field("fat_type", &self.fat_type)
-            .field("allow_lfn", &self.allow_lfn)
-            .field("cluster_size_exp", &self.cluster_size_exp)
-            .field("sector_size_exp", &self.sector_size_exp)
-            .field("sectors_per_fat", &self.sectors_per_fat)
-            .field("cluster_count", &self.cluster_count)
-            .field("cluster_alloc", &())
-            .field("data_offset", &self.data_offset)
-            .field("fat_sector", &self.fat_sector)
-            .field("fat_count", &self.fat_count)
-            .field("active_fat", &self.active_fat)
-            .field("mirror_fats", &self.mirror_fats)
-            .field("root_dir_cluster", &self.root_dir_cluster)
-            .field("legacy_root_sector", &self.legacy_root_sector)
-            .field("legacy_root_size", &self.legacy_root_size)
-            .field("fat12_mutex", &())
-            .finish()
-    }
 }
 
 impl FatFs {
@@ -1533,7 +1502,7 @@ impl FatFs {
 
 impl Display for FatFs {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_fmt(format_args!("FatFs on {:?}", self.media))
+        f.write_fmt(format_args!("FatFs on {}", self.media.device()))
     }
 }
 

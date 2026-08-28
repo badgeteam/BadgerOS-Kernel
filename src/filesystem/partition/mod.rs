@@ -11,6 +11,8 @@ pub mod mbr;
 /// Describes a single partition.
 #[derive(Clone, Debug, Default)]
 pub struct Partition {
+    /// Index in the partition table.
+    pub index: u32,
     /// On-disk byte offset.
     pub offset: u64,
     /// On-disk byte size.

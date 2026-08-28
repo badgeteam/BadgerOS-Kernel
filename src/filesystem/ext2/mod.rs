@@ -25,17 +25,14 @@ use crate::{
     dev2::Device,
     filesystem::mount,
     kernel::sync::mutex::Mutex,
-    process::{
-        syscall::fs::DentBuffer,
-        usercopy::{UserSlice, UserSliceMut},
-    },
+    process::usercopy::{UserSlice, UserSliceMut},
     register_kmodule,
     util::MaybeMut,
 };
 use spec::*;
 
 use super::{
-    Dirent, FSDRIVERS, InodeType, MakeFileSpec, NAME_MAX, Stat, UnlinkMode,
+    DentBuffer, Dirent, FSDRIVERS, InodeType, MakeFileSpec, NAME_MAX, Stat, UnlinkMode,
     media::Media,
     vfs::{VNode, VNodeOps, Vfs, VfsDriver, VfsOps, vnflags},
 };
@@ -847,7 +844,7 @@ impl VNodeOps for E2VNode {
         &self,
         vnode_self: &VNode,
         mut offset: u64,
-        buffer: &mut DentBuffer<'_>,
+        buffer: &mut dyn DentBuffer,
     ) -> EResult<u64> {
         let e2fs = vnode_self.vfs.get_ops_as::<E2Fs>();
         self.iter_dirents(&vnode_self.vfs, &mut |dent, off, name| {
@@ -1167,12 +1164,7 @@ impl VNodeOps for E2VNode {
         let e2fs = vnode_self.vfs.get_ops_as::<E2Fs>();
         let inode = self.inode.lock_shared()?;
         Ok(Stat {
-            dev: e2fs
-                .media
-                .device()
-                .as_ref()
-                .map(|dev| (u32::from((&**dev as &dyn Device).id()) as u64) << 32)
-                .unwrap_or(0),
+            dev: (<dyn Device>::id(&*e2fs.media.device()).get() as u64) << 32,
             ino: u32::from(self.ino) as u64,
             mode: inode.mode,
             nlink: inode.nlink,
@@ -1616,7 +1608,7 @@ impl E2Fs {
 
 impl Display for E2Fs {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_fmt(format_args!("E2Fs on {:?}", self.media))
+        f.write_fmt(format_args!("E2Fs on {}", self.media.device()))
     }
 }
 

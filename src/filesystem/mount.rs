@@ -5,7 +5,6 @@
 use core::{
     ops::Range,
     sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering},
-    todo,
 };
 
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, string::String, sync::Arc, vec::Vec};
@@ -15,7 +14,7 @@ use crate::{
         error::{EResult, Errno},
         log::LogLevel,
     },
-    dev2::{Device, class::block::BlockDevice},
+    dev2::{Device, class::block::BlockDevice, devtmpfs},
     filesystem::{
         self, DentCache, DentCacheDir, DentCacheType, Dirent, File, InodeType, VfsLoc,
         media::Media,
@@ -23,6 +22,8 @@ use crate::{
     },
     kernel::sync::mutex::Mutex,
 };
+
+use super::{CacheLoc, vfs::VfsOps};
 
 /// Filesystem is read-only.
 pub const READ_ONLY: u32 = 0x0000_0001;
@@ -43,14 +44,14 @@ struct MediaKey {
 }
 
 impl MediaKey {
-    fn new(media: &Media) -> Option<Self> {
-        let device = media.device()?;
-        Some(MediaKey {
+    fn new(media: &Media) -> Self {
+        let device = media.device();
+        Self {
             offset: (media.offset != 0
                 || media.offset != device.block_count() << device.block_size_exp())
             .then_some(media.offset..media.offset + media.size),
             device,
-        })
+        }
     }
 }
 
@@ -82,13 +83,19 @@ impl Ord for MediaKey {
 }
 
 /// Used to track the mountpoint of FSes mounted twice or more.
-pub(super) struct Mount {
+pub struct Mount {
     /// Mountpoint, or [`None`] for the root mount.
     pub(super) parent: Option<VfsLoc>,
     /// VNode of `vfs` that is the root of this mount.
     pub(super) root: Arc<VNode>,
     /// Mounted filesystem data.
     pub(super) vfs: Arc<Vfs>,
+}
+
+impl Mount {
+    pub const fn new(parent: Option<VfsLoc>, root: Arc<VNode>, vfs: Arc<Vfs>) -> Self {
+        Self { parent, root, vfs }
+    }
 }
 
 /// Table of mounted filesystems.
@@ -142,20 +149,7 @@ fn detect<'a>(
 }
 
 /// Helper function that prepares a standalone [`Vfs`] to be used by [`mount`].
-fn create_vfs(
-    drivers: &BTreeMap<String, Box<dyn VfsDriver>>,
-    type_: &str,
-    media: Option<Media>,
-    mflags: u32,
-) -> EResult<(Arc<Vfs>, Arc<VNode>)> {
-    let driver = if let Some(x) = drivers.get(type_) {
-        x
-    } else {
-        logkf!(LogLevel::Error, "No such filesystem driver: {}", type_);
-        return Err(Errno::ENOTSUP);
-    };
-
-    let ops = driver.mount(media, mflags)?;
+pub fn create_vfs(ops: Box<dyn VfsOps>) -> EResult<(Arc<Vfs>, Arc<VNode>)> {
     let block_size_exp = ops.block_size_exp();
 
     let vfs = Arc::try_new(Vfs {
@@ -230,7 +224,7 @@ pub fn mount(
 
     // Lock mounts table while other mounting logic runs.
     let mut mounts = MOUNT_TABLE.lock()?;
-    let media_key = try { MediaKey::new(media.as_ref()?)? };
+    let media_key = try { MediaKey::new(media.as_ref()?) };
 
     // Locate mount point.
     let parent;
@@ -262,15 +256,34 @@ pub fn mount(
         && let Some(existing) = mounts.by_media.get(media_key)
     {
         (vfs, root) = existing.clone();
+    } else if type_ == "devtmpfs" {
+        (vfs, root) = devtmpfs::instance();
     } else {
-        (vfs, root) = create_vfs(&drivers, type_, media, mflags)?;
+        let driver = if let Some(x) = drivers.get(type_) {
+            x
+        } else {
+            logkf!(LogLevel::Error, "No such filesystem driver: {}", type_);
+            return Err(Errno::ENOTSUP);
+        };
+        let ops = driver.mount(media, mflags)?;
+
+        (vfs, root) = create_vfs(ops)?;
     }
 
-    let mount = Arc::new(Mount { parent, root, vfs });
+    let mount = Arc::new(Mount {
+        parent: parent.clone(),
+        root,
+        vfs,
+    });
+    if let Some(parent) = parent {
+        let loc = DentCache::enter_mounts(parent.to_cache().unwrap());
+        loc.cache.type_.as_dir().unwrap().unintr_lock().mounted = Some(mount.clone());
+    }
     if mounts.root.is_none() {
         mounts.root = Some(mount.clone());
     }
     mounts.all.push(mount);
+    drop(mounts);
 
     Ok(())
 }

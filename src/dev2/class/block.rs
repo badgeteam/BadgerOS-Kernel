@@ -2,11 +2,13 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::ptr::NonNull;
+use core::{fmt::Display, ops::Range, ptr::NonNull};
+
+use alloc::sync::Arc;
 
 use crate::{
-    bindings::error::EResult,
-    dev2::Device,
+    bindings::error::{EResult, Errno},
+    dev2::{Device, DeviceBase},
     filesystem::partition::{VolumeInfo, get_volume_info},
     kernel::sync::mutex::{Mutex, MutexGuard, SharedMutexGuard},
     mem::{
@@ -259,6 +261,62 @@ impl dyn BlockDevice {
             meta.cache.flush();
         }
         Ok(())
+    }
+}
+
+/// Partition on a block device.
+pub trait PartDevice: Device {
+    /// Get the underlying block device.
+    fn block_device(&self) -> Arc<dyn BlockDevice>;
+
+    /// Get the range on the block device that this partition spans, in bytes.
+    fn part_range(&self) -> Range<u64>;
+}
+
+/// Standard implementation of [`PartDevice`].
+pub struct PartDeviceImpl {
+    base: DeviceBase,
+    pub device: Arc<dyn BlockDevice>,
+    pub range: u64,
+}
+
+impl PartDeviceImpl {
+    /// Will fail if `device` is not currently registered or does not have a node name.
+    pub fn new(device: Arc<dyn BlockDevice>, range: u64) -> EResult<Self> {
+        let device_base = device.base();
+        let prefix = device_base.node_name().ok_or(Errno::EINVAL)?;
+        let index = device_base.node_num().ok_or(Errno::ENODEV)?;
+        let name = format!("{}{}p", prefix, index);
+        Ok(Self {
+            base: DeviceBase::with_node_name(name, false),
+            device,
+            range,
+        })
+    }
+}
+
+impl Display for PartDeviceImpl {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.device.fmt(f)?;
+        f.write_str(" partition ")?;
+        if let Some(index) = self.base.node_num()
+            && self.device.base().is_registered()
+        {
+            write!(f, "{}", index)?;
+        } else {
+            f.write_str("(stale)")?;
+        }
+        Ok(())
+    }
+}
+
+impl Device for PartDeviceImpl {
+    fn base(&self) -> &DeviceBase {
+        todo!()
+    }
+
+    fn interrupt(&self, _id: u128) -> bool {
+        unreachable!()
     }
 }
 

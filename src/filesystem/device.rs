@@ -49,7 +49,7 @@ impl File for CharDevFile {
         }
     }
 
-    fn get_dirents(&self, _buffer: &mut DentBuffer<'_>) -> EResult<()> {
+    fn get_dirents(&self, _buffer: &mut dyn DentBuffer) -> EResult<()> {
         Err(Errno::ENOTDIR)
     }
 
@@ -154,7 +154,7 @@ impl File for BlockDevFile {
         Ok(())
     }
 
-    fn get_dirents(&self, _buffer: &mut DentBuffer<'_>) -> EResult<()> {
+    fn get_dirents(&self, _buffer: &mut dyn DentBuffer) -> EResult<()> {
         Err(Errno::ENOTDIR)
     }
 

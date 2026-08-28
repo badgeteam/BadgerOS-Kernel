@@ -206,9 +206,8 @@ impl Driver for AtaBlockDriver {
 
     unsafe fn probe(&self, bus: BusResv<dyn Bus>) -> EResult<Arc<dyn Device>> {
         let bus = bus.downcast::<AtaBus>().unwrap();
-
         Ok(Arc::try_new(AtaBlockDevice {
-            base: DeviceBase::new(),
+            base: DeviceBase::with_node_name("ata".into(), false),
             block_base: BlockDeviceBase::new(),
             bus,
         })?)

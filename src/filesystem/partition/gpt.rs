@@ -148,6 +148,7 @@ impl GptDriver {
     /// Read a single GPT partition entry.
     pub fn get_partition(
         drive: &dyn BlockDevice,
+        index: u32,
         part_ent_offset: u64,
         part_ent_len: u32,
     ) -> EResult<Option<Partition>> {
@@ -179,6 +180,7 @@ impl GptDriver {
         let name = util::parse_utf16_le(&name)?;
 
         Ok(Some(Partition {
+            index,
             offset,
             size,
             type_,
@@ -229,7 +231,7 @@ impl PartitionDriver for GptDriver {
             let part_ent_offset = (active_gpt.parts_lba << drive.block_size_exp())
                 + i as u64 * active_gpt.part_ent_size as u64;
             if let Some(part) =
-                Self::get_partition(drive, part_ent_offset, active_gpt.part_ent_size)?
+                Self::get_partition(drive, i, part_ent_offset, active_gpt.part_ent_size)?
             {
                 parts.push(part);
             }

@@ -1,42 +1,22 @@
-use core::{cell::UnsafeCell, fmt::Debug};
-
-use alloc::{boxed::Box, sync::Arc};
+use alloc::sync::Arc;
 use num::traits::{FromBytes, ToBytes};
 
 use crate::{
     bindings::error::{EResult, Errno},
     dev2::class::block::BlockDevice,
-    mem::dma::{self, DmaTarget},
+    mem::dma::DmaTarget,
     process::usercopy::{UserSlice, UserSliceMut},
 };
 
-/// Specifies some type of media a filesystem can be mounted on.
-pub enum MediaType {
-    Block(Arc<dyn BlockDevice>),
-    Ram(UnsafeCell<Box<[u8]>>),
-}
-
-impl Debug for MediaType {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Block(arg0) => arg0.fmt(f),
-            Self::Ram(arg0) => f.write_fmt(format_args!("Ramdisk 0x{:x}", arg0.get() as usize)),
-        }
-    }
-}
-
 /// Specifies a partition to mount a filesystem on.
-#[derive(Debug)]
 pub struct Media {
     /// Partition byte offset.
     pub offset: u64,
     /// Partition byte size.
     pub size: u64,
     /// Partition underlying storage.
-    // TODO: Make a RamDisk so that storage is just a BlockDevice handle.
-    pub storage: MediaType,
+    pub storage: Arc<dyn BlockDevice>,
 }
-unsafe impl Sync for Media {}
 
 impl Media {
     /// Write zeroes to the media.
@@ -46,16 +26,7 @@ impl Media {
         if end > self.size {
             return Err(Errno::EIO);
         }
-        match &self.storage {
-            MediaType::Block(block_device) => {
-                block_device.write_zeroes(offset, len)?;
-            }
-            MediaType::Ram(ram) => {
-                let buffer = unsafe { ram.as_mut_unchecked() };
-                buffer[offset as usize..offset as usize + len as usize].fill(0);
-            }
-        }
-        Ok(())
+        self.storage.write_zeroes(offset, len)
     }
 
     /// Use DMA to write data, bypassing the caches.
@@ -73,28 +44,14 @@ impl Media {
             return Err(Errno::EIO);
         }
 
-        match &self.storage {
-            MediaType::Block(block_device) => {
-                let block_size = 1 << block_device.block_size_exp();
-                if offset % block_size != 0 || end % block_size != 0 {
-                    return Err(Errno::EALIGN);
-                }
-                let block = offset / block_size;
-
-                block_device.write_blocks_uncached(block, data_offset, data_length, data)?;
-            }
-            MediaType::Ram(ram) => {
-                let buffer = unsafe { ram.as_mut_unchecked() };
-                dma::cpu_gather(
-                    data_offset,
-                    data_length as usize,
-                    data,
-                    &mut buffer[offset as usize..end as usize],
-                )?;
-            }
+        let block_size = 1 << self.storage.block_size_exp();
+        if offset % block_size != 0 || end % block_size != 0 {
+            return Err(Errno::EALIGN);
         }
+        let block = offset / block_size;
 
-        Ok(())
+        self.storage
+            .write_blocks_uncached(block, data_offset, data_length, data)
     }
 
     /// Write data to the media.
@@ -110,19 +67,7 @@ impl Media {
         if end > self.size {
             return Err(Errno::EIO);
         }
-        match &self.storage {
-            MediaType::Block(block_device) => {
-                block_device.write_bytes(offset, data)?;
-            }
-            MediaType::Ram(ram) => {
-                let buffer = unsafe { ram.as_mut_unchecked() };
-                data.read_multiple(
-                    0,
-                    &mut buffer[offset as usize..offset as usize + data.len()],
-                )?;
-            }
-        }
-        Ok(())
+        self.storage.write_bytes(offset, data)
     }
 
     /// Use DMA to read data, bypassing the caches.
@@ -140,28 +85,14 @@ impl Media {
             return Err(Errno::EIO);
         }
 
-        match &self.storage {
-            MediaType::Block(block_device) => {
-                let block_size = 1 << block_device.block_size_exp();
-                if offset % block_size != 0 || end % block_size != 0 {
-                    return Err(Errno::EALIGN);
-                }
-                let block = offset / block_size;
-
-                block_device.read_blocks_uncached(block, data_offset, data_length, data)?;
-            }
-            MediaType::Ram(ram) => {
-                let buffer = unsafe { ram.as_ref_unchecked() };
-                dma::cpu_scatter(
-                    data_offset,
-                    data_length as usize,
-                    data,
-                    &buffer[offset as usize..end as usize],
-                )?;
-            }
+        let block_size = 1 << self.storage.block_size_exp();
+        if offset % block_size != 0 || end % block_size != 0 {
+            return Err(Errno::EALIGN);
         }
+        let block = offset / block_size;
 
-        Ok(())
+        self.storage
+            .read_blocks_uncached(block, data_offset, data_length, data)
     }
 
     /// Read data from the media.
@@ -171,22 +102,13 @@ impl Media {
     }
 
     /// Read data from the media.
-    pub fn read(&self, offset: u64, mut data: UserSliceMut<'_, u8>) -> EResult<()> {
+    pub fn read(&self, offset: u64, data: UserSliceMut<'_, u8>) -> EResult<()> {
         let offset = offset.checked_add(self.offset).ok_or(Errno::EIO)?;
         let end = offset.checked_add(data.len() as u64).ok_or(Errno::EIO)?;
         if end > self.size {
             return Err(Errno::EIO);
         }
-        match &self.storage {
-            MediaType::Block(block_device) => {
-                block_device.read_bytes(offset, data)?;
-            }
-            MediaType::Ram(ram) => {
-                let buffer = unsafe { ram.as_mut_unchecked() };
-                data.write_multiple(0, &buffer[offset as usize..offset as usize + data.len()])?;
-            }
-        }
-        Ok(())
+        self.storage.read_bytes(offset, data)
     }
 
     /// Write little-endian bytes.
@@ -226,22 +148,11 @@ impl Media {
         if end > self.size {
             return Err(Errno::EIO);
         }
-        match &self.storage {
-            MediaType::Block(block_device) => {
-                block_device.sync_bytes(offset, len, false)?;
-            }
-            MediaType::Ram(_) => {
-                // RAM doesn't need explicit sync.
-            }
-        }
-        Ok(())
+        self.storage.sync_bytes(offset, len, false)
     }
 
     /// Device this media is attached to, if any.
-    pub fn device(&self) -> Option<Arc<dyn BlockDevice>> {
-        match &self.storage {
-            MediaType::Block(block_device) => Some(block_device.clone()),
-            _ => None,
-        }
+    pub fn device(&self) -> Arc<dyn BlockDevice> {
+        self.storage.clone()
     }
 }

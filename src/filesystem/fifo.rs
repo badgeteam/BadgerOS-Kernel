@@ -16,13 +16,10 @@ use crate::{
     cpu::irq,
     filesystem::VfsLoc,
     kernel::sync::{mutex::Mutex, waitlist::Waitlist},
-    process::{
-        syscall::fs::DentBuffer,
-        usercopy::{UserSlice, UserSliceMut},
-    },
+    process::usercopy::{UserSlice, UserSliceMut},
 };
 
-use super::{File, SeekMode, Stat, oflags, poll};
+use super::{DentBuffer, File, SeekMode, Stat, oflags, poll};
 
 pub type FifoBuffer = badgelib::fifo::Fifo;
 
@@ -320,7 +317,7 @@ impl File for Fifo {
         Ok(())
     }
 
-    fn get_dirents(&self, _buffer: &mut DentBuffer<'_>) -> EResult<()> {
+    fn get_dirents(&self, _buffer: &mut dyn DentBuffer) -> EResult<()> {
         Err(Errno::ENOTDIR)
     }
 

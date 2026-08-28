@@ -11,14 +11,16 @@ use core::{
     ptr::{DynMetadata, NonNull, Pointee},
 };
 
+use crate::kernel::sync::mutex::Mutex;
+
 #[cfg(feature = "acpi")]
 pub mod acpi;
 pub mod bus;
 pub mod class;
+pub mod devtmpfs;
 pub mod driver;
 #[cfg(feature = "dtb")]
 pub mod dtb;
-pub mod node;
 pub mod probe;
 pub mod registry;
 pub mod void;
@@ -55,14 +57,32 @@ macro_rules! device_get_trait_vtable {
     };
 }
 
+/// Mutable state of [`DeviceBase`].
+struct DeviceBaseMut {
+    /// Assigned device node number.
+    node_num: u32,
+    /// Whether the device is in the registry.
+    is_registered: bool,
+}
+
+impl DeviceBaseMut {
+    const fn new() -> Self {
+        Self {
+            node_num: 0,
+            is_registered: false,
+        }
+    }
+}
+
 /// Base device struct; intended for use by implementers of [`Device`].
 pub struct DeviceBase {
     /// ID assigned by the device registry.
     id: NonZeroU32,
     /// Requested device node name.
     node_name: Option<String>,
-    /// Whether to use a singleton device node.
+    /// Use exact name, do not append a number.
     is_singleton: bool,
+    mtx: Mutex<DeviceBaseMut>,
 }
 
 impl DeviceBase {
@@ -72,6 +92,7 @@ impl DeviceBase {
             id: registry::alloc_device_id(),
             node_name: None,
             is_singleton: false,
+            mtx: Mutex::new(DeviceBaseMut::new()),
         }
     }
 
@@ -81,12 +102,29 @@ impl DeviceBase {
             id: registry::alloc_device_id(),
             node_name: Some(node_name),
             is_singleton,
+            mtx: Mutex::new(DeviceBaseMut::new()),
         }
     }
 
     /// ID assigned by the device registry.
     pub fn id(&self) -> NonZeroU32 {
         self.id
+    }
+
+    pub fn is_registered(&self) -> bool {
+        self.mtx.unintr_lock_shared().is_registered
+    }
+
+    pub fn node_name(&self) -> Option<&str> {
+        self.node_name.as_deref()
+    }
+
+    pub fn node_num(&self) -> Option<u32> {
+        if self.node_name.is_none() || self.is_singleton {
+            return None;
+        }
+        let guard = self.mtx.unintr_lock_shared();
+        guard.is_registered.then_some(guard.node_num)
     }
 }
 
@@ -171,6 +209,7 @@ impl Ord for dyn Device {
 
 /// Initialize the device subsystem.
 pub unsafe fn init() {
+    unsafe { devtmpfs::init() };
     registry::init();
 
     unsafe { void::init() };

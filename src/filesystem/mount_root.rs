@@ -6,17 +6,13 @@ use uuid::Uuid;
 use crate::{
     LogLevel,
     cpu::timer::time_us,
-    dev2::{Device, class::block::BlockDevice, registry},
+    dev2::{Device, class::block::BlockDevice, devtmpfs, registry},
     kernel::sched::thread_sleep,
     misc::kparam,
     util,
 };
 
-use super::{
-    media::{Media, MediaType},
-    mount,
-    partition::Partition,
-};
+use super::{media::Media, mount, oflags, open, partition::Partition};
 
 pub static mut KFILE_GPT_DISK: Uuid = Uuid::nil();
 pub static mut KFILE_GPT_PART: Uuid = Uuid::nil();
@@ -84,12 +80,24 @@ fn find_kernel_disk() -> Option<Arc<dyn BlockDevice>> {
     }
 }
 
-/// Try to find a disk by node name; <type><index>.
-/// The matching block devices are sorted by ID.
+/// Try to find a disk by node name (e.g. `ata0` for `/dev/ata0`).
 fn find_disk_by_nodename(nodename: &str) -> Option<Arc<dyn BlockDevice>> {
-    // TODO: dev2 has no device nodes yet.
+    let handle = devtmpfs::handle();
 
-    None
+    let devnode = open(Some(&*handle), nodename.as_bytes(), oflags::READ_ONLY).ok()?;
+    let Some(device) = devnode.get_device() else {
+        logkf!(LogLevel::Error, "{} exists, but is not a device", nodename);
+        return None;
+    };
+    let res = device.try_as_arc::<dyn BlockDevice>();
+    if res.is_none() {
+        logkf!(
+            LogLevel::Error,
+            "{} exists and is a device, but is not a block device",
+            nodename
+        );
+    }
+    res
 }
 
 /// Filter applicable disks' partitions.
@@ -232,7 +240,7 @@ pub fn mount_root_impl(do_panic: bool) -> bool {
     let (disk, part) = part.unwrap();
 
     // Convert to filesystem media.
-    let (offset, size) = if let Some(part) = part {
+    let (offset, size) = if let Some(part) = &part {
         (part.offset, part.size)
     } else {
         (0u64, disk.block_count() << disk.block_size_exp())
@@ -240,21 +248,35 @@ pub fn mount_root_impl(do_panic: bool) -> bool {
     let media = Media {
         offset,
         size,
-        storage: MediaType::Block(disk.clone()),
+        storage: disk.clone(),
     };
 
-    logkf!(
-        LogLevel::Info,
-        "Mounting root filesystem on blkdev {}; offset 0x{:x}, size 0x{:x}",
-        (&*disk as &dyn Device).id(),
-        offset,
-        size
-    );
+    if let Some(name) = disk.base().node_name()
+        && let Some(num) = disk.base().node_num()
+    {
+        logkf!(LogLevel::Info, "Root disk: {}{}", name, num);
+    } else {
+        logkf!(LogLevel::Info, "Mounting root filesystem on {}", &disk);
+    }
+    if let Some(part) = &part {
+        logkf!(LogLevel::Info, "Root partition index: {}", part.index);
+    } else {
+        logkf!(LogLevel::Info, "Using whole root disk");
+    }
 
     // Finally mount filesystem.
-    let res = mount::mount(None, b"/", None, Some(media), 0);
-    if let Err(x) = res {
-        panic!("Unable to mount root filesystem: {}", x);
+    mount::mount(None, b"/", None, Some(media), 0).expect("Unable to mount root filesystem");
+
+    if kparam::get_kparam("NO_AUTOMOUNT_DEVTMPFS").is_none() {
+        let devtmpfs_path = kparam::get_kparam("DEVTMPFS_PATH").unwrap_or("/dev");
+        match mount::mount(None, devtmpfs_path.as_bytes(), Some("devtmpfs"), None, 0) {
+            Ok(_) => logkf!(LogLevel::Info, "Auto-mounted the devtmpfs"),
+            Err(x) => logkf!(
+                LogLevel::Warning,
+                "Unable to auto-mount the devtmpfs: {}",
+                x
+            ),
+        }
     }
 
     true

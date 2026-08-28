@@ -64,9 +64,11 @@ impl MbrDriver {
 
         // Convert individual partitions.
         let mut parts = Vec::new();
-        for part in raw_parts {
+        for i in 0..raw_parts.len() {
+            let part = &raw_parts[i];
             if part.lba_start != 0 && part.sec_count != 0 {
                 parts.push(Partition {
+                    index: i as u32,
                     offset: (part.lba_start as u64) << drive.block_size_exp(),
                     size: (part.sec_count as u64) << drive.block_size_exp(),
                     type_: Uuid::from_u128(part.type_ as u128),

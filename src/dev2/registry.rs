@@ -12,13 +12,16 @@ use alloc::{collections::btree_map::BTreeMap, sync::Arc, vec::Vec};
 use dtb::DtbNode;
 
 use crate::{
-    bindings::{error::EResult, log::LogLevel},
+    bindings::{
+        error::{EResult, Errno},
+        log::LogLevel,
+    },
     dev2::probe,
     kernel::sync::mutex::{Mutex, SharedMutexGuard},
     util::id_alloc::IdAlloc,
 };
 
-use super::{Device, bus::Bus, driver::Driver};
+use super::{Device, bus::Bus, devtmpfs, driver::Driver};
 
 /// ID allocator for devices.
 static DEV_ID_ALLOC: Mutex<Option<IdAlloc>> = Mutex::new(None);
@@ -28,7 +31,7 @@ static BUS_ID_ALLOC: Mutex<Option<IdAlloc>> = Mutex::new(None);
 static RESV_ID_ALLOC: Mutex<Option<IdAlloc>> = Mutex::new(None);
 
 /// Initialize the ID allocators.
-pub fn init() {
+pub(super) fn init() {
     let mut dev_id_alloc = DEV_ID_ALLOC.unintr_lock();
     let mut bus_id_alloc = BUS_ID_ALLOC.unintr_lock();
     let mut resv_id_alloc = RESV_ID_ALLOC.unintr_lock();
@@ -64,20 +67,40 @@ pub(super) fn dealloc_device_id(id: NonZeroU32) {
 
 /// Register a new device.
 pub fn register_device(device: Arc<dyn Device>) -> EResult<()> {
-    let id = device.id();
-    DEVICES.unintr_lock().insert(id, device);
+    let base = device.base();
+    let mut guard = base.mtx.unintr_lock();
+    if guard.is_registered {
+        logkf!(LogLevel::Error, "Cannot register twice device {}", base.id);
+        return Err(Errno::EINVAL);
+    }
+    DEVICES.unintr_lock().insert(base.id, device.clone());
+    if let Some(name) = base.node_name() {
+        if let Err(x) = devtmpfs::create_node(device.clone(), name, base.is_singleton) {
+            logkf!(
+                LogLevel::Error,
+                "Failed to create devtmpfs node for {}: {}",
+                base.id,
+                x
+            );
+        }
+    }
+    guard.is_registered = true;
     Ok(())
 }
 
 /// Remove a device from the registry if it exists.
 pub fn remove_device(device: &dyn Device) {
-    if DEVICES.unintr_lock().remove(&device.id()).is_none() {
+    let base = device.base();
+    let mut guard = base.mtx.unintr_lock();
+    if !guard.is_registered {
         logkf!(
-            LogLevel::Warning,
+            LogLevel::Error,
             "Cannot remove unregistered device {}",
-            device.id()
+            base.id
         );
+        return;
     }
+    guard.is_registered = false;
 }
 
 /// Get a device by ID.

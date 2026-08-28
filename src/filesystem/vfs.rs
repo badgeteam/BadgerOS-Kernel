@@ -3,10 +3,9 @@
 // SPDX-License-Identifier: MIT
 
 use core::{
-    any::{Any, TypeId, type_name},
+    any::{Any, type_name},
     fmt::{Debug, Display},
     hint::unlikely,
-    ops::Range,
     panic,
     ptr::{self, NonNull},
     sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering},
@@ -21,7 +20,8 @@ use alloc::{
 };
 
 use super::{
-    Dirent, File, InodeType, MakeFileSpec, SeekMode, Stat, UnlinkMode, media::Media, oflags, poll,
+    DentBuffer, Dirent, File, InodeType, MakeFileSpec, SeekMode, Stat, UnlinkMode, media::Media,
+    oflags, poll,
 };
 use crate::{
     LogLevel,
@@ -46,10 +46,7 @@ use crate::{
             memobject::{MappablePage, MemObject},
         },
     },
-    process::{
-        syscall::fs::DentBuffer,
-        usercopy::{UserSlice, UserSliceMut},
-    },
+    process::usercopy::{UserSlice, UserSliceMut},
 };
 
 /// Offset and flags for [`VfsFile`].
@@ -103,6 +100,13 @@ pub struct VfsFile {
 }
 
 impl VfsFile {
+    pub const fn new(loc: VfsLoc, flags: u32) -> Self {
+        Self {
+            loc,
+            flags: Mutex::new(FlagsAndOffset { offset: 0, flags }),
+        }
+    }
+
     /// Implementation of append-mode writes.
     fn append_write(
         &self,
@@ -203,7 +207,7 @@ impl File for VfsFile {
         Ok(())
     }
 
-    fn get_dirents(&self, buffer: &mut DentBuffer<'_>) -> EResult<()> {
+    fn get_dirents(&self, buffer: &mut dyn DentBuffer) -> EResult<()> {
         let mut flags = self.flags.lock()?;
         if flags.flags & oflags::READ_ONLY == 0 {
             return Err(Errno::EBADF);
@@ -231,15 +235,6 @@ impl File for VfsFile {
             .unintr_lock_shared()
             .ops
             .get_device(&self.loc.vnode)
-    }
-
-    fn get_part_offset(&self) -> Option<Range<u64>> {
-        self.loc
-            .vnode
-            .mtx
-            .unintr_lock_shared()
-            .ops
-            .get_part_offset(&self.loc.vnode)
     }
 
     fn stat(&self) -> EResult<Stat> {
@@ -557,12 +552,8 @@ impl Drop for VNode {
 
 /// Abstract vnode operations.
 pub trait VNodeOps: Any + Display {
-    /// Get the associated character device, if any.
+    /// Get the associated device, if any.
     fn get_device(&self, _vnode_self: &VNode) -> Option<Arc<dyn Device>> {
-        None
-    }
-    /// Get the partition offset and size that this file represents, if any.
-    fn get_part_offset(&self, _vnode_self: &VNode) -> Option<Range<u64>> {
         None
     }
 
@@ -571,7 +562,7 @@ pub trait VNodeOps: Any + Display {
         &self,
         vnode_self: &VNode,
         offset: u64,
-        buffer: &mut DentBuffer<'_>,
+        buffer: &mut dyn DentBuffer,
     ) -> EResult<u64>;
     /// Use DMA to write data to the file.
     /// Fails if the access is not aligned.
@@ -943,7 +934,12 @@ impl DentCache {
     }
 
     /// Look up a name in this directory.
-    pub(super) fn lookup(mut loc: CacheLoc, component: &[u8]) -> EResult<CacheLoc> {
+    pub(super) fn lookup(loc: CacheLoc, component: &[u8]) -> EResult<CacheLoc> {
+        Self::lookup_impl(loc, component).map(Self::enter_mounts)
+    }
+
+    /// Look up a name in this directory.
+    fn lookup_impl(mut loc: CacheLoc, component: &[u8]) -> EResult<CacheLoc> {
         // Handle `.` and `..` components.
         if component == b"." {
             return Ok(loc);

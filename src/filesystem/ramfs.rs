@@ -6,7 +6,6 @@ use core::{
     any::Any,
     cell::UnsafeCell,
     fmt::Display,
-    ops::Range,
     sync::atomic::{AtomicU64, AtomicUsize, Ordering},
 };
 
@@ -21,18 +20,15 @@ use crate::{
     },
     config::PAGE_SIZE,
     cpu,
-    dev2::{Device, class::block::BlockDevice},
+    dev2::Device,
     filesystem::mount,
     kernel::sync::mutex::Mutex,
-    process::{
-        syscall::fs::DentBuffer,
-        usercopy::{UserSlice, UserSliceMut},
-    },
+    process::usercopy::{UserSlice, UserSliceMut},
     register_kmodule,
 };
 
 use super::{
-    Dirent, FSDRIVERS, InodeType, MakeFileSpec, ModeFlags, Stat, UnlinkMode,
+    DentBuffer, Dirent, FSDRIVERS, InodeType, MakeFileSpec, ModeFlags, Stat, UnlinkMode,
     media::Media,
     vfs::{VNode, VNodeOps, Vfs, VfsDriver, VfsOps},
 };
@@ -161,8 +157,8 @@ enum RamFsData {
     CharDev(Arc<dyn Device>),
     /// Directory.
     Directory(BTreeMap<Box<[u8]>, Dirent>),
-    /// Block device.
-    BlockDev((Arc<dyn BlockDevice>, Option<Range<u64>>)),
+    /// Block device or partition device.
+    BlockDev(Arc<dyn Device>),
     /// Regular file.
     Regular(Vec<u8>),
     /// Symbolic link.
@@ -258,17 +254,8 @@ impl VNodeOps for RamVNode {
         let inode = unsafe { self.inode.as_ref_unchecked() };
         match &inode.data {
             RamFsData::CharDev(dev) => Some(dev.clone()),
-            RamFsData::BlockDev(dev) => Some(dev.0.clone()),
+            RamFsData::BlockDev(dev) => Some(dev.clone()),
             _ => None,
-        }
-    }
-
-    fn get_part_offset(&self, _vnode_self: &VNode) -> Option<Range<u64>> {
-        let inode = unsafe { self.inode.as_ref_unchecked() };
-        if let RamFsData::BlockDev(dev) = &inode.data {
-            dev.1.clone()
-        } else {
-            None
         }
     }
 
@@ -319,7 +306,7 @@ impl VNodeOps for RamVNode {
         &self,
         _vnode_self: &VNode,
         offset: u64,
-        buffer: &mut DentBuffer<'_>,
+        buffer: &mut dyn DentBuffer,
     ) -> EResult<u64> {
         let inode = unsafe { self.inode.as_ref_unchecked() };
         let directory = inode.data.as_directory().ok_or(Errno::EINVAL)?;

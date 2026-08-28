@@ -4,7 +4,6 @@
 
 use core::{
     fmt::{Debug, Write},
-    ops::Range,
     panic, ptr,
     sync::atomic::{AtomicI32, Ordering},
 };
@@ -30,7 +29,6 @@ use crate::{
     kernel::sync::{mutex::Mutex, waitlist::Waitlist},
     mem::{pagecache::PageCache, vmm::memobject::MemObject},
     process::{
-        syscall::fs::DentBuffer,
         uapi::stat::stat,
         usercopy::{UserSlice, UserSliceMut},
     },
@@ -321,17 +319,13 @@ pub trait File: Sync {
         Err(Errno::ENOTTY)
     }
     /// Read directory entries into the buffer.
-    fn get_dirents(&self, buffer: &mut DentBuffer<'_>) -> EResult<()>;
+    fn get_dirents(&self, buffer: &mut dyn DentBuffer) -> EResult<()>;
     /// Get the memory object for this file, if any.
     fn get_memobject(&self) -> Option<Arc<dyn MemObject>> {
         None
     }
     /// Get the device that this file represents, if any.
     fn get_device(&self) -> Option<Arc<dyn Device>> {
-        None
-    }
-    /// Get the partition offset and size that this file represents, if any.
-    fn get_part_offset(&self) -> Option<Range<u64>> {
         None
     }
     /// Get the stat info for this file's inode.
@@ -394,6 +388,20 @@ impl dyn File + '_ {
     }
 }
 
+/// Receiver trait for [`File::get_dirents`].
+pub trait DentBuffer {
+    /// Try to add a dirent to the buffer; returns whether there was space left to add it.
+    /// `Ok(false)` should cause successful termination, whereas `Err(_)` should cause error termination.
+    fn push(&mut self, dent: Dirent) -> EResult<bool>;
+}
+
+impl DentBuffer for Vec<Dirent> {
+    fn push(&mut self, dent: Dirent) -> EResult<bool> {
+        Vec::push(self, dent);
+        Ok(true)
+    }
+}
+
 /// Location in the VFS with a [`VNode`].
 #[derive(Clone)]
 pub struct VfsLoc {
@@ -419,7 +427,7 @@ impl VfsLoc {
 /// Location in the VFS with a [`DentCache`].
 #[derive(Clone)]
 pub struct CacheLoc {
-    pub cache: Arc<DentCache>,
+    cache: Arc<DentCache>,
     pub mount: Arc<Mount>,
 }
 
@@ -432,8 +440,8 @@ pub enum MakeFileSpec<'a> {
     CharDev(Arc<dyn Device>),
     /// Directory.
     Directory,
-    /// Block device.
-    BlockDev((Arc<dyn BlockDevice>, Option<Range<u64>>)),
+    /// Block device or partition device.
+    BlockDev(Arc<dyn Device>),
     /// Regular file.
     Regular,
     /// Symbolic link.

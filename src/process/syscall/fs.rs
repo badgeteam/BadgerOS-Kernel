@@ -8,7 +8,7 @@ use crate::{
         error::{EResult, Errno},
         raw::{seek_mode_t_SEEK_CUR, seek_mode_t_SEEK_END, seek_mode_t_SEEK_SET},
     },
-    filesystem::{self, Dirent, InodeType, MakeFileSpec, PATH_MAX, SeekMode},
+    filesystem::{self, DentBuffer, Dirent, InodeType, MakeFileSpec, PATH_MAX, SeekMode},
     process::{
         self, FILE_MAX,
         files::FileDesc,
@@ -22,12 +22,12 @@ use core::{
 };
 
 /// Helper type for [`syscall_fs_getdents`].
-pub struct DentBuffer<'a> {
+pub struct UserDentBuffer<'a> {
     index: usize,
     slice: UserSliceMut<'a, u8>,
 }
 
-impl<'a> DentBuffer<'a> {
+impl<'a> UserDentBuffer<'a> {
     pub fn new(slice: UserSliceMut<'a, u8>) -> Self {
         Self { slice, index: 0 }
     }
@@ -73,6 +73,12 @@ impl<'a> DentBuffer<'a> {
     }
 }
 
+impl DentBuffer for UserDentBuffer<'_> {
+    fn push(&mut self, dent: Dirent) -> EResult<bool> {
+        UserDentBuffer::push(self, dent).into()
+    }
+}
+
 pub(super) fn open(at: c_int, path: *const u8, oflags: c_int) -> EResult<c_int> {
     let proc = process::current().unwrap();
     let mut files = proc.files.lock()?;
@@ -110,7 +116,7 @@ pub(super) fn write(fd: c_int, write_buf: UserSlice<u8>) -> EResult<usize> {
 
 pub(super) fn getdents(fd: c_int, read_buf: UserSliceMut<u8>) -> EResult<usize> {
     let proc = process::current().unwrap();
-    let mut buffer = DentBuffer::new(read_buf);
+    let mut buffer = UserDentBuffer::new(read_buf);
     proc.files
         .lock_shared()?
         .get_file(fd)?
