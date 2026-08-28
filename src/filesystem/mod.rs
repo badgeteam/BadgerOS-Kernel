@@ -441,7 +441,7 @@ pub enum MakeFileSpec<'a> {
     /// Directory.
     Directory,
     /// Block device or partition device.
-    BlockDev(Arc<dyn Device>),
+    BlockDev(Arc<dyn BlockDevice>),
     /// Regular file.
     Regular,
     /// Symbolic link.
@@ -846,7 +846,7 @@ pub fn open(at: Option<&dyn File>, path: &[u8], mut oflags: OFlags) -> EResult<A
         }
         InodeType::BlockDev => {
             // Block device file ops.
-            Ok(Box::<dyn File>::from(Box::try_new(BlockDevFile::new(open_loc, oflags))?).into())
+            Ok(Box::<dyn File>::from(Box::try_new(BlockDevFile::new(open_loc, oflags)?)?).into())
         }
         InodeType::UnixSocket => {
             logkf!(LogLevel::Warning, "TODO: UNIX domain socket file ops");

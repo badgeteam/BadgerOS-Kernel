@@ -4,11 +4,15 @@
 
 use core::{fmt::Display, ops::Range, ptr::NonNull};
 
-use alloc::sync::Arc;
+use alloc::{sync::Arc, vec::Vec};
 
 use crate::{
-    bindings::error::{EResult, Errno},
-    dev2::{Device, DeviceBase},
+    bindings::{
+        error::{EResult, Errno},
+        log::LogLevel,
+    },
+    dev2::{Device, DeviceBase, registry},
+    device_get_trait_vtable,
     filesystem::partition::{VolumeInfo, get_volume_info},
     kernel::sync::mutex::{Mutex, MutexGuard, SharedMutexGuard},
     mem::{
@@ -27,6 +31,7 @@ struct BlockCaches {
 
 struct BlockVInfo {
     vinfo: Option<VolumeInfo>,
+    part_devs: Vec<Arc<BlockDevicePart>>,
     vinfo_probed: bool,
 }
 
@@ -42,6 +47,7 @@ impl BlockDeviceBase {
             cache: Mutex::new(None),
             vinfo: Mutex::new(BlockVInfo {
                 vinfo: None,
+                part_devs: Vec::new(),
                 vinfo_probed: false,
             }),
         }
@@ -91,6 +97,12 @@ pub trait BlockDevice: Device {
     /// Get the block device base struct.
     fn block_base(&self) -> &BlockDeviceBase;
 
+    /// Get the partition translation, if any.
+    /// Should return [`None`] for regular block devices.
+    fn current_partition(&self) -> Option<Range<u64>> {
+        None
+    }
+
     /// Get block device information.
     fn identify_uncached(&self) -> EResult<BlockIdent>;
 
@@ -116,7 +128,7 @@ pub trait BlockDevice: Device {
 impl dyn BlockDevice {
     /// Get the volume information.
     /// If `force_probe` is `true`, probe for partitions even if they had been probed already.
-    pub fn volume_info(&self, force_probe: bool) -> EResult<Option<VolumeInfo>> {
+    pub fn volume_info(self: &Arc<Self>, force_probe: bool) -> EResult<Option<VolumeInfo>> {
         if !force_probe {
             let guard = self.block_base().vinfo.unintr_lock_shared();
             if guard.vinfo_probed {
@@ -129,9 +141,44 @@ impl dyn BlockDevice {
             return Ok(guard.vinfo.clone());
         }
 
-        let info = get_volume_info(self)?;
+        let info = get_volume_info(&**self)?;
         guard.vinfo = info.clone();
         guard.vinfo_probed = true;
+
+        // Update partition devices.
+        let base = self.base();
+        if let Some(name) = base.node_name()
+            && let Some(number) = base.node_num()
+        {
+            // Remove existing partitions that no longer exist.
+            for dev in guard.part_devs.drain(0..) {
+                registry::remove_device(&*dev);
+            }
+
+            if let Some(info) = &info {
+                // Create/replace partitions that are new/updated.
+                for i in 0..info.parts.len() {
+                    let part = &info.parts[i];
+                    let part = Arc::new(BlockDevicePart {
+                        base: DeviceBase::with_node_name(format!("{}{}p", name, number), false),
+                        parent: self.clone(),
+                        index: i as u32,
+                        range: part.offset..part.offset + part.size,
+                    });
+                    match registry::register_device(part.clone()) {
+                        Ok(_) => guard.part_devs.push(part),
+                        Err(x) => logkf!(
+                            LogLevel::Error,
+                            "Failed to register partition {} for {}{}: {}",
+                            i,
+                            name,
+                            number,
+                            x
+                        ),
+                    }
+                }
+            }
+        }
 
         Ok(info)
     }
@@ -209,6 +256,33 @@ impl dyn BlockDevice {
         self.alloc_cache().map(|x| x.ident)
     }
 
+    /// Get the length of the current partition or, if none, the entire block device.
+    /// Returns meaningless values if [`Self::identify`] hasn't run or there is no media.
+    pub fn len(&self) -> u64 {
+        if let Some(range) = self.current_partition() {
+            range.end - range.start
+        } else {
+            self.block_base()
+                .cache
+                .unintr_lock_shared()
+                .as_ref()
+                .map_or(0, |x| x.ident.block_count << x.ident.block_size_exp)
+        }
+    }
+
+    /// Partition offset and bounds-checking helper.
+    fn partition_offset(&self, addr: u64, len: u64) -> EResult<u64> {
+        if let Some(partition) = self.current_partition() {
+            let start = addr.checked_add(partition.start).ok_or(Errno::EIO)?;
+            if start.checked_add(len).ok_or(Errno::EIO)? > partition.end {
+                return Err(Errno::EIO);
+            }
+            Ok(start)
+        } else {
+            Ok(addr)
+        }
+    }
+
     /// Read bytes through the cache.
     #[inline(always)]
     pub fn readk_bytes(&self, addr: u64, rdata: &mut [u8]) -> EResult<()> {
@@ -217,6 +291,7 @@ impl dyn BlockDevice {
 
     /// Read bytes through the cache.
     pub fn read_bytes(&self, addr: u64, rdata: UserSliceMut<u8>) -> EResult<()> {
+        let addr = self.partition_offset(addr, rdata.len() as u64)?;
         let pager = PagerGlue(self);
         self.alloc_cache()?.cache.read_bytes(&pager, addr, rdata)
     }
@@ -229,6 +304,7 @@ impl dyn BlockDevice {
 
     /// Write bytes through the cache.
     pub fn write_bytes(&self, addr: u64, wdata: UserSlice<u8>) -> EResult<()> {
+        let addr = self.partition_offset(addr, wdata.len() as u64)?;
         let pager = PagerGlue(self);
         self.alloc_cache()?.cache.write_bytes(&pager, addr, wdata)
     }
@@ -241,7 +317,12 @@ impl dyn BlockDevice {
 
     /// Sync bytes from the cache to disk.
     /// If `flush` is `true`, removes cached reads as well.
-    pub fn sync_bytes(&self, addr: u64, len: u64, flush: bool) -> EResult<()> {
+    pub fn sync_bytes(&self, mut addr: u64, mut len: u64, flush: bool) -> EResult<()> {
+        if let Some(partition) = self.current_partition() {
+            addr = addr.checked_add(partition.start).ok_or(Errno::EIO)?;
+            // Silently clamp the sync range instead of outright rejecting it.
+            len = len.min(partition.end - addr);
+        }
         let pager = PagerGlue(self);
         let meta = self.alloc_cache()?;
         meta.cache.sync(&pager, addr, len)?;
@@ -256,67 +337,16 @@ impl dyn BlockDevice {
     pub fn sync_all(&self, flush: bool) -> EResult<()> {
         let pager = PagerGlue(self);
         let meta = self.alloc_cache()?;
-        meta.cache.sync_all(&pager)?;
+        if let Some(partition) = self.current_partition() {
+            meta.cache
+                .sync(&pager, partition.start, partition.end - partition.start)?;
+        } else {
+            meta.cache.sync_all(&pager)?;
+        }
         if flush {
             meta.cache.flush();
         }
         Ok(())
-    }
-}
-
-/// Partition on a block device.
-pub trait PartDevice: Device {
-    /// Get the underlying block device.
-    fn block_device(&self) -> Arc<dyn BlockDevice>;
-
-    /// Get the range on the block device that this partition spans, in bytes.
-    fn part_range(&self) -> Range<u64>;
-}
-
-/// Standard implementation of [`PartDevice`].
-pub struct PartDeviceImpl {
-    base: DeviceBase,
-    pub device: Arc<dyn BlockDevice>,
-    pub range: u64,
-}
-
-impl PartDeviceImpl {
-    /// Will fail if `device` is not currently registered or does not have a node name.
-    pub fn new(device: Arc<dyn BlockDevice>, range: u64) -> EResult<Self> {
-        let device_base = device.base();
-        let prefix = device_base.node_name().ok_or(Errno::EINVAL)?;
-        let index = device_base.node_num().ok_or(Errno::ENODEV)?;
-        let name = format!("{}{}p", prefix, index);
-        Ok(Self {
-            base: DeviceBase::with_node_name(name, false),
-            device,
-            range,
-        })
-    }
-}
-
-impl Display for PartDeviceImpl {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        self.device.fmt(f)?;
-        f.write_str(" partition ")?;
-        if let Some(index) = self.base.node_num()
-            && self.device.base().is_registered()
-        {
-            write!(f, "{}", index)?;
-        } else {
-            f.write_str("(stale)")?;
-        }
-        Ok(())
-    }
-}
-
-impl Device for PartDeviceImpl {
-    fn base(&self) -> &DeviceBase {
-        todo!()
-    }
-
-    fn interrupt(&self, _id: u128) -> bool {
-        unreachable!()
     }
 }
 
@@ -329,4 +359,70 @@ pub struct BlockIdent {
     pub block_count: u64,
     /// Maximum address width.
     pub addr_width: u8,
+}
+
+/// Implementation of [`BlockDevice`] for partitions on another.
+pub struct BlockDevicePart {
+    base: DeviceBase,
+    parent: Arc<dyn BlockDevice>,
+    index: u32,
+    range: Range<u64>,
+}
+
+impl Display for BlockDevicePart {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{} partition {}", self.parent, self.index)
+    }
+}
+
+impl Device for BlockDevicePart {
+    fn base(&self) -> &DeviceBase {
+        &self.base
+    }
+
+    fn interrupt(&self, _id: u128) -> bool {
+        unreachable!()
+    }
+
+    device_get_trait_vtable!(BlockDevice);
+}
+
+impl BlockDevice for BlockDevicePart {
+    fn block_base(&self) -> &BlockDeviceBase {
+        self.parent.block_base()
+    }
+
+    fn current_partition(&self) -> Option<Range<u64>> {
+        Some(self.range.clone())
+    }
+
+    fn identify_uncached(&self) -> EResult<BlockIdent> {
+        logkf!(
+            LogLevel::Warning,
+            "Attempt to call identify_uncached on BlockDevicePart"
+        );
+        Err(Errno::EINVAL)
+    }
+
+    fn read_blocks_uncached(
+        &self,
+        lba: u64,
+        data_offset: u64,
+        data_length: u64,
+        rdata: &dyn DmaTarget,
+    ) -> EResult<()> {
+        self.parent
+            .read_blocks_uncached(lba, data_offset, data_length, rdata)
+    }
+
+    fn write_blocks_uncached(
+        &self,
+        lba: u64,
+        data_offset: u64,
+        data_length: u64,
+        rdata: &dyn DmaTarget,
+    ) -> EResult<()> {
+        self.parent
+            .write_blocks_uncached(lba, data_offset, data_length, rdata)
+    }
 }

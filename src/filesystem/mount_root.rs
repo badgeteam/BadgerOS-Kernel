@@ -86,16 +86,22 @@ fn find_disk_by_nodename(nodename: &str) -> Option<Arc<dyn BlockDevice>> {
 
     let devnode = open(Some(&*handle), nodename.as_bytes(), oflags::READ_ONLY).ok()?;
     let Some(device) = devnode.get_device() else {
-        logkf!(LogLevel::Error, "{} exists, but is not a device", nodename);
+        logkf!(LogLevel::Error, "{} is not a block device", nodename);
         return None;
     };
     let res = device.try_as_arc::<dyn BlockDevice>();
-    if res.is_none() {
-        logkf!(
-            LogLevel::Error,
-            "{} exists and is a device, but is not a block device",
-            nodename
-        );
+    match &res {
+        Some(dev) => {
+            if dev.current_partition().is_some() {
+                logkf!(
+                    LogLevel::Error,
+                    "{} refers to a partition, not a block device",
+                    nodename
+                );
+                return None;
+            }
+        }
+        None => logkf!(LogLevel::Error, "{} is not a block device", nodename),
     }
     res
 }
@@ -155,7 +161,7 @@ pub fn mount_root_impl(do_panic: bool) -> bool {
     let root_disk: Option<Arc<dyn BlockDevice>> = try {
         let param = kparam::get_kparam("ROOTDISK")?;
         let res: Option<_> = try {
-            if param[..5] == *"UUID=" {
+            if param.len() >= 6 && param[..5] == *"UUID=" {
                 find_disk_by_guid(util::parse_uuid_str(&param[5..])?)?
             } else {
                 find_disk_by_nodename(param)?

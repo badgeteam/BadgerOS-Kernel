@@ -20,7 +20,7 @@ use crate::{
     },
     config::PAGE_SIZE,
     cpu,
-    dev2::Device,
+    dev2::{Device, class::block::BlockDevice},
     filesystem::mount,
     kernel::sync::mutex::Mutex,
     process::usercopy::{UserSlice, UserSliceMut},
@@ -158,7 +158,7 @@ enum RamFsData {
     /// Directory.
     Directory(BTreeMap<Box<[u8]>, Dirent>),
     /// Block device or partition device.
-    BlockDev(Arc<dyn Device>),
+    BlockDev(Arc<dyn BlockDevice>),
     /// Regular file.
     Regular(Vec<u8>),
     /// Symbolic link.

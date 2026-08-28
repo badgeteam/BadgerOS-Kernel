@@ -2,14 +2,14 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use alloc::{boxed::Box, sync::Arc, vec::Vec};
+use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
 
 use crate::{
     bindings::{
         error::{EResult, Errno},
         log::LogLevel,
     },
-    dev2::class::block::{BlockDevice, PartDevice},
+    dev2::class::block::BlockDevice,
     filesystem::{
         File, MakeFileSpec, VfsLoc, make_file,
         mount::{self, Mount},
@@ -46,10 +46,9 @@ pub fn handle() -> Arc<dyn File> {
 pub(super) fn create_node(device: Arc<dyn Device>, name: &str, is_singleton: bool) -> EResult<u32> {
     let handle = handle();
 
+    let id = device.id();
     let spec;
-    if device.try_as_ref::<dyn BlockDevice>().is_some()
-        || device.try_as_ref::<dyn PartDevice>().is_some()
-    {
+    if let Some(device) = device.clone().try_as_arc::<dyn BlockDevice>() {
         spec = MakeFileSpec::BlockDev(device);
     } else {
         spec = MakeFileSpec::CharDev(device);
@@ -62,7 +61,15 @@ pub(super) fn create_node(device: Arc<dyn Device>, name: &str, is_singleton: boo
     for i in 0..u32::MAX {
         let path = format!("{}{}", name, i);
         match make_file(Some(&*handle), path.as_bytes(), spec.clone()) {
-            Ok(_) => return Ok(i),
+            Ok(_) => {
+                logkf!(
+                    LogLevel::Info,
+                    "Create devtmpfs node {} for device {}",
+                    path,
+                    id
+                );
+                return Ok(i);
+            }
             Err(Errno::EEXIST) => (),
             Err(x) => return Err(x),
         }
@@ -93,8 +100,13 @@ pub(super) fn remove_node(name: &str, index: Option<u32>) {
 
     for dent in dents {
         if dent.name.starts_with(prefix.as_bytes()) {
-            if let Err(x) = unlink(Some(&*handle), &dent.name, false) {
-                logkf!(LogLevel::Warning, "Cannot remove from devtmpfs: {}", x);
+            match unlink(Some(&*handle), &dent.name, false) {
+                Ok(_) => logkf!(
+                    LogLevel::Info,
+                    "Remove devtmpfs node {}",
+                    String::from_utf8_lossy(&dent.name)
+                ),
+                Err(x) => logkf!(LogLevel::Warning, "Cannot remove from devtmpfs: {}", x),
             }
         }
     }

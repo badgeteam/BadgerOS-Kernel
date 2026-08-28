@@ -112,22 +112,26 @@ pub(super) struct BlockDevFile {
 
 impl BlockDevFile {
     /// Create a new block device file.
-    pub fn new(loc: VfsLoc, flags: u32) -> Self {
-        Self {
-            block_dev: loc
-                .vnode
-                .clone()
-                .mtx
-                .unintr_lock_shared()
-                .ops
-                .get_device(&loc.vnode)
-                .unwrap()
-                .try_as_arc::<dyn BlockDevice>()
-                .unwrap()
-                .clone(),
+    pub fn new(loc: VfsLoc, flags: u32) -> EResult<Self> {
+        let device = loc
+            .vnode
+            .clone()
+            .mtx
+            .unintr_lock_shared()
+            .ops
+            .get_device(&loc.vnode)
+            .ok_or(Errno::ENODEV)?;
+        let block_dev;
+        if let Some(device) = device.clone().try_as_arc::<dyn BlockDevice>() {
+            block_dev = device;
+        } else {
+            return Err(Errno::ENODEV);
+        }
+        Ok(Self {
+            block_dev,
             loc,
             flags: Mutex::new(FlagsAndOffset { offset: 0, flags }),
-        }
+        })
     }
 }
 

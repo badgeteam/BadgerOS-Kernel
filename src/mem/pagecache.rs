@@ -425,6 +425,7 @@ impl PageCache {
         // Lock size while finding which pages to sync.
         let byte_len = self.len.unintr_lock_shared();
         let start_index = self.index(addr).0;
+        // Instead of erroring if the sync exceeds bounds, just clamp it to bounds.
         let end_index = self.index((addr + len.saturating_sub(1)).min(*byte_len)).0;
 
         // Collect a list of entries to sync.
@@ -516,7 +517,14 @@ impl PageCache {
         addr: u64,
         mut rdata: UserSliceMut<'_, u8>,
     ) -> EResult<()> {
+        let byte_len = self.len.unintr_lock_shared();
         let len = rdata.len() as u64;
+
+        // Bounds check.
+        if *byte_len < addr.checked_add(len as u64).ok_or(Errno::EIO)? {
+            return Err(Errno::EIO);
+        }
+
         let mut progress: u64 = 0;
         while progress < len {
             let cur_addr = addr + progress;
@@ -543,7 +551,14 @@ impl PageCache {
         addr: u64,
         wdata: UserSlice<'_, u8>,
     ) -> EResult<()> {
+        let byte_len = self.len.unintr_lock_shared();
         let len = wdata.len() as u64;
+
+        // Bounds check.
+        if *byte_len < addr.checked_add(len as u64).ok_or(Errno::EIO)? {
+            return Err(Errno::EIO);
+        }
+
         let mut progress: u64 = 0;
         while progress < len {
             let cur_addr = addr + progress;
@@ -567,6 +582,13 @@ impl PageCache {
 
     /// Write with zeroes through the cache.
     pub fn write_zeroes(&self, pager: &dyn Pager, addr: u64, len: u64) -> EResult<()> {
+        let byte_len = self.len.unintr_lock_shared();
+
+        // Bounds check.
+        if *byte_len < addr.checked_add(len as u64).ok_or(Errno::EIO)? {
+            return Err(Errno::EIO);
+        }
+
         let mut progress: u64 = 0;
         while progress < len {
             let cur_addr = addr + progress;
