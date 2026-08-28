@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::{
     bindings::error::EResult,
-    dev2::class::block::BlockDevice,
+    device::class::block::BlockDevice,
     filesystem::partition::{Partition, PartitionDriver, VolumeInfo},
     register_kmodule,
 };

@@ -27,7 +27,7 @@ use crate::{
     LogLevel,
     bindings::error::{EResult, Errno},
     config::PAGE_SIZE,
-    dev2::Device,
+    device::Device,
     filesystem::{
         CacheLoc, VfsLoc,
         fifo::FifoShared,

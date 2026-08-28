@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::{
     LogLevel,
     bindings::error::EResult,
-    dev2::class::block::BlockDevice,
+    device::class::block::BlockDevice,
     filesystem::partition::{Partition, PartitionDriver, VolumeInfo, mbr::MbrDriver},
     register_kmodule, util,
 };

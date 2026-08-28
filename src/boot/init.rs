@@ -11,7 +11,7 @@ use crate::{
     },
     boot::protocol,
     cpu::{self, spinup::arch_cpu_spinup},
-    dev2,
+    device,
     filesystem::mount_root::mount_root_fs,
     kernel::{
         cpulocal::CpuLocal,
@@ -78,7 +78,7 @@ unsafe fn general_init() {
     unsafe {
         kmodule::init_builtins();
 
-        dev2::init();
+        device::init();
 
         // Scheduler is already running on BSP so we start the tick timer retroactively for it.
         cpu::timer::start_tick_timer();

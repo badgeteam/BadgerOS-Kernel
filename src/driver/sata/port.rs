@@ -9,7 +9,7 @@ use super::*;
 use crate::{
     badgelib::irq::IrqGuard,
     bindings::raw::timestamp_us_t,
-    dev2::{bus::ata::AtaBus, registry},
+    device::{bus::ata::AtaBus, registry},
     kernel::{
         sched::{Thread, thread_yield},
         sync::{semaphore::Semaphore, spinlock::RawSpinlock, waitlist::Waitlist},

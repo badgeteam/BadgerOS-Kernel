@@ -14,7 +14,7 @@ use crate::{
         error::{EResult, Errno},
         log::LogLevel,
     },
-    dev2::{
+    device::{
         self, Device, DeviceBase,
         bus::{
             Bus, BusResv,
@@ -214,6 +214,6 @@ impl Driver for AtaBlockDriver {
     }
 }
 
-register_kmodule!("ata-block", || dev2::registry::register_driver(
+register_kmodule!("ata-block", || device::registry::register_driver(
     &AtaBlockDriver
 ));

@@ -56,7 +56,7 @@ fn parse_isa_str(mut isa: &[u8]) -> Option<IsaSpec> {
 }
 
 /// Determine whether a CPU is usable by its DTB node.
-pub fn is_usable2(cpu: &dtb::DtbNode) -> Option<CpuFeatures> {
+pub fn is_usable(cpu: &dtb::DtbNode) -> Option<CpuFeatures> {
     // We will be reading the RISC-V ISA specification to check for required and optional features.
     let isa = cpu.inherit_prop("riscv,isa")?.blob.as_ref();
     // Assert core has an MMU.

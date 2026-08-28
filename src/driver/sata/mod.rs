@@ -13,7 +13,7 @@ use crate::{
         log::LogLevel,
     },
     cpu::timer::time_us,
-    dev2::{
+    device::{
         Device, DeviceBase,
         bus::{
             Bus, BusResv,
@@ -26,7 +26,7 @@ use crate::{
         registry,
     },
     device_get_trait_vtable,
-    driver2::sata::port::Port,
+    driver::sata::port::Port,
     kernel::{sched::thread_sleep, sync::spinlock::RawSpinlock},
     mem::dma::DmaTarget,
     register_kmodule,

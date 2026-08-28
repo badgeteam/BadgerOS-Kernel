@@ -1,6 +1,6 @@
 use crate::{
     bindings::error::EResult,
-    dev2::{Device, class::char::CharDevice},
+    device::{Device, class::char::CharDevice},
 };
 
 use super::*;

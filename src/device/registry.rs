@@ -16,7 +16,7 @@ use crate::{
         error::{EResult, Errno},
         log::LogLevel,
     },
-    dev2::probe,
+    device::probe,
     kernel::sync::mutex::{Mutex, SharedMutexGuard},
     util::id_alloc::IdAlloc,
 };

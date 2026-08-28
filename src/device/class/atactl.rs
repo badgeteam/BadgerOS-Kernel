@@ -4,7 +4,7 @@
 
 use crate::{
     bindings::error::EResult,
-    dev2::{Device, bus::ata::Command},
+    device::{Device, bus::ata::Command},
     mem::dma::DmaTarget,
 };
 

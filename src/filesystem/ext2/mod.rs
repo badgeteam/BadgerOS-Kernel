@@ -22,7 +22,7 @@ use crate::{
     LogLevel,
     badgelib::time::Timespec,
     bindings::error::{EResult, Errno},
-    dev2::Device,
+    device::Device,
     filesystem::mount,
     kernel::sync::mutex::Mutex,
     process::usercopy::{UserSlice, UserSliceMut},

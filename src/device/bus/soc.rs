@@ -20,7 +20,7 @@ use crate::{
         log::LogLevel,
     },
     config::PAGE_SIZE,
-    dev2::{Device, bus::Bus, class::irqctl::IrqCtlDevice},
+    device::{Device, bus::Bus, class::irqctl::IrqCtlDevice},
     mem::{
         pmm::PAddrr,
         vmm::{
@@ -34,7 +34,7 @@ use crate::{
 #[cfg(feature = "dtb")]
 use crate::{
     cpu::PhysCpuID,
-    dev2::{self, dtb::DeviceNode, registry},
+    device::{self, dtb::DeviceNode, registry},
     kernel::smp,
 };
 
@@ -243,10 +243,10 @@ impl Display for SocBus {
 
 #[cfg(feature = "dtb")]
 impl SocBus {
-    /// Bus factory for [`dev2::dtb::probe()`] the generates [`SocBus`] instances.
+    /// Bus factory for [`device::dtb::probe()`] the generates [`SocBus`] instances.
     pub unsafe fn factory(node: DeviceNode) -> EResult<Arc<dyn Bus>> {
         fn get_parent(node: &'static DtbNode) -> EResult<Option<SocIrqParent>> {
-            let cpus = dev2::dtb::get().node("cpus").unwrap();
+            let cpus = device::dtb::get().node("cpus").unwrap();
 
             if let Some(cpu) = node.parent()
                 && let Some(cpu_parent) = cpu.parent()
@@ -260,7 +260,7 @@ impl SocBus {
                     // Non-usable CPU; ignored.
                     Ok(None)
                 }
-            } else if let Some(irq_bus) = dev2::registry::bus_by_node(node) {
+            } else if let Some(irq_bus) = device::registry::bus_by_node(node) {
                 // This node is a DTB device.
                 if let Some(device) = irq_bus.owner() {
                     if let Some(irqctl) = device.try_as_arc() {

@@ -20,7 +20,7 @@ use crate::{
     },
     config::PAGE_SIZE,
     cpu,
-    dev2::{Device, class::block::BlockDevice},
+    device::{Device, class::block::BlockDevice},
     filesystem::mount,
     kernel::sync::mutex::Mutex,
     process::usercopy::{UserSlice, UserSliceMut},

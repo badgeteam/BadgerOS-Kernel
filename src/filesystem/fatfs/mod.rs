@@ -13,7 +13,7 @@ use crate::{
         utf8::{StaticString, StringLike},
     },
     bindings::error::{EResult, Errno},
-    dev2::Device,
+    device::Device,
     filesystem::{fatfs::spec::attr2, vfs::vnflags},
     kernel::sync::mutex::Mutex,
     mem::vmm::zeroes,

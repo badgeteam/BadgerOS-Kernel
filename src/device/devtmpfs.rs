@@ -9,7 +9,7 @@ use crate::{
         error::{EResult, Errno},
         log::LogLevel,
     },
-    dev2::class::block::BlockDevice,
+    device::class::block::BlockDevice,
     filesystem::{
         File, MakeFileSpec, VfsLoc, make_file,
         mount::{self, Mount},

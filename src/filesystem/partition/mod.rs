@@ -2,7 +2,7 @@ use alloc::{boxed::Box, string::String, vec::Vec};
 use uuid::Uuid;
 
 use crate::{
-    bindings::error::EResult, dev2::class::block::BlockDevice, kernel::sync::mutex::Mutex,
+    bindings::error::EResult, device::class::block::BlockDevice, kernel::sync::mutex::Mutex,
 };
 
 pub mod gpt;

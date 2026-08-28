@@ -24,7 +24,7 @@ use crate::{
         self, PhysCpuID,
         spinup::{arch_cpu_spinup, limine_trampoline_1},
     },
-    dev2::class::irqctl::IrqCtlDevice,
+    device::class::irqctl::IrqCtlDevice,
     kernel::{
         cpulocal::CpuLocal,
         sched::{Scheduler, thread_yield},
@@ -102,7 +102,7 @@ static mut SMP_REQ: limine_smp_request = limine_smp_request {
 
 /// Initialize the SMP subsystem from DTB.
 #[cfg(feature = "dtb")]
-pub fn init_dtb2(cpus_node: &dtb::DtbNode) {
+pub fn init_dtb(cpus_node: &dtb::DtbNode) {
     let bsp_cpuid: PhysCpuID;
     unsafe {
         if SMP_REQ.response.is_null() {
@@ -122,7 +122,7 @@ pub fn init_dtb2(cpus_node: &dtb::DtbNode) {
     let mut smp_counter = 1u32;
     for cpu in cpus_node.nodes.values() {
         let _ = try {
-            let features = cpu::dtb::is_usable2(cpu)?;
+            let features = cpu::dtb::is_usable(cpu)?;
             let cpuid: PhysCpuID = cpu.prop_uint("reg")? as PhysCpuID;
 
             let smp_index: u32;
@@ -168,15 +168,15 @@ pub fn by_phys_id(cpuid: PhysCpuID) -> Option<u32> {
     SMP_MAPS.unintr_lock().by_cpuid.get(&cpuid).cloned()
 }
 
-/// Attach a dev2 external interrupt controller (e.g. a PLIC context) to a hart.
+/// Attach an external interrupt controller (e.g. a PLIC context) to a hart.
 /// The arch trap handler dispatches external interrupts to all controllers registered here.
 ///
 /// Must be called before the target hart is taking external interrupts from this controller.
 pub fn register_ext_irqctl(smp_index: u32, ctl: Arc<dyn IrqCtlDevice>) -> EResult<()> {
     let mut maps = SMP_MAPS.unintr_lock();
     let status = maps.by_index.get_mut(&smp_index).ok_or(Errno::ENOENT)?;
-    status.cpulocal.dev2_ext_irqctls.try_reserve(1)?;
-    status.cpulocal.dev2_ext_irqctls.push(ctl);
+    status.cpulocal.ext_irqctls.try_reserve(1)?;
+    status.cpulocal.ext_irqctls.push(ctl);
     Ok(())
 }
 

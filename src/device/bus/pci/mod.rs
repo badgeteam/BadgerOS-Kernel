@@ -15,7 +15,7 @@ use crate::{
         error::{EResult, Errno},
         log::LogLevel,
     },
-    dev2::{Device, class::pcictl::PciCtlDevice},
+    device::{Device, class::pcictl::PciCtlDevice},
 };
 
 use super::{Bus, BusBase};

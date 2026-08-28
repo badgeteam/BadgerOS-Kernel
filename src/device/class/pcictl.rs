@@ -4,7 +4,7 @@
 
 use crate::{
     bindings::{error::EResult, log::LogLevel},
-    dev2::{
+    device::{
         Device,
         bus::{
             Bus,

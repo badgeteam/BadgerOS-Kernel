@@ -14,7 +14,7 @@ use crate::{
         error::{EResult, Errno},
         log::LogLevel,
     },
-    dev2::{Device, class::block::BlockDevice, devtmpfs},
+    device::{Device, class::block::BlockDevice, devtmpfs},
     filesystem::{
         self, DentCache, DentCacheDir, DentCacheType, Dirent, File, InodeType, VfsLoc,
         media::Media,

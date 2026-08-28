@@ -38,7 +38,7 @@ use crate::{
     },
     config::STACK_SIZE,
     cpu::{thread::GpRegfile, usermode::call_usermode},
-    dev2::{self, class::char::CharDevice},
+    device::{self, class::char::CharDevice},
     filesystem::{self, File, SeekMode, device::CharDevFile, mode, oflags},
     kernel::{
         sched::Thread,
@@ -406,7 +406,7 @@ impl Process {
             return Ok(());
         }
 
-        let serial_devs = dev2::registry::devices_by_trait::<dyn CharDevice>()?;
+        let serial_devs = device::registry::devices_by_trait::<dyn CharDevice>()?;
         let mut stdio_dev = None;
         for dev in serial_devs {
             if dev.is_tty() {
@@ -415,7 +415,7 @@ impl Process {
             }
         }
 
-        let stdio_dev = stdio_dev.unwrap_or_else(|| dev2::void::null_instance());
+        let stdio_dev = stdio_dev.unwrap_or_else(|| device::void::null_instance());
         let wfile = Arc::try_new(CharDevFile::new(
             None,
             stdio_dev.clone(),

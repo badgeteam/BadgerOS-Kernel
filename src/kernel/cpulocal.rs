@@ -8,7 +8,7 @@ use alloc::{sync::Arc, vec::Vec};
 
 use crate::{
     cpu::{CpuFeatures, PhysCpuID, cpulocal::ArchCpuLocal},
-    dev2::class::irqctl::IrqCtlDevice,
+    device::class::irqctl::IrqCtlDevice,
     kernel::sched::{Scheduler, Thread},
 };
 
@@ -29,7 +29,7 @@ pub struct CpuLocal {
     pub thread: Option<Arc<Thread>>,
     /// This CPU's scheduler.
     pub sched: Option<Scheduler>,
-    /// dev2 external interrupt controllers attached to this hart (e.g. PLIC contexts).
+    /// External interrupt controllers attached to this hart (e.g. PLIC contexts).
     /// Dispatched by the arch trap handler for external (and software) interrupts.
-    pub dev2_ext_irqctls: Vec<Arc<dyn IrqCtlDevice>>,
+    pub ext_irqctls: Vec<Arc<dyn IrqCtlDevice>>,
 }

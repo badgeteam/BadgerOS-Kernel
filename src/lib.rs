@@ -52,8 +52,8 @@ pub mod filesystem;
 pub mod misc;
 #[macro_use]
 pub mod ktest;
-pub mod dev2;
-pub mod driver2;
+pub mod device;
+pub mod driver;
 pub mod kernel;
 pub mod mem;
 pub mod process;

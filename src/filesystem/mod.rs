@@ -20,7 +20,7 @@ use crate::{
     LogLevel,
     badgelib::time::Timespec,
     bindings::error::{EResult, Errno},
-    dev2::{Device, class::block::BlockDevice},
+    device::{Device, class::block::BlockDevice},
     filesystem::{
         fifo::{Fifo, FifoShared},
         mount::{Mount, MountTable, root_loc_unlocked},

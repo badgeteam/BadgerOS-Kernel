@@ -8,7 +8,7 @@ use crate::{
     badgelib::irq::IrqGuard,
     bindings::{error::EResult, log::LogLevel},
     cpu::irq,
-    dev2::Device,
+    device::Device,
     kernel::sync::spinlock::Spinlock,
 };
 

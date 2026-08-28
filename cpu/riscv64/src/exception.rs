@@ -143,7 +143,7 @@ unsafe fn riscv_exception_handler_impl(regs: &mut GpRegfile, sregs: &mut SpRegfi
             let cause = (sregs.scause as usize & 0xff) as u128;
             let cpulocal = &*CpuLocal::get();
             let mut handled = false;
-            for ctl in &cpulocal.dev2_ext_irqctls {
+            for ctl in &cpulocal.ext_irqctls {
                 handled |= ctl.interrupt(cause);
             }
             if !handled {

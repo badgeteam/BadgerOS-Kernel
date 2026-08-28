@@ -11,7 +11,7 @@ use crate::{
         error::{EResult, Errno},
         log::LogLevel,
     },
-    dev2::{Device, DeviceBase, registry},
+    device::{Device, DeviceBase, registry},
     device_get_trait_vtable,
     filesystem::partition::{VolumeInfo, get_volume_info},
     kernel::sync::mutex::{Mutex, MutexGuard, SharedMutexGuard},

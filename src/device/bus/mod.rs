@@ -19,7 +19,7 @@ use crate::{
         error::{EResult, Errno},
         raw::timestamp_us_t,
     },
-    dev2::Device,
+    device::Device,
     kernel::sync::{mutex::Mutex, waitlist::Waitlist},
 };
 

@@ -9,7 +9,7 @@ use crate::{
         error::{EResult, Errno},
         log::LogLevel,
     },
-    dev2::{
+    device::{
         self, Device, DeviceBase,
         bus::{
             Bus, BusResv,
@@ -242,7 +242,7 @@ impl Driver for PciGenericDriver {
         let bus_start = bus_range_prop.read_cell(0).unwrap() as u8;
         let bus_end = bus_range_prop.read_cell(1).unwrap() as u8;
 
-        let ranges = dev2::dtb::parse_ranges(node)?
+        let ranges = device::dtb::parse_ranges(node)?
             .iter()
             .map(|x| PciBarRange {
                 pci_paddr: x.child_addr.into(),

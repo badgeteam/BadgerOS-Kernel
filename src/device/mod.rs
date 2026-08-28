@@ -44,11 +44,11 @@ impl DevDynMetadata {
 macro_rules! device_get_trait_vtable {
     ($($traits: path), *) => {
         #[allow(unused)]
-        fn get_trait_vtable(&self, trait_: core::any::TypeId) -> Option<crate::dev2::DevDynMetadata> {
+        fn get_trait_vtable(&self, trait_: core::any::TypeId) -> Option<crate::device::DevDynMetadata> {
             $(
                 if core::any::TypeId::of::<dyn $traits>() == trait_ {
                     unsafe {
-                        return Some(crate::dev2::DevDynMetadata::new::<dyn $traits>(self));
+                        return Some(crate::device::DevDynMetadata::new::<dyn $traits>(self));
                     }
                 }
             )*

@@ -4,7 +4,7 @@
 
 //! Driver for the RISC-V Platform-Level Interrupt Controller (PLIC).
 //!
-//! The PLIC is a dev2 [`IrqCtlDevice`]: external interrupts (cause 9) are dispatched to
+//! The PLIC is an [`IrqCtlDevice`]: external interrupts (cause 9) are dispatched to
 //! it by the arch root, it claims/completes from the current hart's context, and forwards
 //! the claimed source to the leaf device's handler. CLINT (timer/IPI) is arch-managed and
 //! never reaches here. More than one PLIC may exist; each owns its harts' contexts.
@@ -18,7 +18,7 @@ use crate::{
         error::{EResult, Errno},
         log::LogLevel,
     },
-    dev2::{
+    device::{
         Device, DeviceBase,
         bus::{
             Bus, BusResv,
@@ -149,7 +149,7 @@ impl Display for RiscvPlic {
     }
 }
 
-/// The PLIC driver, registered into the dev2 driver table.
+/// The PLIC driver, registered into the driver table.
 pub struct RiscvPlicDriver;
 
 impl Driver for RiscvPlicDriver {

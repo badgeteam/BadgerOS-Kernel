@@ -77,7 +77,7 @@ pub extern "C" fn time_ns() -> u64 {
 
 /// Inititalize CPU-local timers from DTB.
 #[cfg(feature = "dtb")]
-pub fn init_dtb2(cpus_node: &dtb::DtbNode) {
+pub fn init_dtb(cpus_node: &dtb::DtbNode) {
     let timebase_freq = cpus_node
         .prop("timebase-frequency")
         .expect("Missing DTB prop /cpus/timebase-frequency");

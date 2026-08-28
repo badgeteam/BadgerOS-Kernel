@@ -3,7 +3,7 @@ use num::traits::{FromBytes, ToBytes};
 
 use crate::{
     bindings::error::{EResult, Errno},
-    dev2::class::block::BlockDevice,
+    device::class::block::BlockDevice,
     mem::dma::DmaTarget,
     process::usercopy::{UserSlice, UserSliceMut},
 };

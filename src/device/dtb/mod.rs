@@ -13,7 +13,7 @@ use crate::{
         log::LogLevel,
     },
     cpu,
-    dev2::{probe, registry},
+    device::{probe, registry},
     kernel::{self},
     misc::kparam,
 };
@@ -301,9 +301,9 @@ pub unsafe fn init(fdt: *const FdtHeader) {
     let cpus = dtb.root().nodes.get("cpus").expect("Missing DTB /cpus");
 
     // Set up the CPU-local timers.
-    cpu::timer::init_dtb2(cpus);
+    cpu::timer::init_dtb(cpus);
     // Discover CPUs; this sets up the per-hart CpuLocal state used for interrupt routing.
-    kernel::smp::init_dtb2(cpus);
+    kernel::smp::init_dtb(cpus);
 
     // Devices under /proc are probed first, any nested devices are to be recursively probed by appropriate drivers.
     unsafe {

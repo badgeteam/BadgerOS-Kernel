@@ -8,7 +8,7 @@ use alloc::{sync::Arc, vec::Vec};
 
 use crate::{
     bindings::error::EResult,
-    dev2::{Device, DeviceBase, class::char::CharDevice, registry},
+    device::{Device, DeviceBase, class::char::CharDevice, registry},
     device_get_trait_vtable,
     filesystem::poll,
     kernel::sync::waitlist::Waitlist,

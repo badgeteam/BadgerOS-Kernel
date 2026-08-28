@@ -17,7 +17,7 @@ use crate::{
         irq::IrqGuard,
     },
     bindings::error::EResult,
-    dev2::{
+    device::{
         Device, DeviceBase,
         bus::{
             Bus, BusResv,
@@ -288,7 +288,7 @@ impl Display for Ns16550 {
     }
 }
 
-/// The NS16550A driver, registered into the dev2 driver table.
+/// The NS16550A driver, registered into the driver table.
 pub struct Ns16550Driver;
 
 impl Driver for Ns16550Driver {

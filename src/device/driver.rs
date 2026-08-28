@@ -6,7 +6,7 @@ use alloc::sync::Arc;
 
 use crate::{
     bindings::error::EResult,
-    dev2::{
+    device::{
         Device,
         bus::{Bus, BusResv},
     },

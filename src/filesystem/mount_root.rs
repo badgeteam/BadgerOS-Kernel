@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::{
     LogLevel,
     cpu::timer::time_us,
-    dev2::{Device, class::block::BlockDevice, devtmpfs, registry},
+    device::{Device, class::block::BlockDevice, devtmpfs, registry},
     kernel::sched::thread_sleep,
     misc::kparam,
     util,
