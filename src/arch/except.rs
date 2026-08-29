@@ -6,7 +6,7 @@ pub trait ArchExcept {
     type TrapFrame: ArchTrapFrame;
 
     /// Get frame pointer for backtraces.
-    fn caller_frame_ptr() -> *const ();
+    extern "C" fn caller_frame_ptr() -> *const ();
 
     /// Enable interrupts.
     fn enable_irq();
@@ -39,7 +39,7 @@ pub const trait ArchTrapFrame {
     /// Trap is from kernel mode.
     fn is_kernel_mode(&self) -> bool;
     /// Trap cause.
-    fn get_cause(&self) -> TrapCause;
+    fn get_cause(&self) -> (Option<TrapCause>, usize);
     /// Trapping instruction address.
     fn get_pc(&self) -> *const ();
     /// Backtrace frame pointer; null if not available.
