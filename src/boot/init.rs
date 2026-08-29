@@ -5,12 +5,15 @@
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
 use crate::{
+    arch::{
+        Arch,
+        kcore::{cpulocal::ArchCpuLocal, sched::ArchSched},
+    },
     bindings::{
         log::{LogLevel, logk_unlocked},
         raw::kernel_heap_init,
     },
     boot::protocol,
-    cpu::{self, spinup::arch_cpu_spinup},
     device,
     filesystem::mount_root::mount_root_fs,
     kcore::{
@@ -32,8 +35,8 @@ unsafe extern "C" fn basic_runtime_init() -> ! {
     unsafe {
         // Temporary CPU-local data in case an exception occurs before MM is up.
         let mut tmp_cpulocal = CpuLocal::default();
-        CpuLocal::set(&raw mut tmp_cpulocal);
-        arch_cpu_spinup();
+        Arch::set_cpulocal(&raw mut tmp_cpulocal);
+        Arch::cpu_spinup();
         ktests_runlevel(KTestWhen::Early);
 
         // Early hand-over from bootloader to kernel.
@@ -56,7 +59,7 @@ unsafe extern "C" fn basic_runtime_init() -> ! {
 
         // Move the CPU-local data onto the heap.
         let cpulocal = Box::into_raw(Box::new(tmp_cpulocal));
-        CpuLocal::set(cpulocal);
+        Arch::set_cpulocal(cpulocal);
 
         // Do the remainder of initialization with scheduler up.
         (*cpulocal).sched = Some(Scheduler::new().expect("Failed to prepare scheduler"));
@@ -81,7 +84,7 @@ unsafe fn general_init() {
         device::init();
 
         // Scheduler is already running on BSP so we start the tick timer retroactively for it.
-        cpu::timer::start_tick_timer();
+        // cpu::timer::start_tick_timer();
 
         // Bring up APs.
         // smp_ok = match smp::poweron_all_aps() {

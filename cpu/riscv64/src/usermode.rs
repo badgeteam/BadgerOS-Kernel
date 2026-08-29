@@ -112,7 +112,7 @@ pub fn call_usermode(regs: &GpRegfile) {
         assert!(uctx.pc == 0, "Cannot recursively call into usermode");
         irq::disable();
 
-        let cpulocal = &mut *CpuLocal::get();
+        let cpulocal = &mut *Arch::get_cpulocal();
         let runtime = (&*Thread::current()).runtime();
         enter_usermode_asm(
             regs,

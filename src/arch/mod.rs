@@ -5,11 +5,13 @@ pub type Arch = riscv64::Riscv;
 
 pub mod except;
 pub mod kcore;
+pub mod misc;
+pub mod mmu;
 pub mod usermode;
 
 /// Trait through which architecture code is implemented.
 pub const trait ArchTrait:
-    kcore::ArchKCore + usermode::ArchUsermode + except::ArchExcept
+    except::ArchExcept + kcore::ArchKCore + misc::ArchMisc + mmu::ArchMMU + usermode::ArchUsermode
 {
     const NAME: &'static str;
 }

@@ -8,11 +8,11 @@ use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use dtb::{Dtb, DtbNode, DtbProp, spec::FdtHeader};
 
 use crate::{
+    arch::{Arch, kcore::timer::ArchTimer},
     bindings::{
         error::{EResult, Errno},
         log::LogLevel,
     },
-    cpu,
     device::{probe, registry},
     kcore::{self},
     misc::kparam,
@@ -301,7 +301,7 @@ pub unsafe fn init(fdt: *const FdtHeader) {
     let cpus = dtb.root().nodes.get("cpus").expect("Missing DTB /cpus");
 
     // Set up the CPU-local timers.
-    cpu::timer::init_dtb(cpus);
+    Arch::timer_init_dtb(cpus);
     // Discover CPUs; this sets up the per-hart CpuLocal state used for interrupt routing.
     kcore::smp::init_dtb(cpus);
 

@@ -13,13 +13,15 @@ use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc, vec::Vec};
 
 use crate::{
     LogLevel,
-    badgelib::time::{AtomicTimespec, Timespec},
+    badgelib::{
+        irq::IrqGuard,
+        time::{AtomicTimespec, Timespec},
+    },
     bindings::{
         error::{EResult, Errno},
         spinlock::Spinlock,
     },
     config::PAGE_SIZE,
-    cpu,
     device::{Device, class::block::BlockDevice},
     filesystem::mount,
     kcore::sync::mutex::Mutex,
@@ -354,12 +356,12 @@ impl VNodeOps for RamVNode {
         }
 
         // Pop refcount.
-        assert!(unsafe { cpu::irq::disable() });
+        let noirq = IrqGuard::new();
         let mut link_guard = ino.links.lock();
         let prev_links = *link_guard;
         *link_guard -= 1;
         drop(link_guard);
-        unsafe { cpu::irq::enable() };
+        drop(noirq);
 
         if prev_links == 1 {
             // Last link removed.
@@ -386,7 +388,7 @@ impl VNodeOps for RamVNode {
             .ok_or(Errno::EIO)?;
 
         let ram_inode = unsafe { ram_inode.as_mut_unchecked() };
-        assert!(unsafe { cpu::irq::disable() });
+        let noirq = IrqGuard::new();
         let link_res = {
             let mut links = ram_inode.links.lock();
             assert!(*links > 0);
@@ -397,7 +399,7 @@ impl VNodeOps for RamVNode {
                 Ok(())
             }
         };
-        unsafe { cpu::irq::enable() };
+        drop(noirq);
         link_res?;
 
         directory.insert(
@@ -505,9 +507,9 @@ impl VNodeOps for RamVNode {
     fn stat(&self, vnode_self: &VNode) -> EResult<Stat> {
         let inode = unsafe { self.inode.as_ref_unchecked() };
         let size = inode.size.load(Ordering::Relaxed);
-        assert!(unsafe { cpu::irq::disable() });
+        let noirq = IrqGuard::new();
         let nlink = *inode.links.lock_shared();
-        unsafe { cpu::irq::enable() };
+        drop(noirq);
         Ok(Stat {
             dev: 0,
             ino: 0,

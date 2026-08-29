@@ -13,7 +13,6 @@ use crate::{
         raw::timestamp_us_t,
         spinlock::Spinlock,
     },
-    cpu::irq,
     filesystem::VfsLoc,
     kcore::sync::{mutex::Mutex, waitlist::Waitlist},
     process::usercopy::{UserSlice, UserSliceMut},
@@ -54,7 +53,7 @@ impl FifoShared {
     /// Handle a file open on a FIFO.
     pub(super) fn open(&self, nonblock: bool, is_read: bool, is_write: bool) -> EResult<()> {
         assert!(is_read || is_write);
-        assert!(unsafe { irq::disable() });
+        let _guard = IrqGuard::new();
         let nonblock = nonblock || (is_read && is_write);
 
         if is_read {
@@ -98,7 +97,7 @@ impl FifoShared {
                     self.write_count.fetch_sub(1, Ordering::Relaxed);
                 }
                 drop(taken_lock);
-                unsafe { irq::enable() };
+
                 return Err(x);
             }
 
@@ -117,8 +116,6 @@ impl FifoShared {
 
         // Wake writers on the fifo.
         self.write_queue.notify();
-
-        unsafe { irq::enable() };
 
         Ok(())
     }

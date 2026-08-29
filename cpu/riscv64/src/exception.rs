@@ -91,7 +91,7 @@ unsafe fn read_insn_word(sregs: &mut SpRegfile) -> u32 {
 pub unsafe extern "C" fn riscv_exception_handler(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
     unsafe {
         // Ensure that recursive traps and/or interrupts use the current SP.
-        let cpulocal = CpuLocal::get();
+        let cpulocal = Arch::get_cpulocal();
         let old_irq_stack = (*cpulocal).arch.irq_stack;
         (*cpulocal).arch.irq_stack = null_mut();
         if let Some(thread) = (*cpulocal).thread.as_deref() {
@@ -141,7 +141,7 @@ unsafe fn riscv_exception_handler_impl(regs: &mut GpRegfile, sregs: &mut SpRegfi
         unsafe {
             // Low cause bits: 1 = supervisor software, 9 = supervisor external.
             let cause = (sregs.scause as usize & 0xff) as u128;
-            let cpulocal = &*CpuLocal::get();
+            let cpulocal = &*Arch::get_cpulocal();
             let mut handled = false;
             for ctl in &cpulocal.ext_irqctls {
                 handled |= ctl.interrupt(cause);

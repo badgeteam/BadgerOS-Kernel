@@ -11,17 +11,21 @@ use core::{
 use alloc::{boxed::Box, collections::linked_list::LinkedList, string::String, sync::Arc};
 
 use crate::{
+    arch::{
+        Arch,
+        except::ArchExcept,
+        kcore::{
+            cpulocal::{ArchCpuLocal, ArchCpuLocalData},
+            sched::ArchSched,
+            timer::ArchTimer,
+        },
+        usermode::ArchUsermode,
+    },
     badgelib::irq::IrqGuard,
     bindings::{error::EResult, raw::timestamp_us_t, time_us},
     config::{self, STACK_SIZE},
-    cpu::{
-        self, irq,
-        thread::{FloatState, context_switch, pause_hint},
-        usermode::ThreadUContext,
-    },
     impl_has_list_node,
     kcore::{
-        cpulocal::CpuLocal,
         smp,
         sync::{
             rcu::RcuCtx,
@@ -74,11 +78,11 @@ pub struct ThreadRuntime {
     /// Stack pointer to use for interrupts.
     pub irq_stack: *mut (),
     /// Context for running in userspace.
-    pub uctx: ThreadUContext,
+    pub uctx: <Arch as ArchUsermode>::KernelRegs,
     /// Timestamp until which to keep the thread blocked.
     pub timeout: timestamp_us_t,
     /// Float and/or vector state.
-    pub fstate: FloatState,
+    pub fstate: <Arch as ArchSched>::FloatState,
     /// Alternate signal stack.
     pub sigaltstack: stack_t,
     /// Masked signals; anything in this set delivered asynchronously will be ignored.
@@ -103,7 +107,10 @@ impl ThreadRuntime {
                 STACK_SIZE as usize / size_of::<usize>(),
             );
 
-            let stack_used = cpu::thread::prepare_entry(&mut *stack, code) * size_of::<usize>();
+            let code = Box::into_raw(code);
+            let meta: *const () = core::mem::transmute(core::ptr::metadata(code));
+            let stack_used =
+                Arch::context_create(&mut *stack, code as *mut (), meta) * size_of::<usize>();
             let stack_ptr = (stack_bottom + STACK_SIZE as usize - stack_used) as *mut ();
 
             fence(Ordering::Release);
@@ -112,9 +119,9 @@ impl ThreadRuntime {
                 irq_stack: null_mut(),
                 stack_bottom,
                 stack_ptr,
-                uctx: ThreadUContext::default(),
+                uctx: <Arch as ArchUsermode>::KernelRegs::default(),
                 timeout: 0,
-                fstate: FloatState::new(),
+                fstate: <Arch as ArchSched>::FloatState::default(),
                 sigaltstack: stack_t::default(),
                 sigprocmask: sigset_t::default(),
                 memmap: null(),
@@ -185,7 +192,7 @@ impl Thread {
                 core::ptr::from_raw_parts_mut(ptr, core::mem::transmute(meta));
             fence(Ordering::Acquire);
             drop(RawSpinlockGuard::from_raw(&(&*sched).queue.inner()));
-            irq::enable();
+            Arch::enable_irq();
             Box::from_raw(code)();
             (*Thread::current()).die();
         }
@@ -223,7 +230,7 @@ impl Thread {
 
         unsafe {
             let _noirq = IrqGuard::new();
-            let cpulocal = &mut *CpuLocal::get();
+            let cpulocal = &mut *Arch::get_cpulocal();
             cpulocal
                 .sched
                 .as_mut()
@@ -247,18 +254,7 @@ impl Thread {
 
     /// Get the currently running thread.
     pub fn current() -> *const Thread {
-        unsafe {
-            let _noirq = IrqGuard::new();
-            let cpulocal = CpuLocal::get();
-            if cpulocal.is_null() {
-                return null_mut();
-            }
-            if let Some(thread) = &(*cpulocal).thread {
-                thread.as_ref() as *const Thread as *mut Thread
-            } else {
-                null_mut()
-            }
-        }
+        Arch::current_thread()
     }
 
     /// Set the STOPPING flag, asking for this thread to be stopped.
@@ -490,7 +486,7 @@ impl Scheduler {
             };
 
             thread_yield();
-            pause_hint();
+            Arch::pause_hint();
         }
     }
 
@@ -498,17 +494,17 @@ impl Scheduler {
     pub unsafe fn exec(&mut self) -> ! {
         RUNNING_SCHED_COUNT.fetch_add(1, Ordering::Relaxed);
         self.rcu.post_start_callback();
-        cpu::timer::start_tick_timer();
+        Arch::start_tick_timer();
         self.sched_yield();
         unreachable!();
     }
 
     /// Yield the current thread's execution.
     fn sched_yield(&mut self) {
-        debug_assert!(!cpu::irq::is_enabled());
+        debug_assert!(!Arch::get_irq_enabled());
         self.rcu.sched_callback();
         unsafe {
-            let cpulocal = &mut *CpuLocal::get();
+            let cpulocal = &mut *Arch::get_cpulocal();
             let mut old = None;
             core::mem::swap(&mut old, &mut cpulocal.thread);
 
@@ -548,12 +544,12 @@ impl Scheduler {
 
             // Context switch into new thread.
             cpulocal.arch.set_irq_stack(runtime.irq_stack);
-            let new_stack = &raw const runtime.stack_ptr;
+            let new_stack = runtime.stack_ptr;
             cpulocal.thread = Some(next);
 
             // The queue cannot be transmitted through this so we will manually unlock it afterward.
             core::mem::forget(queue);
-            let prev = context_switch(self, new_stack, old_stack_out);
+            let prev = Arch::context_switch(self, new_stack, old_stack_out);
             drop(RawSpinlockGuard::from_raw(&(&*prev).queue.inner()))
         }
     }
@@ -579,7 +575,7 @@ impl Scheduler {
     /// Otherwise, it is counted as kernel time.
     pub fn tick_interrupt(&mut self, is_user_time: bool) {
         self.account_time(is_user_time);
-        cpu::timer::start_tick_timer();
+        Arch::start_tick_timer();
         panic::check_for_panic();
 
         // Measure load average.
@@ -598,7 +594,10 @@ impl Scheduler {
     }
 
     pub fn get() -> *mut Self {
-        unsafe { &mut *CpuLocal::get() }.sched.as_mut().unwrap()
+        unsafe { &mut *Arch::get_cpulocal() }
+            .sched
+            .as_mut()
+            .unwrap()
     }
 }
 
@@ -607,7 +606,7 @@ impl Scheduler {
 pub extern "C" fn thread_yield() {
     unsafe {
         let _noirq = IrqGuard::new();
-        if let Some(sched) = (*CpuLocal::get()).sched.as_mut() {
+        if let Some(sched) = (*Arch::get_cpulocal()).sched.as_mut() {
             sched.sched_yield();
         }
     }

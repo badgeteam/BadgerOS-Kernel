@@ -32,7 +32,6 @@ use crate::{
 };
 #[cfg(feature = "dtb")]
 use crate::{
-    cpu::PhysCpuID,
     device::{self, dtb::DeviceNode, registry},
     kcore::smp,
 };
@@ -275,7 +274,9 @@ impl SocBus {
                 && core::ptr::addr_eq(cpu_parent, cpus)
             {
                 // This node is a CPU interrupt controller.
-                let cpuid = cpu.prop_uint("reg").ok_or(Errno::ENOENT)? as PhysCpuID;
+                use crate::arch::{Arch, kcore::smp::ArchSmp};
+
+                let cpuid = cpu.prop_uint("reg").ok_or(Errno::ENOENT)? as <Arch as ArchSmp>::CpuID;
                 if let Some(idx) = smp::by_phys_id(cpuid) {
                     Ok(Some(SocIrqParent::Cpu(idx)))
                 } else {

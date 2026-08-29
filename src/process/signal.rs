@@ -5,11 +5,8 @@
 use core::{ffi::c_void, ptr::null};
 
 use crate::{
+    arch::except::{ArchTrapFrame, TrapFrame},
     bindings::{error::Errno, log::LogLevel},
-    cpu::{
-        thread::{GpRegfile, SpRegfile},
-        usermode::enter_signal,
-    },
     kcore::sched::Thread,
     process::{self, uapi::wait::w_signalled},
 };
@@ -38,15 +35,15 @@ impl Default for Sigtab {
 }
 
 /// Run the handler for a segmentation fault.
-pub fn run_sigsegv_handler(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
+pub fn run_sigsegv_handler(frame: &mut TrapFrame) {
     let v2p = process::current()
         .unwrap()
         .memmap()
-        .virt2phys(sregs.is_mem_trap().unwrap_or(0));
+        .virt2phys(frame.get_addr().unwrap_or(0));
     logkf!(
         LogLevel::Debug,
         "SIGSEGV: 0x{:x}, memory is {:x?}",
-        sregs.is_mem_trap().unwrap_or(0),
+        frame.get_addr().unwrap_or(0),
         v2p
     );
     run_handler(
@@ -56,20 +53,19 @@ pub fn run_sigsegv_handler(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
             si_errno: Errno::EFAULT as i32,
             __si_fields: siginfo::__si_field_union {
                 __sigfault: siginfo::__sigfault_struct {
-                    si_addr: sregs.is_mem_trap().unwrap_or(0) as *mut c_void,
+                    si_addr: frame.get_addr().unwrap_or(0) as *mut c_void,
                     si_addr_lsb: 0,
                     __first: siginfo::__sigfault___first_union { si_pkey: 0 },
                 },
             },
         },
-        regs,
-        sregs,
+        frame,
     );
 }
 
 /// Run the handler for an illegal instruction fault.
-pub fn run_sigill_handler(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
-    logkf!(LogLevel::Debug, "SIGILL: 0x{:x}", sregs.fault_pc());
+pub fn run_sigill_handler(frame: &mut TrapFrame) {
+    logkf!(LogLevel::Debug, "SIGILL: 0x{:x}", frame.get_pc() as usize);
     run_handler(
         siginfo_t {
             si_signo: Signal::SIGILL as i32,
@@ -77,20 +73,19 @@ pub fn run_sigill_handler(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
             si_errno: Errno::EFAULT as i32,
             __si_fields: siginfo::__si_field_union {
                 __sigfault: siginfo::__sigfault_struct {
-                    si_addr: sregs.fault_pc() as *mut c_void,
+                    si_addr: frame.get_pc() as *mut c_void,
                     si_addr_lsb: 0,
                     __first: siginfo::__sigfault___first_union { si_pkey: 0 },
                 },
             },
         },
-        regs,
-        sregs,
+        frame,
     );
 }
 
 /// Run the handler for a breakpoint trap.
-pub fn run_sigtrap_handler(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
-    logkf!(LogLevel::Debug, "SIGTRAP: 0x{:x}", sregs.fault_pc());
+pub fn run_sigtrap_handler(frame: &mut TrapFrame) {
+    logkf!(LogLevel::Debug, "SIGTRAP: 0x{:x}", frame.get_pc() as usize);
     run_handler(
         siginfo_t {
             si_signo: Signal::SIGTRAP as i32,
@@ -98,21 +93,19 @@ pub fn run_sigtrap_handler(regs: &mut GpRegfile, sregs: &mut SpRegfile) {
             si_errno: Errno::EFAULT as i32,
             __si_fields: siginfo::__si_field_union {
                 __sigfault: siginfo::__sigfault_struct {
-                    si_addr: sregs.fault_pc() as *mut c_void,
+                    si_addr: frame.get_pc() as *mut c_void,
                     si_addr_lsb: 0,
                     __first: siginfo::__sigfault___first_union { si_pkey: 0 },
                 },
             },
         },
-        regs,
-        sregs,
+        frame,
     );
 }
 
 /// Run the handler for some signal.
-pub fn run_handler(siginfo: siginfo_t, regs: &mut GpRegfile, sregs: &mut SpRegfile) {
-    logkf!(LogLevel::Debug, "regs:\n{}", regs);
-    logkf!(LogLevel::Debug, "sregs:\n{}", sregs);
+pub fn run_handler(siginfo: siginfo_t, frame: &mut TrapFrame) {
+    logkf!(LogLevel::Debug, "frame:\n{}", frame);
     if siginfo.si_signo == Signal::SIGKILL as i32 {
         // SIGKILL always kills the process; installing a handler does nothing.
         signal_die(siginfo.si_signo);
@@ -153,11 +146,12 @@ pub fn run_handler(siginfo: siginfo_t, regs: &mut GpRegfile, sregs: &mut SpRegfi
         return;
     }
 
-    let res = unsafe { enter_signal(siginfo, handler as usize, returner, regs, sregs) };
-    if res.is_err() {
-        signal_die(Signal::SIGSEGV as i32);
-        return;
-    }
+    todo!();
+    // let res = unsafe { enter_signal(siginfo, handler as usize, returner, frame, sregs) };
+    // if res.is_err() {
+    //     signal_die(Signal::SIGSEGV as i32);
+    //     return;
+    // }
 
     let runtime = unsafe { (&*Thread::current()).runtime() };
     if (action.sa_flags & SA_NODEFER) == 0 {

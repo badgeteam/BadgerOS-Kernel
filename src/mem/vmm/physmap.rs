@@ -10,23 +10,41 @@ use core::{
 
 use super::*;
 use crate::{
+    arch::{Arch, mmu::ArchMMU},
     badgelib::irq::IrqGuard,
     bindings::{error::EResult, raw::phys_page_free},
     config::PAGE_SIZE,
-    cpu::{
-        self,
-        mmu::{BITS_PER_LEVEL, INVALID_PTE, PackedPTE},
-    },
     mem::pmm::{self, page_struct_base},
 };
 
 pub static mut ASID_BITS: u32 = 0;
 pub static mut PAGING_LEVELS: u32 = 0;
 
-pub const PTE_PER_PAGE: usize = 1 << BITS_PER_LEVEL;
+pub const PTE_PER_PAGE: usize = 1 << Arch::BITS_PER_LEVEL;
 
 pub mod flags {
-    pub use crate::cpu::mmu::flags::*;
+    /// Map memory as executable.
+    pub const R: u32 = 0b0000_0000_0010;
+    /// Map memory as writeable (reads must also be allowed).
+    pub const W: u32 = 0b0000_0000_0100;
+    /// Map memory as executable.
+    pub const X: u32 = 0b0000_0000_1000;
+    /// Map memory as user-accessible.
+    pub const U: u32 = 0b0000_0001_0000;
+    /// Map memory as global (exists in all page ASIDs).
+    pub const G: u32 = 0b0000_0010_0000;
+    /// Page was accessed since this flag was last cleared.
+    pub const A: u32 = 0b0000_0100_0000;
+    /// Page was written since this flag was last cleared.
+    pub const D: u32 = 0b0000_1000_0000;
+
+    /// Enable reference-counting logic in [`PhysMap`].
+    pub const REFCOUNT: u32 = 0b0001_0000_0000;
+
+    /// Map memory as I/O (uncached, no write coalescing).
+    pub const IO: u32 = 0b0100_0000_0000;
+    /// Map memory as uncached write coalescing.
+    pub const NC: u32 = 0b1000_0000_0000;
 
     pub const RW: u32 = R | W;
     pub const RX: u32 = R | X;
@@ -38,7 +56,7 @@ pub mod flags {
 pub struct PTE {
     /// Physical page number that this PTE points to.
     pub ppn: usize,
-    /// Page protection flags, see [`super::flags`].
+    /// Page protection flags, see [`flags`].
     pub flags: u32,
     /// At what level of the page table this PTE is stored.
     pub level: u8,
@@ -96,14 +114,13 @@ impl PhysMap {
                 xchg_pte(
                     self.root,
                     i,
-                    PTE {
+                    Arch::pack_pte(PTE {
                         ppn: paddr / PAGE_SIZE as usize,
-                        flags: mmu::flags::G,
+                        flags: physmap::flags::G,
                         level: PAGING_LEVELS as u8 - 2,
                         valid: true,
                         leaf: false,
-                    }
-                    .pack(),
+                    }),
                 );
             }
         }
@@ -142,7 +159,7 @@ impl PhysMap {
 
             while len > 0 {
                 let level = calc_superpage(paddr, vaddr, len);
-                let max = PAGE_SIZE << (BITS_PER_LEVEL * level as u32);
+                let max = PAGE_SIZE << (Arch::BITS_PER_LEVEL * level as u32);
 
                 self.map_raw_impl(
                     vaddr,
@@ -232,7 +249,7 @@ impl PhysMap {
             loop {
                 let index = get_vpn_index(vaddr, level);
                 let raw_pte = unsafe { read_pte(pgtable_paddr, index) };
-                let pte = PTE::unpack(raw_pte, level);
+                let pte = Arch::unpack_pte(raw_pte, level);
 
                 pgtable_paddr = if !pte.valid {
                     // Create a new level of page table.
@@ -246,14 +263,13 @@ impl PhysMap {
                             pgtable_paddr,
                             index,
                             raw_pte,
-                            PTE {
+                            Arch::pack_pte(PTE {
                                 ppn: paddr / PAGE_SIZE as usize,
                                 flags: global_flag,
                                 valid: true,
                                 leaf: false,
                                 level,
-                            }
-                            .pack(),
+                            }),
                         );
                         if !res {
                             // If the PTE had concurrently changed, try again.
@@ -271,14 +287,13 @@ impl PhysMap {
                             pgtable_paddr,
                             index,
                             raw_pte,
-                            PTE {
+                            Arch::pack_pte(PTE {
                                 ppn: paddr / PAGE_SIZE as usize,
                                 flags: global_flag,
                                 valid: true,
                                 leaf: false,
                                 level,
-                            }
-                            .pack(),
+                            }),
                         );
                         if !ok {
                             // If the PTE had concurrently changed, try again.
@@ -299,8 +314,12 @@ impl PhysMap {
         // Write new PTE.
         let index = get_vpn_index(vaddr, level);
         unsafe {
-            let old = xchg_pte(pgtable_paddr, index, new_pte.map(PTE::pack).unwrap_or(0));
-            Self::cleanup_pte(PTE::unpack(old, level));
+            let old = xchg_pte(
+                pgtable_paddr,
+                index,
+                new_pte.map(Arch::pack_pte).unwrap_or(0),
+            );
+            Self::cleanup_pte(Arch::unpack_pte(old, level));
         }
 
         Ok(())
@@ -354,7 +373,7 @@ impl PhysMap {
         // Descend the page until a leaf is found.
         for level in (0..unsafe { PAGING_LEVELS }).rev() {
             let index = get_vpn_index(vaddr, level as u8);
-            pte = PTE::unpack(unsafe { read_pte(pgtable_paddr, index) }, level as u8);
+            pte = Arch::unpack_pte(unsafe { read_pte(pgtable_paddr, index) }, level as u8);
 
             if level == min_level || !pte.valid && level > 0 {
                 return pte;
@@ -384,7 +403,7 @@ impl PhysMap {
 
         let pte: PTE = self.walk(vaddr);
 
-        let size = (PAGE_SIZE as usize) << (cpu::mmu::BITS_PER_LEVEL * pte.level as u32);
+        let size = (PAGE_SIZE as usize) << (Arch::BITS_PER_LEVEL * pte.level as u32);
         let page_vaddr = vaddr & !(size - 1);
         let page_paddr = pte.ppn * PAGE_SIZE as usize;
         let offset = vaddr - page_vaddr;
@@ -401,8 +420,8 @@ impl PhysMap {
     /// Enable this physical map on this CPU.
     pub unsafe fn enable(&self) {
         unsafe {
-            cpu::mmu::set_page_table(self.root, 0);
-            cpu::mmu::vmem_fence(None, None);
+            Arch::set_page_table(self.root, 0);
+            Arch::vmem_fence(None, None);
         }
     }
 
@@ -410,7 +429,7 @@ impl PhysMap {
     unsafe fn drop_impl(pagetable: PAddrr, entries: Range<usize>, level: u8) {
         unsafe {
             for i in entries {
-                let pte = PTE::unpack(read_pte(pagetable, i), level);
+                let pte = Arch::unpack_pte(read_pte(pagetable, i), level);
                 if !pte.valid {
                     continue;
                 }
@@ -495,35 +514,36 @@ impl Debug for Virt2Phys {
 /// Calculate the maximum superpage order.
 fn calc_superpage(paddr: PAddrr, vaddr: usize, len: usize) -> u8 {
     let align = (paddr | vaddr as usize | len as usize).trailing_zeros() - PAGE_SIZE.ilog2();
-    (align / BITS_PER_LEVEL as u32) as u8
+    (align / Arch::BITS_PER_LEVEL as u32) as u8
 }
 
 /// Get the index in the given page table level for the given virtual address.
 #[inline(always)]
 fn get_vpn_index(vaddr: usize, level: u8) -> usize {
-    (vaddr >> (level as u32 * BITS_PER_LEVEL + PAGE_SIZE.ilog2())) % (1usize << BITS_PER_LEVEL)
+    (vaddr >> (level as u32 * Arch::BITS_PER_LEVEL + PAGE_SIZE.ilog2()))
+        % (1usize << Arch::BITS_PER_LEVEL)
 }
 
 /// Read a PTE without any fencing or flushing.
 #[inline(always)]
-unsafe fn read_pte(pagetable: PAddrr, index: usize) -> PackedPTE {
-    let pte_vaddr = unsafe { HHDM_OFFSET } + pagetable + index * size_of::<PackedPTE>();
-    unsafe { (*(pte_vaddr as *mut Atomic<PackedPTE>)).load(Ordering::Acquire) }
+unsafe fn read_pte(pagetable: PAddrr, index: usize) -> usize {
+    let pte_vaddr = unsafe { HHDM_OFFSET } + pagetable + index * size_of::<usize>();
+    unsafe { (*(pte_vaddr as *mut Atomic<usize>)).load(Ordering::Acquire) }
 }
 
 /// Write a PTE without any fencing or flushing.
 #[inline(always)]
-unsafe fn xchg_pte(pagetable: PAddrr, index: usize, pte: PackedPTE) -> PackedPTE {
-    let pte_vaddr = unsafe { HHDM_OFFSET } + pagetable + index * size_of::<PackedPTE>();
-    unsafe { (*(pte_vaddr as *mut Atomic<PackedPTE>)).swap(pte, Ordering::AcqRel) }
+unsafe fn xchg_pte(pagetable: PAddrr, index: usize, pte: usize) -> usize {
+    let pte_vaddr = unsafe { HHDM_OFFSET } + pagetable + index * size_of::<usize>();
+    unsafe { (*(pte_vaddr as *mut Atomic<usize>)).swap(pte, Ordering::AcqRel) }
 }
 
 /// Compare-exchange a PTE.
 #[inline(always)]
-unsafe fn cmpxchg_pte(pagetable: PAddrr, index: usize, old: PackedPTE, new: PackedPTE) -> bool {
-    let pte_vaddr = unsafe { HHDM_OFFSET } + pagetable + index * size_of::<PackedPTE>();
+unsafe fn cmpxchg_pte(pagetable: PAddrr, index: usize, old: usize, new: usize) -> bool {
+    let pte_vaddr = unsafe { HHDM_OFFSET } + pagetable + index * size_of::<usize>();
     unsafe {
-        (*(pte_vaddr as *mut Atomic<PackedPTE>))
+        (*(pte_vaddr as *mut Atomic<usize>))
             .compare_exchange_weak(old, new, Ordering::AcqRel, Ordering::Relaxed)
             .is_ok()
     }
@@ -532,8 +552,8 @@ unsafe fn cmpxchg_pte(pagetable: PAddrr, index: usize, old: PackedPTE, new: Pack
 /// Try to allocate a new page table page.
 fn alloc_pgtable_page() -> EResult<PAddrr> {
     let ppn = unsafe { pmm::page_alloc(0, pmm::PageUsage::PageTable) }?;
-    for i in 0..1usize << BITS_PER_LEVEL {
-        unsafe { xchg_pte(ppn, i, INVALID_PTE) };
+    for i in 0..1usize << Arch::BITS_PER_LEVEL {
+        unsafe { xchg_pte(ppn, i, Arch::INVALID_PTE) };
     }
     Ok(ppn)
 }
@@ -543,17 +563,16 @@ fn split_pgtable_leaf(orig: PTE, new_level: u8) -> EResult<PAddrr> {
     debug_assert!(orig.leaf && orig.valid);
     let ppn = unsafe { pmm::page_alloc(0, pmm::PageUsage::PageTable) }?;
 
-    for i in 0..1usize << BITS_PER_LEVEL {
+    for i in 0..1usize << Arch::BITS_PER_LEVEL {
         unsafe {
             xchg_pte(
                 ppn,
                 i,
-                PTE {
-                    ppn: orig.ppn + (i << (new_level as u32 * BITS_PER_LEVEL)),
+                Arch::pack_pte(PTE {
+                    ppn: orig.ppn + (i << (new_level as u32 * Arch::BITS_PER_LEVEL)),
                     level: new_level,
                     ..orig
-                }
-                .pack(),
+                }),
             )
         };
     }
@@ -564,7 +583,7 @@ fn split_pgtable_leaf(orig: PTE, new_level: u8) -> EResult<PAddrr> {
 /// Determine whether an address is canonical.
 pub fn is_canon_addr(addr: usize) -> bool {
     let addr = addr as isize;
-    let exp = usize::BITS - PAGE_SIZE.ilog2() - BITS_PER_LEVEL * unsafe { PAGING_LEVELS };
+    let exp = usize::BITS - PAGE_SIZE.ilog2() - Arch::BITS_PER_LEVEL * unsafe { PAGING_LEVELS };
     let canon_addr = (addr << exp) >> exp;
     canon_addr == addr
 }
@@ -598,7 +617,7 @@ pub fn is_canon_user_range(range: Range<usize>) -> bool {
 pub fn is_canon_page(addr: usize) -> bool {
     // The upper (usually 12) bits of a VPN are ignored because a VPN is actually `usize::BITS - PAGE_SIZE.ilog2()` bits.
     let addr = (addr as isize) << PAGE_SIZE.ilog2() >> PAGE_SIZE.ilog2();
-    let exp = usize::BITS - BITS_PER_LEVEL * unsafe { PAGING_LEVELS };
+    let exp = usize::BITS - Arch::BITS_PER_LEVEL * unsafe { PAGING_LEVELS };
     let canon_page = (addr << exp) >> exp;
     canon_page == addr
 }
@@ -630,12 +649,12 @@ pub fn is_canon_user_page_range(range: Range<usize>) -> bool {
 
 /// Get the size of a "half" of the canonical ranges.
 pub fn canon_half_pages() -> usize {
-    1 << (BITS_PER_LEVEL * unsafe { PAGING_LEVELS } - 1)
+    1 << (Arch::BITS_PER_LEVEL * unsafe { PAGING_LEVELS } - 1)
 }
 
 /// Get the size of a "half" of the canonical ranges.
 pub fn canon_half_size() -> usize {
-    (PAGE_SIZE as usize) << (BITS_PER_LEVEL * unsafe { PAGING_LEVELS } - 1)
+    (PAGE_SIZE as usize) << (Arch::BITS_PER_LEVEL * unsafe { PAGING_LEVELS } - 1)
 }
 
 /// Get the start of the higher half.

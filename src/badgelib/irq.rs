@@ -1,4 +1,4 @@
-use crate::cpu;
+use crate::arch::{Arch, except::ArchExcept};
 
 /// Guard that disable interrupts momentarily.
 pub struct IrqGuard {
@@ -8,13 +8,13 @@ pub struct IrqGuard {
 impl IrqGuard {
     pub fn new() -> Self {
         IrqGuard {
-            was_enabled: unsafe { cpu::irq::disable() },
+            was_enabled: Arch::get_disable_irq(),
         }
     }
 }
 
 impl Drop for IrqGuard {
     fn drop(&mut self) {
-        unsafe { cpu::irq::enable_if(self.was_enabled) };
+        Arch::enable_irq_if(self.was_enabled);
     }
 }

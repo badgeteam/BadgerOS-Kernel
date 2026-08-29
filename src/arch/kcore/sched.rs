@@ -1,9 +1,15 @@
-use crate::kcore::sched::{Scheduler, Thread};
+use crate::{
+    arch::Arch,
+    kcore::sched::{Scheduler, Thread},
+};
 
 /// Scheduler context trait.
 pub trait ArchSched {
     /// Floating-point save-state.
-    type FloatState: Sized + Copy;
+    type FloatState: Default + Sized + Copy;
+
+    /// Do arch-specific CPU initialization.
+    fn cpu_spinup();
 
     /// Get a pointer to the currently running thread, if any.
     fn current_thread() -> *const Thread;
@@ -14,7 +20,7 @@ pub trait ArchSched {
 
     /// Switch between thread contexts.
     /// Passes thru `sched` so that the new thread knows what CPU it's on without checking the CPU-local data.
-    fn context_switch(
+    extern "C" fn context_switch(
         sched: *const Scheduler,
         new_stack: *mut (),
         old_stack_out: *mut *mut (),
@@ -23,3 +29,5 @@ pub trait ArchSched {
     /// CPU pause hint, commonly used for spinning on locks.
     fn pause_hint() {}
 }
+
+pub type FloatState = <Arch as ArchSched>::FloatState;

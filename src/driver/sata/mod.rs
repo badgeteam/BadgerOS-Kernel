@@ -12,7 +12,6 @@ use crate::{
         error::{EResult, Errno},
         log::LogLevel,
     },
-    cpu::timer::time_us,
     device::{
         Device, DeviceBase,
         bus::{
@@ -27,7 +26,7 @@ use crate::{
     },
     device_get_trait_vtable,
     driver::sata::port::Port,
-    kcore::{sched::thread_sleep, sync::spinlock::RawSpinlock},
+    kcore::{sched::thread_sleep, sync::spinlock::RawSpinlock, timer::time_us},
     mem::dma::DmaTarget,
     register_kmodule,
 };

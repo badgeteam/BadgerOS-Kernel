@@ -7,11 +7,8 @@ use core::{ffi::c_char, marker::PhantomData, mem::MaybeUninit, ops::Range, ptr::
 use alloc::{ffi::CString, vec::Vec};
 
 use crate::{
+    arch::{Arch, mmu::ArchMMU, usermode::ArchUsermode},
     bindings::error::{EResult, Errno},
-    cpu::{
-        self,
-        usercopy::{copy_from_user, copy_to_user, fallible_load_u8},
-    },
     mem::vmm::physmap::{is_canon_user_addr, is_canon_user_range},
 };
 
@@ -167,13 +164,12 @@ impl<'a, T: UserCopyable, const MUTABLE: bool> UserSlice<'a, T, MUTABLE> {
             self.len()
         );
         unsafe {
-            cpu::mmu::enable_sum();
             let res = copy_from_user(
                 out.as_ptr() as *mut (),
                 self.ptr.add(index).as_ptr() as *const (),
                 size_of::<T>() * out.len(),
             );
-            cpu::mmu::disable_sum();
+
             res
         }
     }
@@ -188,13 +184,12 @@ impl<'a, T: UserCopyable, const MUTABLE: bool> UserSlice<'a, T, MUTABLE> {
         );
         let mut tmp = MaybeUninit::uninit();
         unsafe {
-            cpu::mmu::enable_sum();
             let res = copy_from_user(
                 &raw mut tmp as *mut (),
                 self.ptr.add(index).as_ptr() as *const (),
                 size_of::<T>(),
             );
-            cpu::mmu::disable_sum();
+
             res.map(|_| tmp.assume_init())
         }
     }
@@ -236,13 +231,12 @@ impl<'a, T: UserCopyable> UserSlice<'a, T, true> {
             self.len()
         );
         unsafe {
-            cpu::mmu::enable_sum();
             let res = copy_to_user(
                 self.ptr.add(index).as_ptr() as *mut (),
                 data.as_ptr() as *const (),
                 size_of::<T>() * data.len(),
             );
-            cpu::mmu::disable_sum();
+
             res
         }
     }
@@ -256,13 +250,12 @@ impl<'a, T: UserCopyable> UserSlice<'a, T, true> {
             self.len()
         );
         unsafe {
-            cpu::mmu::enable_sum();
             let res = copy_to_user(
                 self.ptr.add(index).as_ptr() as *mut (),
                 &raw const data as *const (),
                 size_of::<T>(),
             );
-            cpu::mmu::disable_sum();
+
             res
         }
     }
@@ -270,7 +263,6 @@ impl<'a, T: UserCopyable> UserSlice<'a, T, true> {
     /// Fill this slice with a certain value.
     pub fn fill(&mut self, data: T) -> AccessResult<()> {
         unsafe {
-            cpu::mmu::enable_sum();
             for i in 0..self.length {
                 if copy_to_user(
                     self.ptr.add(i).as_ptr() as *mut (),
@@ -279,11 +271,9 @@ impl<'a, T: UserCopyable> UserSlice<'a, T, true> {
                 )
                 .is_err()
                 {
-                    cpu::mmu::disable_sum();
                     return Err(AccessFault);
                 }
             }
-            cpu::mmu::disable_sum();
         }
         Ok(())
     }
@@ -395,13 +385,12 @@ impl<'a, T: UserCopyable, const MUTABLE: bool> UserPtr<'a, T, MUTABLE> {
     pub fn read(&self) -> AccessResult<T> {
         let mut tmp = MaybeUninit::uninit();
         unsafe {
-            cpu::mmu::enable_sum();
             let res = copy_from_user(
                 &raw mut tmp as *mut (),
                 self.ptr.as_ptr() as *const (),
                 size_of::<T>(),
             );
-            cpu::mmu::disable_sum();
+
             res.map(|_| tmp.assume_init())
         }
     }
@@ -416,13 +405,12 @@ impl<'a, T: UserCopyable> UserPtr<'a, T, true> {
     /// Try to write an element to the slice.
     pub fn write(&mut self, data: T) -> AccessResult<()> {
         unsafe {
-            cpu::mmu::enable_sum();
             let res = copy_to_user(
                 self.ptr.as_ptr() as *mut (),
                 &raw const data as *const (),
                 size_of::<T>(),
             );
-            cpu::mmu::disable_sum();
+
             res
         }
     }
@@ -433,45 +421,83 @@ impl<'a, T: UserCopyable> UserPtr<'a, T, true> {
     }
 }
 
+/// Copy data from kernel to user memory.
+/// # Safety
+/// The caller guarantees that `dest` is a valid kernel address OR that it is entirely in the lower half.
+pub unsafe fn copy_to_user(dest: *mut (), src: *const (), size: usize) -> AccessResult<()> {
+    Arch::enable_sum();
+
+    for i in 0..size {
+        let tmp = unsafe { *(src.wrapping_byte_add(i) as *const u8) };
+        if let Err(x) = Arch::fallible_store_u8(dest.wrapping_byte_add(i) as *mut u8, tmp) {
+            Arch::disable_sum();
+            return Err(x);
+        }
+    }
+
+    Arch::disable_sum();
+    Ok(())
+}
+
+/// Copy data from user to kernel memory.
+/// # Safety
+/// The caller guarantees that `src` is a valid kernel address OR that it is entirely in the lower half.
+pub unsafe fn copy_from_user(dest: *mut (), src: *const (), size: usize) -> AccessResult<()> {
+    Arch::enable_sum();
+
+    for i in 0..size {
+        match Arch::fallible_load_u8(src.wrapping_byte_add(i) as *const u8) {
+            Ok(tmp) => unsafe { *(dest.wrapping_byte_add(i) as *mut u8) = tmp },
+            Err(x) => {
+                Arch::disable_sum();
+                return Err(x);
+            }
+        }
+    }
+
+    Arch::disable_sum();
+    Ok(())
+}
+
 /// Read a C-string from user memory into a preallocated buffer.
 pub fn read_user_cstr(mut user_cstr: *const c_char, buffer: &mut [u8]) -> AccessResult<usize> {
-    unsafe { cpu::mmu::enable_sum() };
+    Arch::enable_sum();
 
     for i in 0..buffer.len() {
         if !is_canon_user_addr(user_cstr as usize) {
-            unsafe { cpu::mmu::disable_sum() };
+            Arch::disable_sum();
             return Err(AccessFault);
         }
-        let c = unsafe { fallible_load_u8(user_cstr as *const u8) };
+        let c = Arch::fallible_load_u8(user_cstr as *const u8);
         if c.is_err() {
-            unsafe { cpu::mmu::disable_sum() };
+            Arch::disable_sum();
         }
         let c = c?;
         if c == 0 {
-            unsafe { cpu::mmu::disable_sum() };
+            Arch::disable_sum();
             return Ok(i);
         }
         buffer[i] = c;
         user_cstr = user_cstr.wrapping_add(1);
     }
 
-    unsafe { cpu::mmu::disable_sum() };
+    Arch::disable_sum();
     return Ok(buffer.len());
 }
 
 /// Read a C-string from user memory into a new [`CString`].
 pub fn copy_user_cstr(mut user_cstr: *const c_char) -> EResult<CString> {
-    unsafe { cpu::mmu::enable_sum() };
+    Arch::enable_sum();
     let mut res = Vec::new();
 
     loop {
         if !is_canon_user_addr(user_cstr as usize) {
-            unsafe { cpu::mmu::disable_sum() };
+            Arch::disable_sum();
             return Err(AccessFault);
         }
-        let c = unsafe { fallible_load_u8(user_cstr as *const u8) };
+        let c = Arch::fallible_load_u8(user_cstr as *const u8);
         if c.is_err() {
-            unsafe { cpu::mmu::disable_sum() };
+            Arch::disable_sum();
         }
         let c = c?;
         if c == 0 {
@@ -482,37 +508,6 @@ pub fn copy_user_cstr(mut user_cstr: *const c_char) -> EResult<CString> {
         user_cstr = user_cstr.wrapping_add(1);
     }
 
-    unsafe { cpu::mmu::disable_sum() };
+    Arch::disable_sum();
     Ok(unsafe { CString::from_vec_unchecked(res) })
-}
-
-mod c_api {
-    use core::ffi::c_void;
-
-    use crate::{
-        bindings::{error::Errno, raw::errno_t},
-        cpu,
-    };
-
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn copy_to_user(
-        dest: *mut c_void,
-        src: *const c_void,
-        size: usize,
-    ) -> errno_t {
-        Errno::extract(unsafe {
-            cpu::usercopy::copy_to_user(dest as *mut (), src as *const (), size)
-        })
-    }
-
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn copy_from_user(
-        dest: *mut c_void,
-        src: *const c_void,
-        size: usize,
-    ) -> errno_t {
-        Errno::extract(unsafe {
-            cpu::usercopy::copy_from_user(dest as *mut (), src as *const (), size)
-        })
-    }
 }

@@ -6,8 +6,6 @@ use core::sync::atomic::Ordering;
 
 use limine::{BaseRevision, RequestsEndMarker, RequestsStartMarker, memmap, request::*};
 
-#[cfg(target_arch = "riscv64")]
-use crate::cpu;
 use crate::{
     bindings::log::{LogLevel, write_unlocked},
     config::PAGE_SIZE,
@@ -33,7 +31,7 @@ static START_MARKER: RequestsStartMarker = RequestsStartMarker::new();
 static END_MARKER: RequestsEndMarker = RequestsEndMarker::new();
 
 #[unsafe(link_section = ".requests")]
-static BASE_REVISION: BaseRevision = BaseRevision::new();
+static BASE_REVISION: BaseRevision = BaseRevision::with_revision(BADGEROS_MIN_BASE_REV);
 
 #[unsafe(link_section = ".requests")]
 static HHDM: HhdmRequest = HhdmRequest::new();
@@ -208,14 +206,14 @@ pub unsafe fn reclaim_mem() {}
 /// Legacy, to be replaced with proper earlycon later on.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bootp_early_putc(c: u8) {
-    #[cfg(target_arch = "riscv64")]
-    {
-        let _ = cpu::sbi::legacy::console_putchar(c);
-    }
-    #[cfg(target_arch = "x86_64")]
-    core::arch::asm! {
-        "out dx, al",
-        in("dx") 0x3f8,
-        in("al") c
+    unsafe {
+        #[cfg(target_arch = "riscv64")]
+        core::arch::asm!("ecall", in("a0") c as isize, in("a7")0x01isize);
+        #[cfg(target_arch = "x86_64")]
+        core::arch::asm! {
+            "out dx, al",
+            in("dx") 0x3f8,
+            in("al") c
+        }
     }
 }

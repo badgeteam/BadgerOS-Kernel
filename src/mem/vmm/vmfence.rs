@@ -4,7 +4,7 @@
 
 use core::ops::Deref;
 
-use crate::cpu;
+use crate::arch::{Arch, mmu::ArchMMU};
 
 /// How many individual fences to perform before a big fence is considered better.
 pub const BIG_FENCE_THRESHOLD: usize = 64;
@@ -28,10 +28,10 @@ impl VmFenceSet {
     /// Execute the fences described in this set.
     pub fn execute(&self) {
         if self.len == BIG_FENCE_THRESHOLD {
-            cpu::mmu::vmem_fence(None, None);
+            Arch::vmem_fence(None, None);
         } else {
             for i in 0..self.len {
-                cpu::mmu::vmem_fence(Some(self.fences[i]), None);
+                Arch::vmem_fence(Some(self.fences[i]), None);
             }
         }
     }

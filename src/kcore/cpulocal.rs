@@ -5,7 +5,10 @@
 use alloc::{sync::Arc, vec::Vec};
 
 use crate::{
-    cpu::{CpuFeatures, PhysCpuID, cpulocal::ArchCpuLocal},
+    arch::{
+        Arch,
+        kcore::{cpulocal::ArchCpuLocal, smp::CpuID},
+    },
     device::class::irqctl::IrqCtlDevice,
     kcore::sched::{Scheduler, Thread},
 };
@@ -17,16 +20,14 @@ use crate::{
 pub struct CpuLocal {
     /// Architecture-specific CPU-local data.
     /// Must be the first member of this struct.
-    pub arch: ArchCpuLocal,
+    pub arch: <Arch as ArchCpuLocal>::CpuLocalData,
     /// Current thread.
     pub thread: Option<Arc<Thread>>,
     /// What CPU ID this processor is.
-    pub cpuid: PhysCpuID,
+    pub cpuid: CpuID,
     /// What SMP index this CPU is.
     pub smp_index: u32,
 
-    /// What features this CPU has.
-    pub features: CpuFeatures,
     /// This CPU's scheduler.
     pub sched: Option<Scheduler>,
     /// External interrupt controllers attached to this CPU (LAPIC, PLIC contexts, etc.).

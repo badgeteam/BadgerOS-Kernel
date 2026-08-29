@@ -1,4 +1,4 @@
-use core::arch::{asm, naked_asm};
+use core::{arch::asm, fmt::Display};
 
 use crate::arch::{
     except::{ArchExcept, ArchSyscallFrame, ArchTrapFrame, TrapCause},
@@ -8,13 +8,8 @@ use crate::arch::{
 use super::Riscv;
 
 impl ArchExcept for Riscv {
-    type SyscallFrame = ExceptFrame;
-    type TrapFrame = ExceptFrame;
-
-    #[unsafe(naked)]
-    extern "C" fn caller_frame_ptr() -> *const () {
-        naked_asm!("mv a0, fp", "ret");
-    }
+    type SyscallFrame = RiscvExceptFrame;
+    type TrapFrame = RiscvExceptFrame;
 
     #[inline(always)]
     fn enable_irq() {
@@ -27,7 +22,7 @@ impl ArchExcept for Riscv {
     }
 
     #[inline(always)]
-    fn get_irq() -> bool {
+    fn get_irq_enabled() -> bool {
         let prev: usize;
         unsafe { asm!("csrr {}, sstatus", out(reg)prev) };
         prev & csr::sstatus::SIE_MASK != 0
@@ -48,7 +43,7 @@ impl ArchExcept for Riscv {
 }
 
 #[repr(C)]
-pub struct ExceptFrame {
+pub struct RiscvExceptFrame {
     // Trapping instruction address.
     pub sepc: *const (),
     // GPRs x1 through x31 in order.
@@ -91,19 +86,68 @@ pub struct ExceptFrame {
     pub stval: usize,
 }
 
-impl ArchSyscallFrame for ExceptFrame {
+impl Display for RiscvExceptFrame {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "  PC  0x{:016x}  RA  0x{:016x}  SP  0x{:016x}  GP  0x{:016x}\n",
+            self.sepc as usize, self.ra, self.sp, self.gp,
+        )?;
+        write!(
+            f,
+            "  TP  0x{:016x}  T0  0x{:016x}  T1  0x{:016x}  T2  0x{:016x}\n",
+            self.tp, self.t0, self.t1, self.t2,
+        )?;
+        write!(
+            f,
+            "  S0  0x{:016x}  S1  0x{:016x}  A0  0x{:016x}  A1  0x{:016x}\n",
+            self.s0, self.s1, self.a0, self.a1,
+        )?;
+        write!(
+            f,
+            "  A2  0x{:016x}  A3  0x{:016x}  A4  0x{:016x}  A5  0x{:016x}\n",
+            self.a2, self.a3, self.a4, self.a5,
+        )?;
+        write!(
+            f,
+            "  A6  0x{:016x}  A7  0x{:016x}  S2  0x{:016x}  S3  0x{:016x}\n",
+            self.a6, self.a7, self.s2, self.s3,
+        )?;
+        write!(
+            f,
+            "  S4  0x{:016x}  S5  0x{:016x}  S6  0x{:016x}  S7  0x{:016x}\n",
+            self.s4, self.s5, self.s6, self.s7,
+        )?;
+        write!(
+            f,
+            "  S8  0x{:016x}  S9  0x{:016x}  S10 0x{:016x}  S11 0x{:016x}\n",
+            self.s8, self.s9, self.s10, self.s11,
+        )?;
+        write!(
+            f,
+            "  T3  0x{:016x}  T4  0x{:016x}  T5  0x{:016x}  T6  0x{:016x}\n",
+            self.t3, self.t4, self.t5, self.t6,
+        )?;
+        write!(f, "  SSTATUS  0x{:016x}\n", self.sstatus)?;
+        write!(f, "  SCAUSE   0x{:016x}\n", self.scause)?;
+        write!(f, "  STVAL    0x{:016x}\n", self.stval)?;
+        Ok(())
+    }
+}
+
+impl ArchSyscallFrame for RiscvExceptFrame {
     fn set_retval(&mut self, value: usize) {
         self.a0 = value;
     }
 }
 
-impl ArchTrapFrame for ExceptFrame {
+impl ArchTrapFrame for RiscvExceptFrame {
     fn is_kernel_mode(&self) -> bool {
         self.sstatus & 0x100 != 0
     }
 
-    fn get_cause(&self) -> (Option<TrapCause>, usize) {
-        let cause = match self.scause {
+    fn get_cause(&self) -> Option<TrapCause> {
+        match self.scause {
             1 => Some(TrapCause::PageFaultExec),
             2 => Some(TrapCause::IllegalInsn),
             3 => Some(TrapCause::Breakpoint),
@@ -113,8 +157,40 @@ impl ArchTrapFrame for ExceptFrame {
             13 => Some(TrapCause::PageFaultLoad),
             15 => Some(TrapCause::PageFaultStore),
             _ => None,
-        };
-        (cause, self.scause)
+        }
+    }
+
+    fn get_name(&self) -> Option<&str> {
+        match self.scause {
+            0 => Some("Instruction address misaligned"),
+            1 => Some("Instruction access fault"),
+            2 => Some("Illegal instruction"),
+            3 => Some("Breakpoint"),
+            4 => Some("Load address misaligned"),
+            5 => Some("Load access fault"),
+            6 => Some("Store address misaligned"),
+            7 => Some("Store access fault"),
+            8 => Some("E-call from U-mode"),
+            9 => Some("E-call from S-mode"),
+            12 => Some("Instruction page fault"),
+            13 => Some("Load page fault"),
+            15 => Some("Store page fault"),
+            18 => Some("Software check"),
+            19 => Some("Hardware error"),
+            _ => None,
+        }
+    }
+
+    fn get_number(&self) -> usize {
+        self.scause
+    }
+
+    fn get_addr(&self) -> Option<usize> {
+        match self.scause {
+            0 | 1 | 4 | 5 | 6 | 7 | 12 | 13 | 15 => Some(self.stval),
+            2 | 3 => Some(self.sepc as usize),
+            _ => None,
+        }
     }
 
     fn get_pc(&self) -> *const () {

@@ -5,9 +5,9 @@
 use alloc::{collections::btree_map::BTreeMap, vec::Vec};
 
 use crate::{
+    arch::{Arch, except::ArchExcept},
     badgelib::irq::IrqGuard,
     bindings::{error::EResult, log::LogLevel},
-    cpu::irq,
     device::Device,
     kcore::sync::spinlock::Spinlock,
 };
@@ -113,7 +113,7 @@ impl dyn IrqCtlDevice {
         let base = self.irqctl_base();
 
         let irq_id = irq_id & base.mask;
-        debug_assert!(!irq::is_enabled());
+        debug_assert!(!Arch::get_irq_enabled());
 
         let mut handled = false;
         let handlers = base.handlers.lock_shared();

@@ -5,9 +5,8 @@ use uuid::Uuid;
 
 use crate::{
     LogLevel,
-    cpu::timer::time_us,
     device::{Device, class::block::BlockDevice, devtmpfs, registry},
-    kcore::sched::thread_sleep,
+    kcore::{sched::thread_sleep, timer::time_us},
     misc::kparam,
     util,
 };
@@ -143,8 +142,8 @@ fn filter_parts(
 
 /// Mount the root filesystem according to kernel parameters.
 pub fn mount_root_fs() {
-    let timeout = try { kparam::get_kparam("ROOTWAIT")?.parse::<u32>().ok()? }.unwrap_or(5);
-    let lim = time_us() + timeout as u64 * 1000000;
+    let timeout = try { kparam::get_kparam("ROOTWAIT")?.parse::<u64>().ok()? }.unwrap_or(5);
+    let lim = time_us() + timeout * 1000000;
 
     while time_us() < lim {
         if mount_root_impl(false) {

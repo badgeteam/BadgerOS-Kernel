@@ -14,16 +14,20 @@ use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc};
 use dtb;
 
 use crate::{
+    arch::{
+        Arch,
+        kcore::{
+            cpulocal::ArchCpuLocal,
+            sched::ArchSched,
+            smp::{ArchSmp, CpuID},
+        },
+    },
     bindings::{
         error::{EResult, Errno},
         log::LogLevel,
         raw::{limine_smp_info, limine_smp_request},
     },
     config,
-    cpu::{
-        PhysCpuID,
-        spinup::{arch_cpu_spinup, limine_trampoline_1},
-    },
     device::class::irqctl::IrqCtlDevice,
     kcore::{
         cpulocal::CpuLocal,
@@ -75,7 +79,7 @@ struct SmpMaps {
     /// Map from SMP index to SMP status struct.
     by_index: BTreeMap<u32, SmpStatus>,
     /// Map from CPU ID to SMP index.
-    by_cpuid: BTreeMap<PhysCpuID, u32>,
+    by_cpuid: BTreeMap<CpuID, u32>,
     /// One more than the maximum allocated SMP index.
     cpu_index_end: u32,
 }
@@ -103,18 +107,18 @@ static mut SMP_REQ: limine_smp_request = limine_smp_request {
 /// Initialize the SMP subsystem from DTB.
 #[cfg(feature = "dtb")]
 pub fn init_dtb(cpus_node: &dtb::DtbNode) {
-    let bsp_cpuid: PhysCpuID;
+    let bsp_cpuid: CpuID;
     unsafe {
         if SMP_REQ.response.is_null() {
             panic!("Missing Limine SMP response");
         }
         #[cfg(target_arch = "riscv64")]
         {
-            bsp_cpuid = (*SMP_REQ.response).bsp_hartid as PhysCpuID;
+            bsp_cpuid = (*SMP_REQ.response).bsp_hartid as CpuID;
         }
         #[cfg(target_arch = "x86_64")]
         {
-            bsp_cpuid = (*SMP_REQ.response).bsp_lapic_id as PhysCpuID;
+            bsp_cpuid = (*SMP_REQ.response).bsp_lapic_id as CpuID;
         }
     };
 
@@ -122,8 +126,9 @@ pub fn init_dtb(cpus_node: &dtb::DtbNode) {
     let mut smp_counter = 1u32;
     for cpu in cpus_node.nodes.values() {
         let _ = try {
-            let features = crate::cpu::dtb::is_usable(cpu)?;
-            let cpuid: PhysCpuID = cpu.prop_uint("reg")? as PhysCpuID;
+            // TODO: Check for usability.
+            // let features = crate::cpu::dtb::is_usable(cpu)?;
+            let cpuid: CpuID = cpu.prop_uint("reg")? as CpuID;
 
             let smp_index: u32;
             let power;
@@ -145,7 +150,6 @@ pub fn init_dtb(cpus_node: &dtb::DtbNode) {
             let mut status = SmpStatus {
                 cpulocal: Box::new(CpuLocal {
                     smp_index,
-                    features,
                     ..Default::default()
                 }),
                 power: AtomicU32::new(power as u32),
@@ -164,7 +168,7 @@ pub fn init_dtb(cpus_node: &dtb::DtbNode) {
 }
 
 /// Get SMP index from physical CPU ID.
-pub fn by_phys_id(cpuid: PhysCpuID) -> Option<u32> {
+pub fn by_phys_id(cpuid: CpuID) -> Option<u32> {
     SMP_MAPS.unintr_lock().by_cpuid.get(&cpuid).cloned()
 }
 
@@ -184,10 +188,9 @@ pub fn register_ext_irqctl(smp_index: u32, ctl: Arc<dyn IrqCtlDevice>) -> EResul
 fn init_common(maps: &mut SmpMaps) {
     unsafe {
         let new_cpulocal = &mut maps.by_index.get_mut(&0).unwrap().cpulocal;
-        let old_cpulocal = &mut *CpuLocal::get();
-        old_cpulocal.features = new_cpulocal.features;
+        let old_cpulocal = &mut *Arch::get_cpulocal();
         swap(new_cpulocal.as_mut(), old_cpulocal);
-        CpuLocal::set(new_cpulocal.as_mut());
+        Arch::set_cpulocal(new_cpulocal.as_mut());
     }
 }
 
@@ -220,7 +223,10 @@ fn poweron_from_prehandover<'a>(index: u32, mut maps: MutexGuard<'a, SmpMaps>) -
 
     cpu.extra_argument = status.cpulocal.as_mut() as *mut _ as _;
     let goto_addr = unsafe { &*((&raw const cpu.goto_address) as *const AtomicUsize) };
-    goto_addr.store(limine_trampoline_1 as *const () as _, Ordering::Release);
+    goto_addr.store(
+        Arch::limine_trampoline_1 as *const () as _,
+        Ordering::Release,
+    );
 
     let maps = maps.demote();
     let status = maps.by_index.get(&index).ok_or(Errno::ENOENT)?;
@@ -289,8 +295,8 @@ pub fn report_online() {
 pub unsafe extern "C" fn limine_trampoline_2(info: *mut limine_smp_info) -> ! {
     unsafe {
         let cpulocal = (*info).extra_argument as *mut CpuLocal;
-        CpuLocal::set(cpulocal);
-        arch_cpu_spinup();
+        Arch::set_cpulocal(cpulocal);
+        Arch::cpu_spinup();
         (*cpulocal).sched.as_mut().unwrap().exec();
     }
 }
@@ -310,5 +316,5 @@ pub fn get_sched_for(cpu: u32) -> Option<SharedMutexGuard<'static, Scheduler>> {
 }
 
 pub fn cur_cpu() -> u32 {
-    unsafe { (*CpuLocal::get()).smp_index }
+    unsafe { (*Arch::get_cpulocal()).smp_index }
 }

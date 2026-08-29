@@ -52,7 +52,7 @@ pub fn call_usermode(regs: &GpRegfile) {
         debug_assert!(uctx.rip == 0, "Cannot recursively call into usermode");
         irq::disable();
 
-        let cpulocal = &mut *CpuLocal::get();
+        let cpulocal = &mut *Arch::get_cpulocal();
         let runtime = (&*Thread::current()).runtime();
         todo!()
         // Interrupts re-enabled by `exit_usermode`.

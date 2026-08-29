@@ -9,9 +9,9 @@ use map::{KernelVmSpace, Mapping};
 use memobject::{MappablePage, RawMemory};
 
 use crate::{
+    arch::{Arch, mmu::ArchMMU},
     bindings::log::LogLevel,
     config::PAGE_SIZE,
-    cpu::mmu,
     mem::pmm::{self, PAddrr},
 };
 
@@ -23,7 +23,7 @@ pub mod vmfence;
 
 /// Mapping protection flags.
 pub mod prot {
-    use crate::cpu::mmu;
+    use super::physmap;
 
     /// Mapping is readable.
     pub const READ: u8 = 1 << 0;
@@ -39,19 +39,19 @@ pub mod prot {
     /// Convert MMU flags into prot flags.
     pub(super) const fn from_mmu_flags(mmu_flags: u32) -> u8 {
         let mut prot = 0;
-        if mmu_flags & mmu::flags::R != 0 {
+        if mmu_flags & physmap::flags::R != 0 {
             prot |= READ;
         }
-        if mmu_flags & mmu::flags::W != 0 {
+        if mmu_flags & physmap::flags::W != 0 {
             prot |= WRITE;
         }
-        if mmu_flags & mmu::flags::X != 0 {
+        if mmu_flags & physmap::flags::X != 0 {
             prot |= EXEC;
         }
-        if mmu_flags & mmu::flags::NC != 0 {
+        if mmu_flags & physmap::flags::NC != 0 {
             prot |= NC;
         }
-        if mmu_flags & mmu::flags::IO != 0 {
+        if mmu_flags & physmap::flags::IO != 0 {
             prot |= IO;
         }
         prot
@@ -61,19 +61,19 @@ pub mod prot {
     pub(super) const fn into_mmu_flags(prot_flags: u8) -> u32 {
         let mut mmu = 0;
         if prot_flags & READ != 0 {
-            mmu |= mmu::flags::R;
+            mmu |= physmap::flags::R;
         }
         if prot_flags & WRITE != 0 {
-            mmu |= mmu::flags::W;
+            mmu |= physmap::flags::W;
         }
         if prot_flags & EXEC != 0 {
-            mmu |= mmu::flags::X;
+            mmu |= physmap::flags::X;
         }
         if prot_flags & NC != 0 {
-            mmu |= mmu::flags::NC;
+            mmu |= physmap::flags::NC;
         }
         if prot_flags & IO != 0 {
-            mmu |= mmu::flags::IO;
+            mmu |= physmap::flags::IO;
         }
         mmu
     }
@@ -143,7 +143,7 @@ pub fn kernel_mm() -> &'static KernelVmSpace {
 /// Initialize the virtual-memory management subsystem.
 pub unsafe fn init() {
     unsafe {
-        mmu::early_init();
+        Arch::mmu_early_init();
 
         let kernel_mm = KernelVmSpace::new();
         let k_v2p = KERNEL_PADDR.wrapping_sub(KERNEL_VADDR);
@@ -241,13 +241,13 @@ pub unsafe fn init() {
             .expect("Failed to map page of zeroes") as *const u8;
 
         logkf!(LogLevel::Info, "Switching to own page tables");
-        mmu::init(kernel_mm.0.pmap.root());
+        Arch::mmu_init(kernel_mm.0.pmap.root());
         KERNEL_MM = MaybeUninit::new(kernel_mm);
     }
 }
 
 vmm_ktest! { MAP_BASIC,
-    use crate::cpu::usercopy::fallible_store_u8;
+    use crate::arch::{Arch, usermode::ArchUsermode};
 
     unsafe {
         let size  = 0x8000;
@@ -256,7 +256,7 @@ vmm_ktest! { MAP_BASIC,
         // Some random accesses must succeed.
         let ptr = &mut *core::ptr::slice_from_raw_parts_mut(vaddr as *mut u8, size);
         for i in (0..size).step_by(PAGE_SIZE as usize) {
-            let fault = fallible_store_u8(&raw mut ptr[i], 21);
+            let fault = Arch::fallible_store_u8(&raw mut ptr[i], 21);
             ktest_assert!(fault.is_ok());
         }
 
@@ -264,7 +264,7 @@ vmm_ktest! { MAP_BASIC,
 
         // Assert now that trying to access again traps.
         for i in (0..size).step_by(PAGE_SIZE as usize) {
-            let fault = fallible_store_u8(&raw mut ptr[i], 21);
+            let fault = Arch::fallible_store_u8(&raw mut ptr[i], 21);
             ktest_assert!(fault.is_err());
         }
     }

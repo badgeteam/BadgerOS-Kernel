@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: MIT
 
 use crate::{
+    badgelib::irq::IrqGuard,
     bindings::{self, spinlock::Spinlock},
-    cpu,
     process::uapi::time::timespec,
 };
 
@@ -49,15 +49,13 @@ impl AtomicTimespec {
     }
 
     pub fn load(&self) -> Timespec {
-        let ie = unsafe { cpu::irq::disable() };
+        let _guard = IrqGuard::new();
         let tmp = *self.0.lock_shared();
-        unsafe { cpu::irq::enable_if(ie) };
         tmp
     }
 
     pub fn store(&self, value: Timespec) {
-        let ie = unsafe { cpu::irq::disable() };
+        let _guard = IrqGuard::new();
         *self.0.lock() = value;
-        unsafe { cpu::irq::enable_if(ie) };
     }
 }

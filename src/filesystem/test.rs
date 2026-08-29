@@ -5,13 +5,11 @@
 #[cfg(feature = "ktest")]
 use alloc::vec::Vec;
 
-use crate::rootfs_ktest;
-
 #[cfg(feature = "ktest")]
 use crate::{
+    arch::{Arch, usermode::ArchUsermode},
     bindings::error::Errno,
     config::PAGE_SIZE,
-    cpu::usercopy::{fallible_load_u8, fallible_store_u8},
     filesystem::{oflags, open, unlink},
     ktest_assert, ktest_expect,
     mem::vmm::{
@@ -19,6 +17,7 @@ use crate::{
         map::{self, Mapping},
         prot, zeroes,
     },
+    rootfs_ktest,
 };
 
 rootfs_ktest! { FILE_READ_BLOCK,
@@ -267,29 +266,29 @@ rootfs_ktest! { FILE_MAP_RESIZE,
         let ptr = vaddr as *mut u8;
 
         // Before resize: both pages accessible.
-        fallible_store_u8(ptr, 1)?;
-        fallible_store_u8(ptr.add(PAGE_SIZE as usize), 2)?;
+        Arch::fallible_store_u8(ptr, 1)?;
+        Arch::fallible_store_u8(ptr.add(PAGE_SIZE as usize), 2)?;
 
         // After resize: second page no longer accessible.
         fd.resize(PAGE_SIZE as u64)?;
-        fallible_store_u8(ptr, 1)?;
-        ktest_assert!(fallible_store_u8(ptr.add(PAGE_SIZE as usize), 2).is_err());
+        Arch::fallible_store_u8(ptr, 1)?;
+        ktest_assert!(Arch::fallible_store_u8(ptr.add(PAGE_SIZE as usize), 2).is_err());
 
         // Fractional page size: first page still accessible, OOB data zeroed.
-        fallible_store_u8(ptr.add(42), 9)?;
+        Arch::fallible_store_u8(ptr.add(42), 9)?;
         fd.resize(42)?;
-        ktest_expect!(fallible_load_u8(ptr.add(42))?, 0);
+        ktest_expect!(Arch::fallible_load_u8(ptr.add(42))?, 0);
 
         // Complete truncation: no access at all.
         fd.resize(0)?;
-        ktest_assert!(fallible_store_u8(ptr, 1).is_err());
-        ktest_assert!(fallible_store_u8(ptr.add(PAGE_SIZE as usize), 2).is_err());
+        ktest_assert!(Arch::fallible_store_u8(ptr, 1).is_err());
+        ktest_assert!(Arch::fallible_store_u8(ptr.add(PAGE_SIZE as usize), 2).is_err());
 
         // Make it bigger again: data still zeroes but pages accessible again.
         fd.resize(2*PAGE_SIZE as u64)?;
-        ktest_expect!(fallible_load_u8(ptr)?, 0);
-        ktest_expect!(fallible_load_u8(ptr.add(42))?, 0);
-        ktest_expect!(fallible_load_u8(ptr.add(PAGE_SIZE as usize))?, 0);
+        ktest_expect!(Arch::fallible_load_u8(ptr)?, 0);
+        ktest_expect!(Arch::fallible_load_u8(ptr.add(42))?, 0);
+        ktest_expect!(Arch::fallible_load_u8(ptr.add(PAGE_SIZE as usize))?, 0);
 
         // Clean up by unmapping.
         kernel_mm().unmap(vaddr..vaddr + stat.size as usize)?;

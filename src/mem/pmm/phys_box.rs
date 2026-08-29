@@ -89,7 +89,7 @@ impl<T: Sized> Drop for PhysBox<T> {
 }
 
 vmm_ktest! { PHYS_BOX,
-    use crate::cpu;
+    use crate::mem::vmm::physmap;
 
     const SIZE: usize = 0x2000;
     let mut mem = unsafe { PhysBox::<[u8; SIZE]>::try_new(false, false)? };
@@ -100,7 +100,7 @@ vmm_ktest! { PHYS_BOX,
         // Assert physically contiguous.
         let v2p = kernel_mm().virt2phys(start_vma + i);
         ktest_assert!(v2p.valid);
-        ktest_assert!(v2p.flags & cpu::mmu::flags::W != 0);
+        ktest_assert!(v2p.flags & physmap::flags::W != 0);
         ktest_expect!(v2p.page_vaddr, start_vma + i);
         ktest_expect!(v2p.page_paddr, start_pma + i);
 

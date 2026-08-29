@@ -9,7 +9,6 @@ use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use crate::{
     bindings::error::{EResult, Errno},
     config::PAGE_SIZE,
-    cpu::mmu,
     impl_has_list_node,
     kcore::sync::spinlock::Spinlock,
     mem::{
@@ -784,7 +783,7 @@ impl VmSpaceInner {
         };
         if flags & access == access {
             // TLB must be outdated; flush it and retry.
-            mmu::vmem_fence(Some(page_vaddr), None);
+            fences.add(Some(page_vaddr), None);
             return Ok(PAGE_SIZE as usize - vaddr % PAGE_SIZE as usize);
         }
 

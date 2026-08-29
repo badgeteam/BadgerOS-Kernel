@@ -39,6 +39,7 @@
 #![feature(iter_collect_into)]
 #![feature(downcast_unchecked)]
 #![feature(const_trait_impl)]
+#![feature(const_cmp)]
 
 #[macro_use]
 extern crate alloc;
@@ -62,12 +63,12 @@ pub mod misc;
 pub mod process;
 pub mod util;
 
-#[cfg(target_arch = "riscv64")]
-#[path = "../cpu/riscv64/src/mod.rs"]
-pub mod cpu;
-#[cfg(target_arch = "x86_64")]
-#[path = "../cpu/x86_64/src/mod.rs"]
-pub mod cpu;
+// #[cfg(target_arch = "riscv64")]
+// #[path = "../cpu/riscv64/src/mod.rs"]
+// pub mod cpu;
+// #[cfg(target_arch = "x86_64")]
+// #[path = "../cpu/x86_64/src/mod.rs"]
+// pub mod cpu;
 
 use bindings::log::*;
 use core::{alloc::GlobalAlloc, ffi::c_void};

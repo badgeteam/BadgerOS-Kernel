@@ -31,13 +31,13 @@ use uapi::{
 use usercopy::{AccessResult, UserSlice, UserSliceMut};
 
 use crate::{
+    arch::except::SyscallFrame,
     bindings::{
         error::{EResult, Errno},
         log::LogLevel,
         raw::timestamp_us_t,
     },
     config::STACK_SIZE,
-    cpu::{thread::GpRegfile, usermode::call_usermode},
     device::{self, class::char::CharDevice},
     filesystem::{self, File, SeekMode, device::CharDevFile, mode, oflags},
     kcore::{
@@ -56,7 +56,7 @@ use crate::{
 pub mod elf;
 pub mod files;
 pub mod signal;
-pub mod syscall;
+// pub mod syscall;
 pub mod uapi;
 pub mod usercopy;
 
@@ -222,7 +222,7 @@ impl Process {
 
     /// Create the init process.
     pub fn new_init() -> EResult<Arc<Process>> {
-        unsafe { syscall::SYSCALL_TRACE = kparam::get_kparam("SYSCALL_TRACE").is_some() };
+        // unsafe { syscall::SYSCALL_TRACE = kparam::get_kparam("SYSCALL_TRACE").is_some() };
 
         // This assert enforces init isn't accidentally created twice.
         assert!(PID_COUNTER.fetch_add(1, Ordering::Relaxed) == 1);
@@ -282,7 +282,7 @@ impl Process {
     }
 
     /// Fork this process.
-    pub fn fork(self: &Arc<Self>, regs: &GpRegfile) -> EResult<Arc<Process>> {
+    pub fn fork(self: &Arc<Self>, regs: &SyscallFrame) -> EResult<Arc<Process>> {
         let pid = PID_COUNTER.fetch_add(1, Ordering::Relaxed);
 
         let child = Process {
@@ -309,7 +309,7 @@ impl Process {
         let mut pcr = self.pcr.unintr_lock();
         let mut processes = PROCESSES.unintr_lock();
 
-        let mut regs2 = regs.clone();
+        // let mut regs2 = regs.clone();
         let child2 = child.clone();
         let thread = Thread::new(
             move || {
@@ -320,8 +320,8 @@ impl Process {
                 }
 
                 // Clone the calling thread and start it.
-                regs2.set_retval(0);
-                call_usermode(&regs2);
+                // regs2.set_retval(0);
+                // call_usermode(&regs2);
 
                 // TODO: Clean up the stack.
             },
@@ -573,10 +573,10 @@ impl Process {
                 let (pc, sp) = setup(u_stack_top);
 
                 // Call user mode.
-                let mut regs = GpRegfile::default();
-                regs.set_pc(pc as _);
-                regs.set_stack(sp as _);
-                call_usermode(&regs);
+                // let mut regs = GpRegfile::default();
+                // regs.set_pc(pc as _);
+                // regs.set_stack(sp as _);
+                // call_usermode(&regs);
 
                 // Clean up the stack.
                 let _ = proc_self
