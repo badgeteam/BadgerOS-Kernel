@@ -17,7 +17,6 @@ impl ArchSmp for Riscv {
             asm!("csrw stvec, {}", in(reg) riscv_exception_vector as *const ());
             asm!("csrw sie, {}", in(reg)(1 << 9)); // Supervisor external interrupt.
             logkf_unlocked!(LogLevel::Info, "STVEC init OK");
-            asm!("ebreak");
         }
     }
 

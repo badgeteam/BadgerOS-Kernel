@@ -13,5 +13,5 @@ pub mod usermode;
 pub const trait ArchTrait:
     except::ArchExcept + kcore::ArchKCore + misc::ArchMisc + mmu::ArchMMU + usermode::ArchUsermode
 {
-    const NAME: &'static str;
+    const MACHINE: &'static str;
 }

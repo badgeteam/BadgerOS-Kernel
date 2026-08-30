@@ -10,5 +10,5 @@ pub mod mmu;
 pub mod usermode;
 
 impl ArchTrait for Riscv {
-    const NAME: &'static str = "riscv64";
+    const MACHINE: &'static str = "riscv64";
 }

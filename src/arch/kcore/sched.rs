@@ -13,7 +13,7 @@ pub trait ArchSched {
 
     /// Prepare a new thread context to jump to [`Thread::thread_trampoline_2`]
     /// Returns how much stack was used in words.
-    fn context_create(stack: &[usize], ptr: *mut (), meta: *const ()) -> usize;
+    fn context_create(stack: &mut [usize], ptr: *mut (), meta: *const ()) -> usize;
 
     /// Switch between thread contexts.
     /// Passes thru `sched` so that the new thread knows what CPU it's on without checking the CPU-local data.

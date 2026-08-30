@@ -6,7 +6,7 @@ use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
 use crate::{
     arch::{
-        Arch,
+        Arch, ArchTrait,
         kcore::{cpulocal::ArchCpuLocal, smp::ArchSmp},
     },
     bindings::{
@@ -45,7 +45,12 @@ unsafe extern "C" fn basic_runtime_init() -> ! {
 
         // Announce the kernel is alive.
         logk_unlocked(LogLevel::Info, "==============================");
-        logkf_unlocked!(LogLevel::Info, "BadgerOS {}", version::RELEASE);
+        logkf_unlocked!(
+            LogLevel::Info,
+            "BadgerOS {} {}",
+            Arch::MACHINE,
+            version::RELEASE
+        );
         logk_unlocked(LogLevel::Info, version::VERSION);
         logk_unlocked(LogLevel::Info, "==============================");
 
