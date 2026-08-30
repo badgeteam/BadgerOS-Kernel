@@ -8,9 +8,6 @@ pub trait ArchSched {
     /// Floating-point save-state.
     type FloatState: Default + Sized + Copy;
 
-    /// Do arch-specific CPU initialization.
-    fn cpu_spinup();
-
     /// Get a pointer to the currently running thread, if any.
     fn current_thread() -> *const Thread;
 

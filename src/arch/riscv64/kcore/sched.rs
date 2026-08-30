@@ -11,14 +11,6 @@ use crate::{
 impl ArchSched for Riscv {
     type FloatState = ();
 
-    fn cpu_spinup() {
-        unsafe {
-            asm!("csrw sstatus, 0");
-            // asm!("csrw stvec, {}", in(reg) riscv_vector_table as *const () as usize);
-            asm!("csrw sie, {}", in(reg)(1 << 9)); // Supervisor external interrupt.
-        }
-    }
-
     #[inline(always)]
     fn current_thread() -> *const Thread {
         unsafe {

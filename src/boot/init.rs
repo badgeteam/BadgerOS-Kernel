@@ -7,7 +7,7 @@ use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use crate::{
     arch::{
         Arch,
-        kcore::{cpulocal::ArchCpuLocal, sched::ArchSched},
+        kcore::{cpulocal::ArchCpuLocal, smp::ArchSmp},
     },
     bindings::{
         log::{LogLevel, logk_unlocked},
@@ -42,7 +42,6 @@ unsafe extern "C" fn basic_runtime_init() -> ! {
         // Early hand-over from bootloader to kernel.
         protocol::early_init();
         ktests_runlevel(KTestWhen::PMM);
-        // bootp_early_init();
 
         // Announce the kernel is alive.
         logk_unlocked(LogLevel::Info, "==============================");

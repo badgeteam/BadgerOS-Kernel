@@ -54,6 +54,8 @@ pub const trait ArchTrapFrame: Display {
     fn get_addr(&self) -> Option<usize>;
     /// Trapping instruction address.
     fn get_pc(&self) -> *const ();
+    /// Handle `.noexc_table` hit.
+    fn noexc_skip(&mut self, addr: *const ());
     /// Backtrace frame pointer; null if not available.
     fn get_frame_ptr(&self) -> *const ();
 }

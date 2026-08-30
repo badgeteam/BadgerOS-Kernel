@@ -1,11 +1,23 @@
-use core::{arch::asm, fmt::Display};
+use core::{
+    arch::{asm, global_asm},
+    fmt::Display,
+};
 
-use crate::arch::{
-    except::{ArchExcept, ArchSyscallFrame, ArchTrapFrame, TrapCause},
-    riscv64::csr,
+use crate::{
+    arch::{
+        except::{ArchExcept, ArchSyscallFrame, ArchTrapFrame, TrapCause},
+        riscv64::csr,
+    },
+    except::generic_trap,
 };
 
 use super::Riscv;
+
+global_asm!(include_str!("except.S"));
+
+unsafe extern "C" {
+    pub fn riscv_exception_vector();
+}
 
 impl ArchExcept for Riscv {
     type SyscallFrame = RiscvExceptFrame;
@@ -197,7 +209,23 @@ impl ArchTrapFrame for RiscvExceptFrame {
         self.sepc
     }
 
+    fn noexc_skip(&mut self, addr: *const ()) {
+        self.sepc = addr;
+        self.a0 = 1;
+    }
+
     fn get_frame_ptr(&self) -> *const () {
         self.fake_fp
     }
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn riscv_exception_handler(frame: &mut RiscvExceptFrame) {
+    if (frame.scause as isize) < 0 {
+        todo!("RISC-V interrupt handler");
+    }
+
+    // TODO: Lazy-FPU init.
+
+    generic_trap(frame);
 }

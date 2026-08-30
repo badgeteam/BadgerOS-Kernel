@@ -56,6 +56,7 @@ pub mod boot;
 pub mod config;
 pub mod device;
 pub mod driver;
+pub mod except;
 pub mod filesystem;
 pub mod kcore;
 pub mod mem;

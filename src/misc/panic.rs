@@ -149,11 +149,6 @@ fn backrtace(mut frame_ptr: *const ()) {
                 break;
             } else if frame_ptr.is_null() {
                 break;
-            } else if !is_canon_addr((frame_ptr as isize).wrapping_add(MIN) as usize)
-                || !is_canon_addr((frame_ptr as isize).wrapping_add(MAX) as usize)
-            {
-                printf_unlocked!("<non-canonical address>\n");
-                break;
             } else if frame_ptr as isize > 0 {
                 printf_unlocked!("<lower-half address>\n");
                 break;
@@ -162,9 +157,9 @@ fn backrtace(mut frame_ptr: *const ()) {
             // The frame pointer is *probably* valid.
             let ra_ptr = frame_ptr.wrapping_byte_add(Arch::FP_RA_OFFSET as usize);
             let ra = Arch::fallible_load_usize(ra_ptr as _)?;
-            printf_unlocked!("0x{:x}\n", ra);
+            printf_unlocked!("0x{:x}\n", ra - 1);
 
-            let link_ptr = frame_ptr.wrapping_byte_add(Arch::FP_RA_OFFSET as usize);
+            let link_ptr = frame_ptr.wrapping_byte_add(Arch::FP_LINK_OFFSET as usize);
             frame_ptr = Arch::fallible_load_usize(link_ptr as _)? as _;
 
             i += 1;

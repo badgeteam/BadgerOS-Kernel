@@ -25,6 +25,10 @@ pub trait ArchMMU {
 
     /// Update the active page table.
     unsafe fn set_page_table(root: PAddrr, asid: u32);
+    /// Read the current page table root.
+    fn get_page_table() -> PAddrr;
+    /// Read the current address-space ID.
+    fn get_asid() -> u32;
     /// Local TLB invalidation.
     fn vmem_fence(vaddr: Option<usize>, asid: Option<u32>);
 }
