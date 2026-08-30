@@ -30,9 +30,9 @@ riscv_exception_vector:
 
     # Assembly trampoline for entering the kernel from an exception.
     #
-    # cpulocal+0  => temporary storage of tp
-    # cpulocal+8  => temporary storage of t0
-    # cpulocal+16 => temporary storage of sp
+    # cpulocal+0  => temporary storage of t0
+    # cpulocal+8  => temporary storage of sp
+    # cpulocal+16 => temporary storage of tp
     # cpulocal+24 => stack to use if emerging from U-mode
     #
     # Entry: Jumped to directly by the CPU as the trap/interrupt vector.
@@ -43,7 +43,7 @@ riscv_exception_vector:
     .cfi_startproc
 riscv_exception_asm:
     .cfi_return_column 64
-    .cfi_signal_frame
+    .cfi_register 64, sepc
     # Initial entry: Get a foothold in the kernel.
     csrrw tp, sscratch, tp  # Swap user tp and cpu-local ptr.
     sd    t0, 0(tp)         # We will use t0 as a temporary.
@@ -65,15 +65,15 @@ riscv_exception_asm:
     .cfi_rel_offset 64, 0*8
     sd ra,   1*8(sp)
     .cfi_rel_offset ra, 1*8
-    ld t1,    16(tp)
+    ld t1,     8(tp)
     sd t1,   2*8(sp)        # Old sp
     .cfi_rel_offset sp, 2*8
     sd gp,   3*8(sp)
     .cfi_rel_offset gp, 3*8
-    ld t0,     0(tp)
+    ld t0,    16(tp)
     sd t0,   4*8(sp)        # Old tp
     .cfi_rel_offset tp, 4*8
-    ld t0,     8(tp)
+    ld t0,     0(tp)
     sd t0,   5*8(sp)        # Old t0
     .cfi_rel_offset t0, 5*8
     sd t1,   6*8(sp)
@@ -160,7 +160,7 @@ riscv_exception_asm:
     addi sp, sp, 16
     
     # Restore context from the stack.
-    ld t1,   33*8(sp)
+    ld t1,  33*8(sp)
     csrw sstatus, t1
     ld t1,   0*8(sp) # pc
     csrw sepc, t1

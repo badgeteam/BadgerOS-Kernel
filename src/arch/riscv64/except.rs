@@ -6,14 +6,15 @@ use core::{
 use crate::{
     arch::{
         except::{ArchExcept, ArchSyscallFrame, ArchTrapFrame, TrapCause},
+        kcore::cpulocal::ArchCpuLocal,
         riscv64::csr,
     },
     except::generic_trap,
+    kcore::sched::Scheduler,
+    misc::panic::unhandled_trap,
 };
 
 use super::Riscv;
-
-global_asm!(include_str!("except.S"));
 
 unsafe extern "C" {
     pub fn riscv_exception_vector();
@@ -94,7 +95,7 @@ pub struct RiscvExceptFrame {
     pub fake_fp: *const (),
     // Other CSRs.
     pub sstatus: usize,
-    pub scause: usize,
+    pub scause: isize,
     pub stval: usize,
 }
 
@@ -194,7 +195,7 @@ impl ArchTrapFrame for RiscvExceptFrame {
     }
 
     fn get_number(&self) -> usize {
-        self.scause
+        self.scause as usize
     }
 
     fn get_addr(&self) -> Option<usize> {
@@ -221,8 +222,27 @@ impl ArchTrapFrame for RiscvExceptFrame {
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn riscv_exception_handler(frame: &mut RiscvExceptFrame) {
-    if (frame.scause as isize) < 0 {
-        todo!("RISC-V interrupt handler");
+    if frame.scause < 0 && frame.scause & 0xff == 5 {
+        // Timer interrupt.
+        unsafe {
+            (*Scheduler::get()).tick_interrupt(!frame.is_kernel_mode());
+        }
+        return;
+    } else if frame.scause < 0 {
+        // External or software interrupt.
+        unsafe {
+            // Low cause bits: 1 = supervisor software, 9 = supervisor external.
+            let cause = (frame.scause as usize & 0xff) as u128;
+            let cpulocal = &*Riscv::get_cpulocal();
+            let mut handled = false;
+            for ctl in &cpulocal.ext_irqctls {
+                handled |= ctl.interrupt(cause);
+            }
+            if !handled {
+                unhandled_trap(frame);
+            }
+        }
+        return;
     }
 
     // TODO: Lazy-FPU init.

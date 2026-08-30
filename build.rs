@@ -1,4 +1,14 @@
 fn main() {
+    let arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap();
+
+    // Arch-specific assembly snippets.
+    let mut cc = cc::Build::new();
+    let filename = format!("src/arch/{}/except.S", &arch);
+    cc.file(&filename);
+    cc.compile("except-asm");
+    println!("cargo::rerun-if-changed={}", &filename);
+    println!("cargo::rustc-link-arg=except-asm");
+
     // The bindgen::Builder is the main entry point
     // to bindgen, and lets you build up options for
     // the resulting bindings.

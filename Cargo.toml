@@ -29,6 +29,7 @@ limine = { path = "lib/limine", features = ["uuid"] }
 
 [build-dependencies]
 bindgen = "0.72.1"
+cc = "1.4.4"
 
 [profile.dev]
 panic = "abort"

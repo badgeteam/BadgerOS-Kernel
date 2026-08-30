@@ -1,30 +1,30 @@
 use core::{
     arch::{asm, naked_asm},
-    mem::offset_of,
+    ptr::null,
 };
 
 use crate::{
-    arch::{kcore::sched::ArchSched, riscv64::Riscv},
-    kcore::{
-        cpulocal::CpuLocal,
-        sched::{Scheduler, Thread},
+    arch::{
+        kcore::{cpulocal::ArchCpuLocal, sched::ArchSched},
+        riscv64::Riscv,
     },
+    badgelib::irq::IrqGuard,
+    kcore::sched::{Scheduler, Thread},
 };
 
 impl ArchSched for Riscv {
     type FloatState = ();
 
-    #[inline(always)]
+    #[inline(never)]
     fn current_thread() -> *const Thread {
+        // TODO: Sched re-write is needed to be able to use a load relative to `tp`.
+        let _noirq = IrqGuard::new();
         unsafe {
-            let raw: *const Thread;
-            asm!("ld {}, {}(tp)", out(reg)raw, const offset_of!(CpuLocal, thread));
-            if raw.is_null() {
-                return raw;
-            }
-            // Offset of the struct `Thread` inside the `ArcInner`.
-            // TODO: Find an alternative solution that doesn't assume such an implementation detail.
-            raw.byte_add(16)
+            (*Riscv::get_cpulocal())
+                .thread
+                .as_deref()
+                .map(|x| x as *const Thread)
+                .unwrap_or(null())
         }
     }
 
