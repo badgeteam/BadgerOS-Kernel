@@ -6,9 +6,9 @@ pub trait ArchUsermode {
     type KernelRegs: Default + Sized + Copy;
 
     /// Enter usermode given a prepared PC and stack.
-    fn enter_usermode(u_pc: usize, u_sp: usize);
+    unsafe extern "C" fn enter_usermode(u_pc: usize, u_sp: usize);
     /// Exit usermode by restoring the kernel register state.
-    fn exit_usermode();
+    unsafe extern "C" fn exit_usermode();
 
     /// Load byte, check for access faults instead of panicking.
     fn fallible_load_u8(ptr: *const u8) -> AccessResult<u8>;

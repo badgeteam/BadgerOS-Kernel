@@ -380,9 +380,10 @@ pub mod rfence {
 
 /// SBI hart management extension.
 pub mod hsm {
-    use crate::cpu::{PhysCpuID, irq};
-
     use super::*;
+
+    use crate::arch::{except::ArchExcept, kcore::smp::CpuID, riscv64::Riscv};
+
     const HSM_EID: isize = 0x48534D;
 
     pub fn probe() -> bool {
@@ -418,7 +419,7 @@ pub mod hsm {
     }
 
     /// Start a single HART and set its `a0` register to its HARTID.
-    pub unsafe fn start(hartid: PhysCpuID, start_addr: *const (), a1_value: usize) -> SbiResult {
+    pub unsafe fn start(hartid: CpuID, start_addr: *const (), a1_value: usize) -> SbiResult {
         sbi_call!(
             0,
             HSM_EID,
@@ -430,12 +431,12 @@ pub mod hsm {
 
     /// Stop this HART; does not return if successful.
     pub fn stop() -> SbiResult {
-        debug_assert!(!irq::is_enabled());
+        debug_assert!(!Riscv::get_irq_enabled());
         sbi_call!(1, HSM_EID)
     }
 
     /// Get the status of some HART.
-    pub fn get_status(hartid: PhysCpuID) -> SbiResult<HartState> {
+    pub fn get_status(hartid: CpuID) -> SbiResult<HartState> {
         sbi_call!(2, HSM_EID, hartid as isize).map(Into::into)
     }
 

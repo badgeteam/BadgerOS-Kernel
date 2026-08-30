@@ -35,11 +35,11 @@ macro_rules! noexc_asm {
 impl ArchUsermode for Riscv {
     type KernelRegs = ();
 
-    fn enter_usermode(u_pc: usize, u_sp: usize) {
+    unsafe extern "C" fn enter_usermode(u_pc: usize, u_sp: usize) {
         todo!()
     }
 
-    fn exit_usermode() {
+    unsafe extern "C" fn exit_usermode() {
         todo!()
     }
 
