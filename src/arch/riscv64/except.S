@@ -60,13 +60,13 @@ riscv_exception_asm:
     # Save context to the stack.
     addi sp, sp, -288
     .cfi_def_cfa sp, 0
-    csrr t1, sepc
-    sd t1,   0*8(sp) # PC
+    csrr t0, sepc
+    sd t0,   0*8(sp) # PC
     .cfi_rel_offset 64, 0*8
     sd ra,   1*8(sp)
     .cfi_rel_offset ra, 1*8
-    ld t1,     8(tp)
-    sd t1,   2*8(sp)        # Old sp
+    ld t0,     8(tp)
+    sd t0,   2*8(sp)        # Old sp
     .cfi_rel_offset sp, 2*8
     sd gp,   3*8(sp)
     .cfi_rel_offset gp, 3*8
@@ -76,8 +76,8 @@ riscv_exception_asm:
     ld t0,     0(tp)
     sd t0,   5*8(sp)        # Old t0
     .cfi_rel_offset t0, 5*8
-    sd t1,   6*8(sp)
-    .cfi_rel_offset t1, 6*8
+    sd t0,   6*8(sp)
+    .cfi_rel_offset t0, 6*8
     sd t2,   7*8(sp)
     .cfi_rel_offset t2, 7*8
     sd s0,   8*8(sp)
@@ -128,27 +128,27 @@ riscv_exception_asm:
     .cfi_rel_offset t5, 30*8
     sd t6,  31*8(sp)
     .cfi_rel_offset t6, 31*8
-    csrr t1, sstatus
-    sd   t1, 33*8(sp)
-    csrr t1, scause
-    sd   t1, 34*8(sp)
-    csrr t1, stval
-    sd   t1, 35*8(sp)
+    csrr t0, sstatus
+    sd   t0, 33*8(sp)
+    csrr t0, scause
+    sd   t0, 34*8(sp)
+    csrr t0, stval
+    sd   t0, 35*8(sp)
     
     # Create a fake stack frame for kernel unwinding.
     addi sp, sp, -16
     .cfi_adjust_cfa_offset 16
-    csrr t1, sepc
-    addi t1, t1, 1
-    sd   t1, 8(sp) # pc
-    sd   s0, 0(sp) # fp
+    csrr t0, sepc
+    addi t0, t0, 1          # Mark as being from the fake frame for the backrtace.
+    sd   t0, 8(sp)          # pc
+    sd   s0, 0(sp)          # fp
     addi s0, sp, 16
     sd   s0, 16+32*8(sp)    # Fake frame ptr.
     
     # Disable extensions before re-entry into the kernel.
     #           VS         FS          XS
-    li   t1, (3 << 9) | (3 << 13) | (3 << 15)
-    csrc sstatus, t1
+    li   t0, (3 << 9) | (3 << 13) | (3 << 15)
+    csrc sstatus, t0
     
     # Call Rust exception handler.
     la gp, __global_pointer$
@@ -160,10 +160,10 @@ riscv_exception_asm:
     addi sp, sp, 16
     
     # Restore context from the stack.
-    ld t1,  33*8(sp)
-    csrw sstatus, t1
-    ld t1,   0*8(sp) # pc
-    csrw sepc, t1
+    ld t0,  33*8(sp)
+    csrw sstatus, t0
+    ld t0,   0*8(sp) # pc
+    csrw sepc, t0
     ld ra,   1*8(sp)
     #  sp    2*8(sp) # deferred
     ld gp,   3*8(sp)
