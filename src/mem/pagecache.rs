@@ -178,6 +178,12 @@ impl PageCache {
         let end_block = (start_block + (1 << self.entry_blocks_exp)).min(block_len);
 
         if start_block >= block_len {
+            logkf!(
+                LogLevel::Error,
+                "BUG: Page cache disk I/O out of bounds: {} (limit {})",
+                start_block,
+                block_len
+            );
             return Err(Errno::ENXIO);
         }
 
@@ -186,12 +192,15 @@ impl PageCache {
                 (paddr + HHDM_OFFSET) as *mut u8,
                 ((end_block - start_block) as usize) << self.block_size_exp,
             );
-            pager.read_blocks(
+            if let Err(x) = pager.read_blocks(
                 start_block,
                 (end_block - start_block) as usize,
                 paddr,
                 &mut *hhdm_slice,
-            )?;
+            ) {
+                logkf!(LogLevel::Error, "Page cache read error: {}", x);
+                return Err(x);
+            }
         }
 
         // Backfill with zeroes past the file's end — only on the last entry.
@@ -226,18 +235,33 @@ impl PageCache {
         let start_block = index << self.entry_blocks_exp;
         let end_block = (start_block + (1 << self.entry_blocks_exp)).min(block_len);
 
+        if start_block >= block_len {
+            logkf!(
+                LogLevel::Error,
+                "BUG: Page cache disk I/O out of bounds: {} (limit {})",
+                start_block,
+                block_len
+            );
+            return Err(Errno::ENXIO);
+        }
+
         unsafe {
             let hhdm_slice = core::ptr::slice_from_raw_parts(
                 (paddr + HHDM_OFFSET) as *const u8,
                 ((end_block - start_block) as usize) << self.block_size_exp,
             );
-            pager.write_blocks(
+            if let Err(x) = pager.write_blocks(
                 start_block,
                 (end_block - start_block) as usize,
                 paddr,
                 &*hhdm_slice,
-            )
+            ) {
+                logkf!(LogLevel::Error, "Page cache write error: {}", x);
+                return Err(x);
+            }
         }
+
+        Ok(())
     }
 
     /// Try to get an existing entry.

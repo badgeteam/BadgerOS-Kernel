@@ -810,8 +810,15 @@ impl VmSpaceInner {
         if existing.is_none() || (access == prot::WRITE && !existing.as_ref().unwrap().0.writable())
         {
             // SAFETY: We know the existing page to be owned by the same range, so it is readable.
-            page =
-                unsafe { guard.alloc_page(page_vaddr - entry.range.start, access == prot::WRITE)? };
+            page = match unsafe {
+                guard.alloc_page(page_vaddr - entry.range.start, access == prot::WRITE)
+            } {
+                Ok(it) => it,
+                Err(err) => {
+                    logkf!(LogLevel::Error, "Demand-paging failed: {}", err);
+                    return Err(err);
+                }
+            };
         } else {
             page = existing.unwrap();
         }

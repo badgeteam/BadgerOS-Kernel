@@ -366,7 +366,7 @@ impl Port {
         debug_assert!(tmp & mask == 0, "Command list issued twice");
         self.work_waitlist.notify();
 
-        let lim = time_us() + 100000;
+        let lim = time_us() + 1000000;
         loop {
             if self.cmd_finish_map.load(Ordering::Relaxed) & mask != 0 {
                 self.cmd_finish_map.fetch_and(!mask, Ordering::Relaxed);

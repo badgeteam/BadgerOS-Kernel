@@ -256,7 +256,7 @@ char const *errno_get_desc(int errno) {
         case ENOTCONN: return "Transport endpoint is not connected";
         case ESHUTDOWN: return "Cannot send after transport endpoint shutdown";
         case ETOOMANYREFS: return "Too many references: cannot splice";
-        case ETIMEDOUT: return "Connection (or other operation) timed out";
+        case ETIMEDOUT: return "Operation timed out";
         case ECONNREFUSED: return "Connection refused";
         case EHOSTDOWN: return "Host is down";
         case EHOSTUNREACH: return "No route to host";
