@@ -544,12 +544,12 @@ impl Scheduler {
 
             // Context switch into new thread.
             cpulocal.arch.set_irq_stack(runtime.irq_stack);
-            let new_stack = runtime.stack_ptr;
+            let new_stack_in = &raw const runtime.stack_ptr;
             cpulocal.thread = Some(next);
 
             // The queue cannot be transmitted through this so we will manually unlock it afterward.
             core::mem::forget(queue);
-            let prev = Arch::context_switch(self, new_stack, old_stack_out);
+            let prev = Arch::context_switch(self, new_stack_in, old_stack_out);
             drop(RawSpinlockGuard::from_raw(&(&*prev).queue.inner()))
         }
     }

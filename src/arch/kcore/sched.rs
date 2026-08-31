@@ -19,7 +19,7 @@ pub trait ArchSched {
     /// Passes thru `sched` so that the new thread knows what CPU it's on without checking the CPU-local data.
     extern "C" fn context_switch(
         sched: *const Scheduler,
-        new_stack: *mut (),
+        new_stack: *const *mut (),
         old_stack_out: *mut *mut (),
     ) -> *const Scheduler;
 

@@ -6,6 +6,7 @@ use crate::{
         kcore::cpulocal::ArchCpuLocal,
         riscv64::csr,
     },
+    bindings::log::LogLevel,
     except::generic_trap,
     kcore::sched::Scheduler,
     misc::panic::unhandled_trap,

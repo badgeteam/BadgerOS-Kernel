@@ -46,7 +46,7 @@ impl ArchSched for Riscv {
     #[unsafe(naked)]
     extern "C" fn context_switch(
         sched: *const Scheduler,
-        new_stack: *mut (),
+        new_stack: *const *mut (),
         old_stack_out: *mut *mut (),
     ) -> *const Scheduler {
         naked_asm!(
@@ -67,7 +67,7 @@ impl ArchSched for Riscv {
             "sd   ra, 8*12(sp)",
             // Swap out stack pointers.
             "sd   sp, 0(a2)",
-            "mv   sp, a1",
+            "ld   sp, 0(a1)",
             // Restore new context from stack.
             "ld   s0, 8*0(sp)",
             "ld   s1, 8*1(sp)",
