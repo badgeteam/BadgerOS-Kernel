@@ -16,7 +16,6 @@ use crate::{
         usermode::ArchUsermode,
     },
     bindings::log::{LogLevel, logkf_unlocked, write_unlocked},
-    mem::vmm::physmap::is_canon_addr,
     process::usercopy::AccessResult,
 };
 
@@ -53,11 +52,6 @@ pub fn unhandled_trap(frame: &TrapFrame) -> ! {
     );
     if let Some(name) = frame.get_name() {
         printf_unlocked!("{}\n", name);
-    }
-    if frame.is_kernel_mode() {
-        write_unlocked("Running in kernel mode\n");
-    } else {
-        write_unlocked("Running in user mode\n");
     }
     if let Some(vaddr) = frame.get_addr() {
         printf_unlocked!("While accessing 0x{:x}\n", vaddr);

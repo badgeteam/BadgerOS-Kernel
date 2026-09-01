@@ -19,3 +19,21 @@ pub mod sstatus {
     pub const SUM_MASK: usize = 1 << SUM_BIT;
     pub const MXR_MASK: usize = 1 << MXR_BIT;
 }
+
+pub mod scause {
+    pub const IALIGN: isize = 0;
+    pub const IACCESS: isize = 1;
+    pub const IILLEGAL: isize = 2;
+    pub const EBREAK: isize = 3;
+    pub const LALIGN: isize = 4;
+    pub const LACCESS: isize = 5;
+    pub const SALIGN: isize = 6;
+    pub const SACCESS: isize = 7;
+    pub const ECALL_U: isize = 8;
+    pub const ECALL_S: isize = 9;
+    pub const IPAGE: isize = 12;
+    pub const LPAGE: isize = 13;
+    pub const SPAGE: isize = 15;
+    pub const SWCHECK: isize = 18;
+    pub const HWERR: isize = 19;
+}

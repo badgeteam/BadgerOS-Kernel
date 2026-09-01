@@ -9,8 +9,8 @@ gen_warning = """
 """
 rust_imports = """
 use crate::{
+    arch::except::{ArchSyscallFrame, SyscallFrame},
     bindings::{error::Errno, log::LogLevel},
-    cpu::thread::{GpRegfile, SpRegfile},
 };
 use core::ffi::*;
 
@@ -402,7 +402,7 @@ def gen_rust_marshalling():
         # Note: `sigret` is special-cased to bypass `regs.set_retval`. Its handler (`exit_signal`)
         # fully replaces `regs` with the previously-interrupted context, and writing a generic
         # return value into `regs.a0` afterward would clobber that just-restored register.
-        fd.write("pub fn dispatch(regs: &mut GpRegfile, sregs: &mut SpRegfile, args: [usize; 6], sysno: usize) {\n")
+        fd.write("pub fn dispatch(frame: &mut SyscallFrame, arg0: usize, arg1: usize, arg2: usize, arg3: usize, arg4: usize, arg5: usize, sysno: usize) {\n")
         fd.write("    let retval: usize;\n")
         
         fd.write("    if unsafe { SYSCALL_TRACE } {\n")
@@ -421,18 +421,18 @@ def gen_rust_marshalling():
             else:
                 fd.write(f"        {syscall.index} => retval = marshal_{syscall.namespace}_{syscall.name}(")
             if syscall.regs:
-                fd.write("regs, sregs")
+                fd.write("frame")
             i = 0
             for param in syscall.params:
                 if i or syscall.regs:
                     fd.write(", ")
                 if param.type.rs_name(False) == 'bool':
-                    fd.write(f"args[{i}] != 0")
+                    fd.write(f"arg{i} != 0")
                 else:
                     if type(param.type) == ArrType and param.type.len == None:
-                        fd.write(f"args[{i}] as _, ")
+                        fd.write(f"arg{i} as _, ")
                         i += 1
-                    fd.write(f"args[{i}] as _")
+                    fd.write(f"arg{i} as _")
                 i += 1
             if no_retval:
                 fd.write("); return; },\n")
@@ -440,7 +440,7 @@ def gen_rust_marshalling():
                 fd.write(") as _,\n")
         fd.write("        _ => retval = -(Errno::ENOSYS as i32) as _,\n")
         fd.write("    }\n")
-        fd.write("    regs.set_retval(retval);\n")
+        fd.write("    frame.set_retval(retval);\n")
         fd.write("}\n")
         
         for syscall in syscalls.values():
@@ -448,8 +448,7 @@ def gen_rust_marshalling():
             with open(f"{template_dir}/{syscall.namespace}.rs", "a") as template:
                 template.write(f"\npub(super) fn {syscall.name}(\n")
                 if syscall.regs:
-                    template.write(f"    regs: &mut GpRegfile,\n")
-                    template.write(f"    sregs: &mut SpRegfile,\n")
+                    template.write(f"    frame: &mut SyscallFrame,\n")
                 for param in syscall.params:
                     template.write(f"    {param.name}: {param.type.rs_name(True)},\n")
                 if syscall.true_returns == None:
@@ -465,10 +464,8 @@ def gen_rust_marshalling():
             marshalstr = ""
             marshalparamstr = ""
             if syscall.regs:
-                paramstr += "    regs: &mut GpRegfile,\n"
-                paramstr += "    sregs: &mut SpRegfile,\n"
-                marshalparamstr += "        regs,\n"
-                marshalparamstr += "        sregs,\n"
+                paramstr += "    frame: &mut SyscallFrame,\n"
+                marshalparamstr += "        frame,\n"
             for param in syscall.params:
                 marshalparamstr += f"        {param.name},\n"
                 (param, marshal) = param.type.marshal(param.name)

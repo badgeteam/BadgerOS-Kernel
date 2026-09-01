@@ -89,6 +89,12 @@ pub fn generic_trap(frame: &mut TrapFrame) {
             "Oops: Unhandled exception {}",
             frame.get_number()
         );
+        if let Some(name) = frame.get_name() {
+            printf!("{}\n", name);
+        }
+        if let Some(vaddr) = frame.get_addr() {
+            printf_unlocked!("While accessing 0x{:x}\n", vaddr);
+        }
         printf!(
             "**** BEGIN OOPS DUMP ****\n{}**** END OOPS DUMP ****\n",
             frame

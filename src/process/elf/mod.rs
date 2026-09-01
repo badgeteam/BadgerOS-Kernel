@@ -6,7 +6,10 @@ use alloc::vec::Vec;
 use bytemuck_derive::{AnyBitPattern, NoUninit};
 
 use crate::{
-    bindings::error::{EResult, Errno},
+    bindings::{
+        error::{EResult, Errno},
+        log::LogLevel,
+    },
     config::PAGE_SIZE,
     filesystem::{self, File, oflags},
     mem::vmm::{
@@ -246,8 +249,20 @@ pub fn load_impl(
     } else {
         0
     };
+    logkf!(
+        LogLevel::Debug,
+        "{} load offset: 0x{:x}",
+        if is_interp { "interp" } else { "exec" },
+        load_offset
+    );
 
     let mut entry = (header.entry as usize).wrapping_add(load_offset);
+    logkf!(
+        LogLevel::Debug,
+        "{} entry: 0x{:x}",
+        if is_interp { "interp" } else { "exec" },
+        entry
+    );
     auxv.push(AuxvEntry {
         type_: AT_ENTRY,
         value: entry,

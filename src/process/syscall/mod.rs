@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: CC0
 
 use crate::{
+    arch::except::{ArchSyscallFrame, SyscallFrame},
     bindings::{error::Errno, log::LogLevel},
-    cpu::thread::{GpRegfile, SpRegfile},
 };
 use core::ffi::*;
 
@@ -17,16 +17,16 @@ use super::{
     usercopy::{UserPtr, UserPtrMut, UserSlice, UserSliceMut},
 };
 
-pub mod thread;
-pub mod proc;
-pub mod mem;
 pub mod time;
+pub mod mem;
+pub mod proc;
+pub mod thread;
 pub mod fs;
 pub mod sys;
 
 pub static mut SYSCALL_TRACE: bool = false;
 
-pub fn dispatch(regs: &mut GpRegfile, sregs: &mut SpRegfile, args: [usize; 6], sysno: usize) {
+pub fn dispatch(frame: &mut SyscallFrame, arg0: usize, arg1: usize, arg2: usize, arg3: usize, arg4: usize, arg5: usize, sysno: usize) {
     let retval: usize;
     if unsafe { SYSCALL_TRACE } {
         match sysno {
@@ -82,55 +82,55 @@ pub fn dispatch(regs: &mut GpRegfile, sregs: &mut SpRegfile, args: [usize; 6], s
     }
     match sysno {
         0 => retval = marshal_thread_yield_time() as _,
-        1 => retval = marshal_thread_sleep(args[0] as _) as _,
-        2 => retval = marshal_thread_create(args[0] as _, args[1] as _, args[2] as _) as _,
-        3 => retval = marshal_thread_detach(args[0] as _) as _,
-        4 => retval = marshal_thread_join(args[0] as _) as _,
-        5 => retval = marshal_thread_exit(args[0] as _) as _,
-        6 => retval = marshal_proc_exit(args[0] as _) as _,
-        7 => retval = marshal_proc_fork(regs, sregs) as _,
-        8 => retval = marshal_proc_exec(args[0] as _, args[1] as _, args[2] as _) as _,
-        9 => retval = marshal_proc_sigaction(args[0] as _, args[1] as _, args[2] as _) as _,
-        10 => { marshal_proc_sigret(regs, sregs); return; },
-        11 => retval = marshal_proc_waitpid(args[0] as _, args[1] as _, args[2] as _) as _,
-        12 => retval = marshal_fs_open(args[0] as _, args[1] as _, args[2] as _) as _,
-        13 => retval = marshal_fs_close(args[0] as _) as _,
-        14 => retval = marshal_fs_read(args[0] as _, args[1] as _, args[2] as _) as _,
-        15 => retval = marshal_fs_write(args[0] as _, args[1] as _, args[2] as _) as _,
-        16 => retval = marshal_fs_getdents(args[0] as _, args[1] as _, args[2] as _) as _,
-        17 => retval = marshal_fs_rename(args[0] as _, args[1] as _, args[2] as _, args[3] as _, args[4] as _) as _,
-        18 => retval = marshal_fs_stat(args[0] as _, args[1] as _, args[2] != 0, args[3] as _) as _,
-        19 => retval = marshal_fs_mkdir(args[0] as _, args[1] as _) as _,
-        20 => retval = marshal_fs_rmdir(args[0] as _, args[1] as _) as _,
-        21 => retval = marshal_fs_link(args[0] as _, args[1] as _, args[2] as _, args[3] as _, args[4] as _) as _,
-        22 => retval = marshal_fs_unlink(args[0] as _, args[1] as _) as _,
-        23 => retval = marshal_fs_mkfifo(args[0] as _, args[1] as _) as _,
-        24 => retval = marshal_fs_pipe(args[0] as _, args[1] as _) as _,
-        25 => retval = marshal_fs_seek(args[0] as _, args[1] as _, args[2] as _) as _,
-        26 => retval = marshal_mem_map(args[0] as _, args[1] as _, args[2] as _, args[3] as _, args[4] as _, args[5] as _) as _,
-        27 => retval = marshal_mem_unmap(args[0] as _, args[1] as _) as _,
-        28 => retval = marshal_mem_protect(args[0] as _, args[1] as _, args[2] as _) as _,
-        29 => retval = marshal_sys_log(args[0] as _, args[1] as _) as _,
-        30 => retval = marshal_time_gettime(args[0] as _, args[1] as _) as _,
-        31 => retval = marshal_thread_kill(args[0] as _, args[1] as _) as _,
-        32 => retval = marshal_proc_kill(args[0] as _, args[1] as _) as _,
-        33 => retval = marshal_proc_getid(args[0] as _) as _,
-        34 => retval = marshal_fs_symlink(args[0] as _, args[1] as _, args[2] as _) as _,
-        35 => retval = marshal_fs_dup(args[0] as _, args[1] as _, args[2] as _) as _,
-        36 => retval = marshal_thread_sigmask(args[0] as _, args[1] as _, args[2] as _) as _,
-        37 => retval = marshal_sys_uname(args[0] as _) as _,
-        38 => retval = marshal_fs_isatty(args[0] as _) as _,
-        39 => retval = marshal_fs_tcgetattr(args[0] as _, args[1] as _) as _,
-        40 => retval = marshal_fs_tcsetattr(args[0] as _, args[1] as _) as _,
-        41 => retval = marshal_fs_getcwd(args[0] as _, args[1] as _) as _,
-        42 => retval = marshal_fs_chdir(args[0] as _, args[1] as _) as _,
-        43 => retval = marshal_fs_getfd(args[0] as _) as _,
-        44 => retval = marshal_fs_setfd(args[0] as _, args[1] as _) as _,
-        45 => retval = marshal_fs_getfl(args[0] as _) as _,
-        46 => retval = marshal_fs_setfl(args[0] as _, args[1] as _) as _,
+        1 => retval = marshal_thread_sleep(arg0 as _) as _,
+        2 => retval = marshal_thread_create(arg0 as _, arg1 as _, arg2 as _) as _,
+        3 => retval = marshal_thread_detach(arg0 as _) as _,
+        4 => retval = marshal_thread_join(arg0 as _) as _,
+        5 => retval = marshal_thread_exit(arg0 as _) as _,
+        6 => retval = marshal_proc_exit(arg0 as _) as _,
+        7 => retval = marshal_proc_fork(frame) as _,
+        8 => retval = marshal_proc_exec(arg0 as _, arg1 as _, arg2 as _) as _,
+        9 => retval = marshal_proc_sigaction(arg0 as _, arg1 as _, arg2 as _) as _,
+        10 => { marshal_proc_sigret(frame); return; },
+        11 => retval = marshal_proc_waitpid(arg0 as _, arg1 as _, arg2 as _) as _,
+        12 => retval = marshal_fs_open(arg0 as _, arg1 as _, arg2 as _) as _,
+        13 => retval = marshal_fs_close(arg0 as _) as _,
+        14 => retval = marshal_fs_read(arg0 as _, arg1 as _, arg2 as _) as _,
+        15 => retval = marshal_fs_write(arg0 as _, arg1 as _, arg2 as _) as _,
+        16 => retval = marshal_fs_getdents(arg0 as _, arg1 as _, arg2 as _) as _,
+        17 => retval = marshal_fs_rename(arg0 as _, arg1 as _, arg2 as _, arg3 as _, arg4 as _) as _,
+        18 => retval = marshal_fs_stat(arg0 as _, arg1 as _, arg2 != 0, arg3 as _) as _,
+        19 => retval = marshal_fs_mkdir(arg0 as _, arg1 as _) as _,
+        20 => retval = marshal_fs_rmdir(arg0 as _, arg1 as _) as _,
+        21 => retval = marshal_fs_link(arg0 as _, arg1 as _, arg2 as _, arg3 as _, arg4 as _) as _,
+        22 => retval = marshal_fs_unlink(arg0 as _, arg1 as _) as _,
+        23 => retval = marshal_fs_mkfifo(arg0 as _, arg1 as _) as _,
+        24 => retval = marshal_fs_pipe(arg0 as _, arg1 as _) as _,
+        25 => retval = marshal_fs_seek(arg0 as _, arg1 as _, arg2 as _) as _,
+        26 => retval = marshal_mem_map(arg0 as _, arg1 as _, arg2 as _, arg3 as _, arg4 as _, arg5 as _) as _,
+        27 => retval = marshal_mem_unmap(arg0 as _, arg1 as _) as _,
+        28 => retval = marshal_mem_protect(arg0 as _, arg1 as _, arg2 as _) as _,
+        29 => retval = marshal_sys_log(arg0 as _, arg1 as _) as _,
+        30 => retval = marshal_time_gettime(arg0 as _, arg1 as _) as _,
+        31 => retval = marshal_thread_kill(arg0 as _, arg1 as _) as _,
+        32 => retval = marshal_proc_kill(arg0 as _, arg1 as _) as _,
+        33 => retval = marshal_proc_getid(arg0 as _) as _,
+        34 => retval = marshal_fs_symlink(arg0 as _, arg1 as _, arg2 as _) as _,
+        35 => retval = marshal_fs_dup(arg0 as _, arg1 as _, arg2 as _) as _,
+        36 => retval = marshal_thread_sigmask(arg0 as _, arg1 as _, arg2 as _) as _,
+        37 => retval = marshal_sys_uname(arg0 as _) as _,
+        38 => retval = marshal_fs_isatty(arg0 as _) as _,
+        39 => retval = marshal_fs_tcgetattr(arg0 as _, arg1 as _) as _,
+        40 => retval = marshal_fs_tcsetattr(arg0 as _, arg1 as _) as _,
+        41 => retval = marshal_fs_getcwd(arg0 as _, arg1 as _) as _,
+        42 => retval = marshal_fs_chdir(arg0 as _, arg1 as _) as _,
+        43 => retval = marshal_fs_getfd(arg0 as _) as _,
+        44 => retval = marshal_fs_setfd(arg0 as _, arg1 as _) as _,
+        45 => retval = marshal_fs_getfl(arg0 as _) as _,
+        46 => retval = marshal_fs_setfl(arg0 as _, arg1 as _) as _,
         _ => retval = -(Errno::ENOSYS as i32) as _,
     }
-    regs.set_retval(retval);
+    frame.set_retval(retval);
 }
 
 fn marshal_thread_yield_time(
@@ -213,12 +213,10 @@ fn marshal_proc_exit(
 }
 
 fn marshal_proc_fork(
-    regs: &mut GpRegfile,
-    sregs: &mut SpRegfile,
+    frame: &mut SyscallFrame,
 ) -> PID {
     match proc::fork(
-        regs,
-        sregs,
+        frame,
     ) {
         Ok(x) => x as PID,
         Err(x) => -(x as u32 as PID),
@@ -264,12 +262,10 @@ fn marshal_proc_sigaction(
 }
 
 fn marshal_proc_sigret(
-    regs: &mut GpRegfile,
-    sregs: &mut SpRegfile,
+    frame: &mut SyscallFrame,
 ) -> c_int {
     match proc::sigret(
-        regs,
-        sregs,
+        frame,
     ) {
         Ok(()) => 0,
         Err(x) => -(x as u32 as c_int),

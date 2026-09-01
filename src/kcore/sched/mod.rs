@@ -16,10 +16,10 @@ use crate::{
         except::ArchExcept,
         kcore::{
             cpulocal::{ArchCpuLocal, ArchCpuLocalData},
-            sched::ArchSched,
+            sched::{ArchSched, FloatState},
             timer::ArchTimer,
         },
-        usermode::ArchUsermode,
+        usermode::{ArchUsermode, KernelRegs},
     },
     badgelib::irq::IrqGuard,
     bindings::{error::EResult, raw::timestamp_us_t, time_us},
@@ -78,11 +78,11 @@ pub struct ThreadRuntime {
     /// Stack pointer to use for interrupts.
     pub irq_stack: *mut (),
     /// Context for running in userspace.
-    pub uctx: <Arch as ArchUsermode>::KernelRegs,
+    pub uctx: KernelRegs,
     /// Timestamp until which to keep the thread blocked.
     pub timeout: timestamp_us_t,
     /// Float and/or vector state.
-    pub fstate: <Arch as ArchSched>::FloatState,
+    pub fstate: FloatState,
     /// Alternate signal stack.
     pub sigaltstack: stack_t,
     /// Masked signals; anything in this set delivered asynchronously will be ignored.

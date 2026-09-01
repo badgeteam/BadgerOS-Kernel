@@ -4,13 +4,10 @@
 use alloc::{ffi::CString, sync::Arc, vec::Vec};
 
 use crate::{
+    arch::{Arch, except::SyscallFrame, usermode::ArchUsermode},
     bindings::{
         error::{EResult, Errno},
         log::LogLevel,
-    },
-    cpu::{
-        self,
-        thread::{GpRegfile, SpRegfile},
     },
     kcore::sched::Thread,
     process::{
@@ -20,6 +17,7 @@ use crate::{
             self,
             signal::{__sa_handler_union, NSIG, SI_USER, SIG_DFL, Signal, sigaction, siginfo_t},
             sigset::sigset_t,
+            wait::w_exited,
         },
         usercopy::{self, UserPtr, UserPtrMut},
     },
@@ -27,16 +25,13 @@ use crate::{
 use core::{ffi::*, ptr::null};
 
 pub(super) fn exit(code: c_int) -> EResult<()> {
-    // W_EXITED.
-    let status = (code & 255) << 8;
-    current().unwrap().die(status);
-    // Nothing needs to be dropped in the scope from which this would be called.
-    unsafe { (*Thread::current()).die() };
+    current().unwrap().die(w_exited(code));
+    Ok(())
 }
 
-pub(super) fn fork(regs: &mut GpRegfile, _sregs: &mut SpRegfile) -> EResult<PID> {
+pub(super) fn fork(frame: &SyscallFrame) -> EResult<PID> {
     let proc = current().unwrap();
-    proc.fork(regs).map(|x| x.pid)
+    proc.fork(frame).map(|x| x.pid)
 }
 
 pub(super) fn exec(path: *const u8, argv: *const *const u8, envp: *const *const u8) -> EResult<()> {
@@ -122,13 +117,20 @@ pub(super) fn sigaction(
     Ok(())
 }
 
-pub(super) fn sigret(regs: &mut GpRegfile, sregs: &mut SpRegfile) -> EResult<()> {
-    if unsafe { cpu::usermode::exit_signal(regs, sregs) }.is_err() {
-        signal_die(Signal::SIGSEGV as i32);
-    }
+pub(super) fn sigret(frame: &SyscallFrame) -> EResult<()> {
+    logkf!(LogLevel::Debug, "syscall proc::sigret frame:\n{}", frame);
 
-    logkf!(LogLevel::Debug, "regs:\n{}", regs);
-    logkf!(LogLevel::Debug, "sregs:\n{}", sregs);
+    if let Err(x) = Arch::exit_signal(frame) {
+        let proc = current().unwrap();
+        logkf!(
+            LogLevel::Error,
+            "Process {} cannot enter signal: {}",
+            proc.pid,
+            x
+        );
+        signal_die(Signal::SIGSEGV as i32);
+        return Err(x);
+    }
 
     Ok(())
 }

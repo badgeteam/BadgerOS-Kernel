@@ -5,7 +5,11 @@
 use core::{ffi::c_void, ptr::null};
 
 use crate::{
-    arch::except::{ArchTrapFrame, TrapFrame},
+    arch::{
+        Arch,
+        except::{ArchTrapFrame, TrapFrame},
+        usermode::ArchUsermode,
+    },
     bindings::{error::Errno, log::LogLevel},
     kcore::sched::Thread,
     process::{self, uapi::wait::w_signalled},
@@ -116,7 +120,7 @@ pub fn run_handler(siginfo: siginfo_t, frame: &mut TrapFrame) {
     let guard = proc.sigtab.unintr_lock_shared();
     let action = guard.table[siginfo.si_signo as usize];
     let handler = unsafe { action.__sa_handler.sa_handler as *mut c_void };
-    let returner = action.sa_restorer as usize;
+    let returner = action.sa_restorer as *const ();
 
     if handler == SIG_DFL {
         use super::uapi::signal::Signal::*;
@@ -146,12 +150,16 @@ pub fn run_handler(siginfo: siginfo_t, frame: &mut TrapFrame) {
         return;
     }
 
-    todo!();
-    // let res = unsafe { enter_signal(siginfo, handler as usize, returner, frame, sregs) };
-    // if res.is_err() {
-    //     signal_die(Signal::SIGSEGV as i32);
-    //     return;
-    // }
+    if let Err(x) = Arch::enter_signal(frame, siginfo, handler as *const (), returner) {
+        logkf!(
+            LogLevel::Error,
+            "Process {} cannot enter signal: {}",
+            proc.pid,
+            x
+        );
+        signal_die(Signal::SIGSEGV as i32);
+        return;
+    }
 
     let runtime = unsafe { (&*Thread::current()).runtime() };
     if (action.sa_flags & SA_NODEFER) == 0 {

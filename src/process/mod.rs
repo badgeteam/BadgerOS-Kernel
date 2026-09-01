@@ -31,7 +31,11 @@ use uapi::{
 use usercopy::{AccessResult, UserSlice, UserSliceMut};
 
 use crate::{
-    arch::except::SyscallFrame,
+    arch::{
+        Arch,
+        except::SyscallFrame,
+        usermode::{ArchUserRegs, ArchUsermode, UserRegs},
+    },
     bindings::{
         error::{EResult, Errno},
         log::LogLevel,
@@ -56,7 +60,7 @@ use crate::{
 pub mod elf;
 pub mod files;
 pub mod signal;
-// pub mod syscall;
+pub mod syscall;
 pub mod uapi;
 pub mod usercopy;
 
@@ -222,7 +226,7 @@ impl Process {
 
     /// Create the init process.
     pub fn new_init() -> EResult<Arc<Process>> {
-        // unsafe { syscall::SYSCALL_TRACE = kparam::get_kparam("SYSCALL_TRACE").is_some() };
+        unsafe { syscall::SYSCALL_TRACE = kparam::get_kparam("SYSCALL_TRACE").is_some() };
 
         // This assert enforces init isn't accidentally created twice.
         assert!(PID_COUNTER.fetch_add(1, Ordering::Relaxed) == 1);
@@ -282,7 +286,7 @@ impl Process {
     }
 
     /// Fork this process.
-    pub fn fork(self: &Arc<Self>, regs: &SyscallFrame) -> EResult<Arc<Process>> {
+    pub fn fork(self: &Arc<Self>, frame: &SyscallFrame) -> EResult<Arc<Process>> {
         let pid = PID_COUNTER.fetch_add(1, Ordering::Relaxed);
 
         let child = Process {
@@ -309,19 +313,22 @@ impl Process {
         let mut pcr = self.pcr.unintr_lock();
         let mut processes = PROCESSES.unintr_lock();
 
-        // let mut regs2 = regs.clone();
+        let regs = UserRegs::fork_from(frame);
         let child2 = child.clone();
         let thread = Thread::new(
             move || {
                 // Apply the newly-forked memory map.
+                let current;
+                let runtime;
                 unsafe {
-                    (*Thread::current()).runtime().memmap = child2.memmap();
+                    current = &*Thread::current();
+                    runtime = current.runtime();
+                    runtime.memmap = child2.memmap();
                     child2.memmap().enable();
                 }
 
                 // Clone the calling thread and start it.
-                // regs2.set_retval(0);
-                // call_usermode(&regs2);
+                unsafe { Arch::enter_usermode(&regs) };
 
                 // TODO: Clean up the stack.
             },
@@ -563,8 +570,12 @@ impl Process {
         let thread = Thread::new(
             move || {
                 // Enable the process' memory map.
+                let current;
+                let runtime;
                 unsafe {
-                    (&*Thread::current()).runtime().memmap = proc_self.memmap();
+                    current = &*Thread::current();
+                    runtime = current.runtime();
+                    runtime.memmap = proc_self.memmap();
                     proc_self.memmap().enable();
                 }
 
@@ -573,10 +584,8 @@ impl Process {
                 let (pc, sp) = setup(u_stack_top);
 
                 // Call user mode.
-                // let mut regs = GpRegfile::default();
-                // regs.set_pc(pc as _);
-                // regs.set_stack(sp as _);
-                // call_usermode(&regs);
+                let regs = UserRegs::new(pc as _, sp as _);
+                unsafe { Arch::enter_usermode(&regs) };
 
                 // Clean up the stack.
                 let _ = proc_self

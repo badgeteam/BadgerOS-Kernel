@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: CC0
 
 use crate::{
+    arch::{Arch, ArchTrait},
     bindings::{error::EResult, raw::rawputc},
-    cpu,
     process::{
         uapi::uname::utsname,
         usercopy::{UserPtrMut, UserSlice},
@@ -14,7 +14,7 @@ use crate::{
 pub(super) fn uname(mut name: UserPtrMut<utsname>) -> EResult<()> {
     let mut utsname = utsname::default();
     utsname.sysname.assign("BadgerOS");
-    utsname.machine.assign(cpu::MACHINE_NAME);
+    utsname.machine.assign(Arch::MACHINE);
     utsname.release.assign(version::RELEASE);
     utsname.release.assign(version::VERSION);
 
