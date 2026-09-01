@@ -20,6 +20,16 @@ pub mod sstatus {
     pub const MXR_MASK: usize = 1 << MXR_BIT;
 }
 
+pub mod sip_sie {
+    pub const SSIP_BIT: u8 = 1;
+    pub const STIP_BIT: u8 = 5;
+    pub const SEIP_BIT: u8 = 9;
+
+    pub const SSIP_MASK: usize = 1 << SSIP_BIT;
+    pub const STIP_MASK: usize = 1 << STIP_BIT;
+    pub const SEIP_MASK: usize = 1 << SEIP_BIT;
+}
+
 pub mod scause {
     pub const IALIGN: isize = 0;
     pub const IACCESS: isize = 1;

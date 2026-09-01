@@ -7,7 +7,7 @@ use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use crate::{
     arch::{
         Arch, ArchTrait,
-        kcore::{cpulocal::ArchCpuLocal, smp::ArchSmp},
+        kcore::{cpulocal::ArchCpuLocal, smp::ArchSmp, timer::ArchTimer},
     },
     bindings::{
         log::{LogLevel, logk_unlocked},
@@ -88,7 +88,8 @@ unsafe fn general_init() {
         device::init();
 
         // Scheduler is already running on BSP so we start the tick timer retroactively for it.
-        // cpu::timer::start_tick_timer();
+        Arch::start_tick_timer();
+        Thread::new(|| loop {}, None, None);
 
         // Bring up APs.
         // smp_ok = match smp::poweron_all_aps() {

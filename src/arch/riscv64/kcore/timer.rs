@@ -3,7 +3,7 @@ use core::arch::asm;
 use crate::{
     arch::{
         kcore::timer::ArchTimer,
-        riscv64::{Riscv, sbi},
+        riscv64::{Riscv, csr, sbi},
     },
     bindings::log::LogLevel,
     config,
@@ -30,7 +30,26 @@ fn time_ticks() -> u64 {
 }
 
 impl ArchTimer for Riscv {
-    fn start_tick_timer() {}
+    fn start_tick_timer() {
+        // SAFETY: These values are only written to during initialization.
+        let interval = unsafe { TICK_INTERVAL } as u64;
+        if interval == 0 {
+            // Don't know how fast the timer is yet so won't start the interrupt.
+            return;
+        }
+
+        let now = time_ticks();
+        let next_tick = now + interval - now % interval;
+
+        if unsafe { SUPPORTS_SBI_TIME } {
+            sbi::timer::set_timer(next_tick + unsafe { BASE_TICK }).unwrap();
+        } else {
+            sbi::legacy::set_timer(next_tick - now).unwrap();
+        }
+
+        // SAFETY: This enables the timer interrupt, not interrupts globally.
+        unsafe { asm!("csrs sie, {}", in(reg)csr::sip_sie::STIP_MASK) };
+    }
 
     #[cfg(feature = "dtb")]
     fn timer_init_dtb(cpus_node: &dtb::DtbNode) {
@@ -73,26 +92,4 @@ fn init_common() {
     } else {
         logkf!(LogLevel::Info, "Using legacy SBI timer");
     }
-}
-
-/// Start the timer for the next tick interval.
-pub fn start_tick_timer() {
-    // SAFETY: These values are only written to during initialization.
-    let interval = unsafe { TICK_INTERVAL } as u64;
-    if interval == 0 {
-        // Don't know how fast the timer is yet so won't start the interrupt.
-        return;
-    }
-
-    let now = time_ticks();
-    let next_tick = now + interval - now % interval;
-
-    if unsafe { SUPPORTS_SBI_TIME } {
-        sbi::timer::set_timer(next_tick + unsafe { BASE_TICK }).unwrap();
-    } else {
-        sbi::legacy::set_timer(next_tick - now).unwrap();
-    }
-
-    // SAFETY: This enables the timer interrupt, not interrupts globally.
-    unsafe { asm!("csrs sie, {}", in(reg)(1 << 5)) };
 }
