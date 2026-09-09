@@ -18,6 +18,14 @@ pub mod sstatus {
     pub const XS_MASK: usize = 3 << XS_BIT;
     pub const SUM_MASK: usize = 1 << SUM_BIT;
     pub const MXR_MASK: usize = 1 << MXR_BIT;
+
+    pub mod xs {
+        pub const OFF: usize = 0;
+        pub const INIT: usize = 1;
+        pub const CLEAN: usize = 2;
+        pub const DIRTY: usize = 3;
+        pub const MASK: usize = 3;
+    }
 }
 
 pub mod sip_sie {

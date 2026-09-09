@@ -6,14 +6,14 @@ use core::{
 use crate::{
     arch::{
         kcore::{cpulocal::ArchCpuLocal, sched::ArchSched},
-        riscv64::Riscv,
+        riscv64::{Riscv, lazy::float::RiscvLazyFloat},
     },
     badgelib::irq::IrqGuard,
     kcore::sched::{Scheduler, Thread},
 };
 
 impl ArchSched for Riscv {
-    type FloatState = ();
+    type ThreadArchState = RiscvLazyFloat;
 
     #[inline(never)]
     fn current_thread() -> *const Thread {

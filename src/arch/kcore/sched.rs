@@ -5,8 +5,8 @@ use crate::{
 
 /// Scheduler context trait.
 pub trait ArchSched {
-    /// Floating-point save-state.
-    type FloatState: Default + Sized + Copy;
+    /// Architecture-specific thread state.
+    type ThreadArchState: Default + Sized + Copy;
 
     /// Get a pointer to the currently running thread, if any.
     fn current_thread() -> *const Thread;
@@ -27,4 +27,4 @@ pub trait ArchSched {
     fn pause_hint() {}
 }
 
-pub type FloatState = <Arch as ArchSched>::FloatState;
+pub type ThreadArchState = <Arch as ArchSched>::ThreadArchState;

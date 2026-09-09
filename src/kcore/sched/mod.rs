@@ -16,7 +16,7 @@ use crate::{
         except::ArchExcept,
         kcore::{
             cpulocal::{ArchCpuLocal, ArchCpuLocalData},
-            sched::{ArchSched, FloatState},
+            sched::{ArchSched, ThreadArchState},
             timer::ArchTimer,
         },
         usermode::{ArchUsermode, KernelRegs},
@@ -81,8 +81,8 @@ pub struct ThreadRuntime {
     pub uctx: KernelRegs,
     /// Timestamp until which to keep the thread blocked.
     pub timeout: timestamp_us_t,
-    /// Float and/or vector state.
-    pub fstate: FloatState,
+    /// Architecture-specific thread state.
+    pub arch: ThreadArchState,
     /// Alternate signal stack.
     pub sigaltstack: stack_t,
     /// Masked signals; anything in this set delivered asynchronously will be ignored.
@@ -121,7 +121,7 @@ impl ThreadRuntime {
                 stack_ptr,
                 uctx: <Arch as ArchUsermode>::KernelRegs::default(),
                 timeout: 0,
-                fstate: <Arch as ArchSched>::FloatState::default(),
+                arch: <Arch as ArchSched>::ThreadArchState::default(),
                 sigaltstack: stack_t::default(),
                 sigprocmask: sigset_t::default(),
                 memmap: null(),

@@ -5,6 +5,7 @@ pub struct Riscv;
 pub mod csr;
 pub mod except;
 pub mod kcore;
+pub mod lazy;
 pub mod misc;
 pub mod mmu;
 pub mod sbi;

@@ -8,7 +8,7 @@ use crate::{
     arch::{
         except::{ArchExcept, ArchSyscallFrame, ArchTrapFrame, TrapCause},
         kcore::cpulocal::ArchCpuLocal,
-        riscv64::{Riscv, RiscvRegfile, csr, kcore::cpulocal::RiscvCpuLocalData},
+        riscv64::{Riscv, RiscvRegfile, csr, kcore::cpulocal::RiscvCpuLocalData, lazy},
         usermode::ArchUsermode,
     },
     except::generic_trap,
@@ -25,6 +25,7 @@ unsafe extern "C" {
 }
 
 /// Run an ASM instruction and return true if it causes an exception.
+#[macro_export]
 macro_rules! noexc_asm {
     (
         $code: literal
@@ -306,15 +307,14 @@ impl ArchTrapFrame for RiscvExceptFrame {
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn riscv_exception_handler(frame: &mut RiscvExceptFrame) {
+    lazy::save_lazy_state(frame);
+
     if frame.scause < 0 && frame.scause & 0xff == 5 {
         // Timer interrupt.
         unsafe {
             (*Scheduler::get()).tick_interrupt(!frame.is_kernel_mode());
         }
-        return;
-    }
-
-    if frame.scause < 0 {
+    } else if frame.scause < 0 {
         // External or software interrupt.
         unsafe {
             // Low cause bits: 1 = supervisor software, 9 = supervisor external.
@@ -345,7 +345,9 @@ unsafe extern "C" fn riscv_exception_handler(frame: &mut RiscvExceptFrame) {
     } else {
         Riscv::enable_irq();
 
-        // TODO: Lazy-FPU init.
+        if lazy::check_lazy_init_state(frame) {
+            return;
+        }
         generic_trap(frame);
 
         unsafe {
@@ -357,6 +359,8 @@ unsafe extern "C" fn riscv_exception_handler(frame: &mut RiscvExceptFrame) {
         }
         Riscv::disable_irq();
     }
+
+    lazy::load_lazy_state(frame);
 }
 
 global_asm!(
