@@ -280,6 +280,9 @@ impl ArchUserRegs for RiscvRegfile {
     }
 
     fn fork_from(frame: &RiscvExceptFrame) -> Self {
-        frame.regs
+        Self {
+            a0: 0,
+            ..frame.regs
+        }
     }
 }
