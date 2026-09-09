@@ -45,36 +45,11 @@ fn check_demand_paging(is_kernel_mode: bool, vaddr: usize, access: u8) -> bool {
     }
 
     let mm = unsafe { (*current).runtime().memmap };
-    let res = if mm.is_null() {
+    if mm.is_null() {
         kernel_mm().fault(vaddr, access, 1).is_ok()
     } else {
         unsafe { (*mm).fault(vaddr, access, 1).is_ok() }
-    };
-
-    if res {
-        logkf!(
-            LogLevel::Debug,
-            "Demand-paged at vaddr 0x{:x} access {}{}{}",
-            vaddr,
-            if access & vmm::prot::READ != 0 {
-                "R"
-            } else {
-                "-"
-            },
-            if access & vmm::prot::WRITE != 0 {
-                "W"
-            } else {
-                "-"
-            },
-            if access & vmm::prot::EXEC != 0 {
-                "X"
-            } else {
-                "-"
-            }
-        );
     }
-
-    res
 }
 
 /// Generic exception handler.
