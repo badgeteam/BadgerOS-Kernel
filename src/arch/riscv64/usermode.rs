@@ -182,7 +182,7 @@ impl ArchUsermode for Riscv {
             let runtime = (*thread).runtime();
 
             enter_usermode_impl(
-                &mut (*cpulocal).arch.irq_stack,
+                &mut (*cpulocal).arch.irq_sp,
                 &mut runtime.irq_stack,
                 &mut runtime.uctx,
                 load,

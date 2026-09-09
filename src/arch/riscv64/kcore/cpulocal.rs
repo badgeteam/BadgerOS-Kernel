@@ -29,12 +29,14 @@ impl ArchCpuLocal for Riscv {
 #[repr(C)]
 #[derive(Default)]
 pub struct RiscvCpuLocalData {
-    pub scratch: [usize; 3],
-    pub irq_stack: *mut (),
+    pub old_t0: usize,
+    pub old_tp: usize,
+    pub old_sp: usize,
+    pub irq_sp: *mut (),
 }
 
 impl ArchCpuLocalData for RiscvCpuLocalData {
     fn set_irq_stack(&mut self, sp: *mut ()) {
-        self.irq_stack = sp;
+        self.irq_sp = sp;
     }
 }

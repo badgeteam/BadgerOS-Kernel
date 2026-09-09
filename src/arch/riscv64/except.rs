@@ -1,10 +1,14 @@
-use core::{arch::asm, fmt::Display};
+use core::{
+    arch::{asm, global_asm},
+    fmt::Display,
+    mem::{offset_of, size_of},
+};
 
 use crate::{
     arch::{
         except::{ArchExcept, ArchSyscallFrame, ArchTrapFrame, TrapCause},
         kcore::cpulocal::ArchCpuLocal,
-        riscv64::csr,
+        riscv64::{Riscv, RiscvRegfile, csr, kcore::cpulocal::RiscvCpuLocalData},
         usermode::ArchUsermode,
     },
     except::generic_trap,
@@ -12,8 +16,6 @@ use crate::{
     misc::panic::unhandled_trap,
     process,
 };
-
-use super::{Riscv, RiscvRegfile};
 
 unsafe extern "C" {
     pub fn riscv_exception_vector();
@@ -240,3 +242,53 @@ unsafe extern "C" fn riscv_exception_handler(frame: &mut RiscvExceptFrame) {
 
     Riscv::disable_irq();
 }
+
+global_asm!(
+    include_str!("except.S"),
+
+    sstatus_spp_mask = const csr::sstatus::SPP_MASK,
+
+    ArchCpuLocalData_old_t0 = const offset_of!(RiscvCpuLocalData, old_t0),
+    ArchCpuLocalData_old_tp = const offset_of!(RiscvCpuLocalData, old_tp),
+    ArchCpuLocalData_old_sp = const offset_of!(RiscvCpuLocalData, old_sp),
+    ArchCpuLocalData_irq_sp = const offset_of!(RiscvCpuLocalData, irq_sp),
+
+    RiscvExceptFrame_size    = const size_of::<RiscvExceptFrame>(),
+    RiscvExceptFrame_fake_fp = const offset_of!(RiscvExceptFrame, fake_fp),
+    RiscvExceptFrame_sstatus = const offset_of!(RiscvExceptFrame, sstatus),
+    RiscvExceptFrame_scause  = const offset_of!(RiscvExceptFrame, scause),
+    RiscvExceptFrame_stval   = const offset_of!(RiscvExceptFrame, stval),
+
+    RiscvExceptFrame_pc   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, pc),
+    RiscvExceptFrame_ra   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, ra),
+    RiscvExceptFrame_sp   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, sp),
+    RiscvExceptFrame_gp   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, gp),
+    RiscvExceptFrame_tp   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, tp),
+    RiscvExceptFrame_t0   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, t0),
+    RiscvExceptFrame_t1   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, t1),
+    RiscvExceptFrame_t2   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, t2),
+    RiscvExceptFrame_s0   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, s0),
+    RiscvExceptFrame_s1   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, s1),
+    RiscvExceptFrame_a0   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, a0),
+    RiscvExceptFrame_a1   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, a1),
+    RiscvExceptFrame_a2   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, a2),
+    RiscvExceptFrame_a3   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, a3),
+    RiscvExceptFrame_a4   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, a4),
+    RiscvExceptFrame_a5   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, a5),
+    RiscvExceptFrame_a6   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, a6),
+    RiscvExceptFrame_a7   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, a7),
+    RiscvExceptFrame_s2   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, s2),
+    RiscvExceptFrame_s3   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, s3),
+    RiscvExceptFrame_s4   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, s4),
+    RiscvExceptFrame_s5   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, s5),
+    RiscvExceptFrame_s6   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, s6),
+    RiscvExceptFrame_s7   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, s7),
+    RiscvExceptFrame_s8   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, s8),
+    RiscvExceptFrame_s9   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, s9),
+    RiscvExceptFrame_s10  = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, s10),
+    RiscvExceptFrame_s11  = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, s11),
+    RiscvExceptFrame_t3   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, t3),
+    RiscvExceptFrame_t4   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, t4),
+    RiscvExceptFrame_t5   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, t5),
+    RiscvExceptFrame_t6   = const offset_of!(RiscvExceptFrame, regs) + offset_of!(RiscvRegfile, t6),
+);
