@@ -47,6 +47,8 @@ pub const AT_EUID: usize = 12;
 pub const AT_GID: usize = 13;
 pub const AT_EGID: usize = 14;
 
+pub static mut MAP_POPULATE: bool = false;
+
 /// Auxiliary vector entry.
 #[repr(C)]
 #[derive(Clone, Copy, NoUninit, AnyBitPattern)]
@@ -92,11 +94,13 @@ fn map_helper(
         (vaddr + phdr.mem_size as usize).div_ceil(PAGE_SIZE as usize) * PAGE_SIZE as usize;
     let file_start_offset = phdr.offset - (vaddr - file_start_vaddr) as u64;
 
+    let map_populate = unsafe { MAP_POPULATE } as u32 * map::POPULATE;
+
     // Mapping: Phase 1: Back with anonymous allocations.
     memmap.map(
         mem_end_vaddr - file_start_vaddr,
         file_start_vaddr,
-        map::PRIVATE | map::FIXED,
+        map::PRIVATE | map::FIXED | map_populate,
         prot::READ | prot::WRITE,
         None,
     )?;
@@ -105,7 +109,7 @@ fn map_helper(
     memmap.map(
         file_end_vaddr - file_start_vaddr,
         file_start_vaddr,
-        map::PRIVATE | map::FIXED | map::DENYWRITE,
+        map::PRIVATE | map::FIXED | map::DENYWRITE | map_populate,
         prot::READ | prot::WRITE,
         Some(Mapping {
             offset: file_start_offset,

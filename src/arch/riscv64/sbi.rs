@@ -430,7 +430,7 @@ pub mod hsm {
     }
 
     /// Stop this HART; does not return if successful.
-    pub fn stop() -> SbiResult {
+    pub unsafe fn stop() -> SbiResult {
         debug_assert!(!Riscv::get_irq_enabled());
         sbi_call!(1, HSM_EID)
     }
@@ -443,7 +443,7 @@ pub mod hsm {
     /// Suspend this HART.
     /// The suspend type is platform-defined.
     /// If the suspend is non-retentive, the resume sets `a0` to the HARTID.
-    pub fn suspend(type_: u32, resume_addr: *const (), a1_value: usize) -> SbiResult {
+    pub unsafe fn suspend(type_: u32, resume_addr: *const (), a1_value: usize) -> SbiResult {
         sbi_call!(type_ as isize, resume_addr as isize, a1_value as isize)
     }
 }

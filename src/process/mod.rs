@@ -227,6 +227,7 @@ impl Process {
     /// Create the init process.
     pub fn new_init() -> EResult<Arc<Process>> {
         unsafe { syscall::SYSCALL_TRACE = kparam::get_kparam("SYSCALL_TRACE").is_some() };
+        unsafe { elf::MAP_POPULATE = kparam::get_kparam("ELF_PREFAULT").is_some() };
 
         // This assert enforces init isn't accidentally created twice.
         assert!(PID_COUNTER.fetch_add(1, Ordering::Relaxed) == 1);

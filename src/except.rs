@@ -1,5 +1,9 @@
 use crate::{
-    arch::except::{ArchTrapFrame, TrapCause, TrapFrame},
+    arch::{
+        Arch,
+        except::{ArchTrapFrame, TrapCause, TrapFrame},
+        mmu::ArchMMU,
+    },
     bindings::log::LogLevel,
     kcore::sched::Thread,
     mem::vmm::{self, kernel_mm},
@@ -22,18 +26,55 @@ unsafe extern "C" {
 
 /// Try to handle demand-paging.
 /// Returns `true` if the access should be retried.
-fn check_demand_paging(vaddr: usize, access: u8) -> bool {
+fn check_demand_paging(is_kernel_mode: bool, vaddr: usize, access: u8) -> bool {
     let current = Thread::current();
     if current.is_null() {
         return false;
     }
 
+    if (vaddr as isize) < 0 {
+        // Higher half.
+        if !is_kernel_mode {
+            return false;
+        }
+    } else {
+        // Lower half.
+        if is_kernel_mode && !Arch::check_sum() {
+            return false;
+        }
+    }
+
     let mm = unsafe { (*current).runtime().memmap };
-    if mm.is_null() {
+    let res = if mm.is_null() {
         kernel_mm().fault(vaddr, access, 1).is_ok()
     } else {
         unsafe { (*mm).fault(vaddr, access, 1).is_ok() }
+    };
+
+    if res {
+        logkf!(
+            LogLevel::Debug,
+            "Demand-paged at vaddr 0x{:x} access {}{}{}",
+            vaddr,
+            if access & vmm::prot::READ != 0 {
+                "R"
+            } else {
+                "-"
+            },
+            if access & vmm::prot::WRITE != 0 {
+                "W"
+            } else {
+                "-"
+            },
+            if access & vmm::prot::EXEC != 0 {
+                "X"
+            } else {
+                "-"
+            }
+        );
     }
+
+    res
 }
 
 /// Generic exception handler.
@@ -43,11 +84,21 @@ pub fn generic_trap(frame: &mut TrapFrame) {
     };
 
     let demand_paging_ok = match cause {
-        TrapCause::PageFaultLoad => check_demand_paging(frame.get_addr().unwrap(), vmm::prot::READ),
-        TrapCause::PageFaultStore => {
-            check_demand_paging(frame.get_addr().unwrap(), vmm::prot::WRITE)
-        }
-        TrapCause::PageFaultExec => check_demand_paging(frame.get_addr().unwrap(), vmm::prot::EXEC),
+        TrapCause::PageFaultLoad => check_demand_paging(
+            frame.is_kernel_mode(),
+            frame.get_addr().unwrap(),
+            vmm::prot::READ,
+        ),
+        TrapCause::PageFaultStore => check_demand_paging(
+            frame.is_kernel_mode(),
+            frame.get_addr().unwrap(),
+            vmm::prot::WRITE,
+        ),
+        TrapCause::PageFaultExec => check_demand_paging(
+            frame.is_kernel_mode(),
+            frame.get_addr().unwrap(),
+            vmm::prot::EXEC,
+        ),
         _ => false,
     };
     if demand_paging_ok {

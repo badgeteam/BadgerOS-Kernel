@@ -169,7 +169,7 @@ impl ArchTrapFrame for RiscvExceptFrame {
             IILLEGAL | EBREAK | ECALL_U | ECALL_S => Some(self.regs.pc as _),
             IALIGN | IACCESS | LALIGN | LACCESS | SALIGN | SACCESS | IPAGE | LPAGE | SPAGE
             | HWERR => Some(self.stval),
-            SWCHECK => Some(0),
+            SWCHECK => None,
             _ => None,
         }
     }
@@ -196,7 +196,11 @@ unsafe extern "C" fn riscv_exception_handler(frame: &mut RiscvExceptFrame) {
             (*Scheduler::get()).tick_interrupt(!frame.is_kernel_mode());
         }
         return;
-    } else if frame.scause < 0 {
+    }
+
+    Riscv::enable_irq();
+
+    if frame.scause < 0 {
         // External or software interrupt.
         unsafe {
             // Low cause bits: 1 = supervisor software, 9 = supervisor external.
@@ -210,7 +214,6 @@ unsafe extern "C" fn riscv_exception_handler(frame: &mut RiscvExceptFrame) {
                 unhandled_trap(frame);
             }
         }
-        return;
     } else if !frame.is_kernel_mode() && frame.scause == csr::scause::ECALL_U {
         process::syscall::dispatch(
             frame,
@@ -222,17 +225,18 @@ unsafe extern "C" fn riscv_exception_handler(frame: &mut RiscvExceptFrame) {
             frame.regs.a5,
             frame.regs.a7,
         );
-        return;
     } else {
         // TODO: Lazy-FPU init.
         generic_trap(frame);
-    }
 
-    unsafe {
-        // Exit user-mode upon thread stop request.
-        let current = Thread::current();
-        if !current.is_null() && (*current).is_stopping() && !frame.is_kernel_mode() {
-            Riscv::exit_usermode(&(*current).runtime().uctx);
+        unsafe {
+            // Exit user-mode upon thread stop request.
+            let current = Thread::current();
+            if !current.is_null() && (*current).is_stopping() && !frame.is_kernel_mode() {
+                Riscv::exit_usermode(&(*current).runtime().uctx);
+            }
         }
     }
+
+    Riscv::disable_irq();
 }

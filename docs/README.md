@@ -85,3 +85,6 @@ A default value of `DEVTMPFS_PATH=/dev` is implied.
 
 ### Parameter: SYSCALL_TRACE
 Causes every system call made to be logged.
+
+### Parameter: ELF_PREFAULT
+Causes all regions mapped by the elf loader to be prefaulted as if by `MAP_POPULATE`.

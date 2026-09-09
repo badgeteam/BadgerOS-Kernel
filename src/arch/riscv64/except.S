@@ -76,8 +76,8 @@ riscv_exception_asm:
     ld t0,     0(tp)
     sd t0,   5*8(sp)        # Old t0
     .cfi_rel_offset t0, 5*8
-    sd t0,   6*8(sp)
-    .cfi_rel_offset t0, 6*8
+    sd t1,   6*8(sp)
+    .cfi_rel_offset t1, 6*8
     sd t2,   7*8(sp)
     .cfi_rel_offset t2, 7*8
     sd s0,   8*8(sp)
@@ -167,8 +167,8 @@ riscv_exception_asm:
     ld ra,   1*8(sp)
     #  sp    2*8(sp) # deferred
     ld gp,   3*8(sp)
-    #  tp    4*8(sp) # deferred
-    #  t0    5*8(sp) # deferred
+    ld tp,   4*8(sp)
+    ld t0,   5*8(sp)
     ld t1,   6*8(sp)
     ld t2,   7*8(sp)
     ld s0,   8*8(sp)
@@ -196,9 +196,6 @@ riscv_exception_asm:
     ld t5,  30*8(sp)
     ld t6,  31*8(sp)
     
-    # Restore the last regs.
-    ld tp,   4*8(sp)
-    ld t0,   5*8(sp)
     ld sp,   2*8(sp)
     .cfi_restore_state
     

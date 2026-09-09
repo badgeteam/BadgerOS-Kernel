@@ -21,10 +21,9 @@ macro_rules! noexc_asm {
         $code: literal
         $(, $($params: tt)+)?
     ) => {{
-        let exc: usize;
+        let mut exc = 0usize;
         core::arch::asm!{
             // This will be set to 1 by the exception handler when it detects that the fallible instructions faulted.
-            "li a0, 0",
             ".equ __noexc_asm_start, .",
             $code, // Actual instruction to check.
             ".equ __noexc_asm_end, .",
@@ -36,7 +35,7 @@ macro_rules! noexc_asm {
             // Optional extra in/outs, options, etc.
             $(, $($params)+)?
             // Return value.
-            , out("a0") exc
+            , inout("a0") exc
         }
         exc != 0
     }};
