@@ -200,8 +200,6 @@ unsafe extern "C" fn riscv_exception_handler(frame: &mut RiscvExceptFrame) {
         return;
     }
 
-    Riscv::enable_irq();
-
     if frame.scause < 0 {
         // External or software interrupt.
         unsafe {
@@ -217,6 +215,8 @@ unsafe extern "C" fn riscv_exception_handler(frame: &mut RiscvExceptFrame) {
             }
         }
     } else if !frame.is_kernel_mode() && frame.scause == csr::scause::ECALL_U {
+        Riscv::enable_irq();
+        frame.regs.pc += 4;
         process::syscall::dispatch(
             frame,
             frame.regs.a0,
@@ -227,7 +227,10 @@ unsafe extern "C" fn riscv_exception_handler(frame: &mut RiscvExceptFrame) {
             frame.regs.a5,
             frame.regs.a7,
         );
+        Riscv::disable_irq();
     } else {
+        Riscv::enable_irq();
+
         // TODO: Lazy-FPU init.
         generic_trap(frame);
 
@@ -238,9 +241,8 @@ unsafe extern "C" fn riscv_exception_handler(frame: &mut RiscvExceptFrame) {
                 Riscv::exit_usermode(&(*current).runtime().uctx);
             }
         }
+        Riscv::disable_irq();
     }
-
-    Riscv::disable_irq();
 }
 
 global_asm!(
