@@ -25,15 +25,6 @@ pub trait ArchUsermode {
     unsafe extern "C" fn enter_usermode(load: &UserRegs);
     /// Exit usermode by restoring the kernel register state.
     unsafe extern "C" fn exit_usermode(restore: &KernelRegs) -> !;
-
-    /// Load byte, check for access faults instead of panicking.
-    fn fallible_load_u8(ptr: *const u8) -> AccessResult<u8>;
-    /// Load usize, check for access faults instead of panicking.
-    fn fallible_load_usize(ptr: *const usize) -> AccessResult<usize>;
-    /// Store byte, check for access faults instead of panicking.
-    fn fallible_store_u8(ptr: *const u8, value: u8) -> AccessResult<()>;
-    /// Store usize, check for access faults instead of panicking.
-    fn fallible_store_usize(ptr: *const usize, value: usize) -> AccessResult<()>;
 }
 
 pub trait ArchUserRegs: Default + Sized + Copy + Send {

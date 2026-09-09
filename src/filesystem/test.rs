@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 
 #[cfg(feature = "ktest")]
 use crate::{
-    arch::{Arch, usermode::ArchUsermode},
+    arch::{Arch, except::ArchExcept},
     bindings::error::Errno,
     config::PAGE_SIZE,
     filesystem::{oflags, open, unlink},

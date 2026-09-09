@@ -247,7 +247,7 @@ pub unsafe fn init() {
 }
 
 vmm_ktest! { MAP_BASIC,
-    use crate::arch::{Arch, usermode::ArchUsermode};
+    use crate::arch::{Arch, except::ArchExcept};
 
     unsafe {
         let size  = 0x8000;

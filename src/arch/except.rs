@@ -1,5 +1,7 @@
 use core::fmt::Display;
 
+use crate::process::usercopy::AccessResult;
+
 use super::Arch;
 
 /// Exception handling trait.
@@ -27,6 +29,27 @@ pub trait ArchExcept {
         Self::disable_irq();
         get
     }
+
+    /// Load byte, check for access faults instead of panicking.
+    fn fallible_load_u8(ptr: *const u8) -> AccessResult<u8>;
+    /// Load two-byte, check for access faults instead of panicking.
+    fn fallible_load_u16(ptr: *const u16) -> AccessResult<u16>;
+    /// Load four-byte, check for access faults instead of panicking.
+    fn fallible_load_u32(ptr: *const u32) -> AccessResult<u32>;
+    /// Load eight-byte, check for access faults instead of panicking.
+    fn fallible_load_u64(ptr: *const u64) -> AccessResult<u64>;
+    /// Load usize, check for access faults instead of panicking.
+    fn fallible_load_usize(ptr: *const usize) -> AccessResult<usize>;
+    /// Store byte, check for access faults instead of panicking.
+    fn fallible_store_u8(ptr: *const u8, value: u8) -> AccessResult<()>;
+    /// Store two-byte, check for access faults instead of panicking.
+    fn fallible_store_u16(ptr: *const u16, value: u16) -> AccessResult<()>;
+    /// Store four-byte, check for access faults instead of panicking.
+    fn fallible_store_u32(ptr: *const u32, value: u32) -> AccessResult<()>;
+    /// Store eight-byte, check for access faults instead of panicking.
+    fn fallible_store_u64(ptr: *const u64, value: u64) -> AccessResult<()>;
+    /// Store usize, check for access faults instead of panicking.
+    fn fallible_store_usize(ptr: *const usize, value: usize) -> AccessResult<()>;
 }
 
 /// System call frame.

@@ -7,7 +7,7 @@ use core::{ffi::c_char, marker::PhantomData, mem::MaybeUninit, ops::Range, ptr::
 use alloc::{ffi::CString, vec::Vec};
 
 use crate::{
-    arch::{Arch, mmu::ArchMMU, usermode::ArchUsermode},
+    arch::{Arch, except::ArchExcept, mmu::ArchMMU},
     bindings::error::{EResult, Errno},
     mem::vmm::physmap::{is_canon_user_addr, is_canon_user_range},
 };

@@ -145,6 +145,8 @@ riscv_exception_asm:
     
     # Call C-abi exception handler.
     la      gp, __global_pointer$
+    li      t0, {sstatus_clear}                 # Disable float, vector, etc. before entering kernel.
+    csrc    sstatus, t0
     call    riscv_exception_handler
     
     addi    sp, sp, 16

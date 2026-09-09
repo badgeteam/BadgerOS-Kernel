@@ -15,32 +15,6 @@ use crate::{
 
 use super::{Riscv, RiscvRegfile, RiscvSavedRegs, except::RiscvExceptFrame};
 
-/// Run an ASM instruction and return true if it causes an exception.
-macro_rules! noexc_asm {
-    (
-        $code: literal
-        $(, $($params: tt)+)?
-    ) => {{
-        let mut exc = 0usize;
-        core::arch::asm!{
-            // This will be set to 1 by the exception handler when it detects that the fallible instructions faulted.
-            ".equ __noexc_asm_start, .",
-            $code, // Actual instruction to check.
-            ".equ __noexc_asm_end, .",
-            // This adds it to the table of fallible instructions.
-            ".pushsection \".noexc_table\", \"a\", @progbits",
-            ".dword __noexc_asm_start",
-            ".dword __noexc_asm_end",
-            ".popsection"
-            // Optional extra in/outs, options, etc.
-            $(, $($params)+)?
-            // Return value.
-            , inout("a0") exc
-        }
-        exc != 0
-    }};
-}
-
 #[unsafe(naked)]
 unsafe extern "C" fn enter_usermode_impl(
     thread_irq_stack_out: &mut *mut (),
@@ -130,6 +104,7 @@ unsafe extern "C" fn enter_usermode_impl(
         load_s0 = const offset_of!(RiscvRegfile, s0),
         load_s1 = const offset_of!(RiscvRegfile, s1),
         load_a0 = const offset_of!(RiscvRegfile, a0),
+        load_a1 = const offset_of!(RiscvRegfile, a1),
         load_a2 = const offset_of!(RiscvRegfile, a2),
         load_a3 = const offset_of!(RiscvRegfile, a3),
         load_a4 = const offset_of!(RiscvRegfile, a4),
@@ -150,7 +125,6 @@ unsafe extern "C" fn enter_usermode_impl(
         load_t4 = const offset_of!(RiscvRegfile, t4),
         load_t5 = const offset_of!(RiscvRegfile, t5),
         load_t6 = const offset_of!(RiscvRegfile, t6),
-        load_a1 = const offset_of!(RiscvRegfile, a1),
     );
 }
 
@@ -234,40 +208,6 @@ impl ArchUsermode for Riscv {
             save_s10 = const offset_of!(RiscvSavedRegs, s10),
             save_s11 = const offset_of!(RiscvSavedRegs, s11),
         );
-    }
-
-    #[inline(always)]
-    fn fallible_load_u8(ptr: *const u8) -> AccessResult<u8> {
-        let res;
-        if unsafe { noexc_asm!("lbu {}, 0({})", out(reg)res, in(reg)ptr) } {
-            return Err(AccessFault);
-        }
-        Ok(res)
-    }
-
-    #[inline(always)]
-    fn fallible_load_usize(ptr: *const usize) -> AccessResult<usize> {
-        let res;
-        if unsafe { noexc_asm!("ld {}, 0({})", out(reg)res, in(reg)ptr) } {
-            return Err(AccessFault);
-        }
-        Ok(res)
-    }
-
-    #[inline(always)]
-    fn fallible_store_u8(ptr: *const u8, value: u8) -> AccessResult<()> {
-        if unsafe { noexc_asm!("sb {}, 0({})", in(reg)value, in(reg)ptr) } {
-            return Err(AccessFault);
-        }
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn fallible_store_usize(ptr: *const usize, value: usize) -> AccessResult<()> {
-        if unsafe { noexc_asm!("sd {}, 0({})", in(reg)value, in(reg)ptr) } {
-            return Err(AccessFault);
-        }
-        Ok(())
     }
 }
 

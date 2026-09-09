@@ -14,11 +14,40 @@ use crate::{
     except::generic_trap,
     kcore::sched::{Scheduler, Thread},
     misc::panic::unhandled_trap,
-    process,
+    process::{
+        self,
+        usercopy::{AccessFault, AccessResult},
+    },
 };
 
 unsafe extern "C" {
     pub fn riscv_exception_vector();
+}
+
+/// Run an ASM instruction and return true if it causes an exception.
+macro_rules! noexc_asm {
+    (
+        $code: literal
+        $(, $($params: tt)+)?
+    ) => {{
+        let mut exc = 0usize;
+        core::arch::asm!{
+            // This will be set to 1 by the exception handler when it detects that the fallible instructions faulted.
+            ".equ __noexc_asm_start, .",
+            $code, // Actual instruction to check.
+            ".equ __noexc_asm_end, .",
+            // This adds it to the table of fallible instructions.
+            ".pushsection \".noexc_table\", \"a\", @progbits",
+            ".dword __noexc_asm_start",
+            ".dword __noexc_asm_end",
+            ".popsection"
+            // Optional extra in/outs, options, etc.
+            $(, $($params)+)?
+            // Return value.
+            , inout("a0") exc
+        }
+        exc != 0
+    }};
 }
 
 impl ArchExcept for Riscv {
@@ -53,6 +82,91 @@ impl ArchExcept for Riscv {
         let prev: usize;
         unsafe { asm!("csrrc {}, sstatus, {}", out(reg)prev, const csr::sstatus::SIE_MASK) };
         prev & csr::sstatus::SIE_MASK != 0
+    }
+
+    #[inline(always)]
+    fn fallible_load_u8(ptr: *const u8) -> AccessResult<u8> {
+        let res;
+        if unsafe { noexc_asm!("lbu {}, 0({})", out(reg)res, in(reg)ptr) } {
+            return Err(AccessFault);
+        }
+        Ok(res)
+    }
+
+    #[inline(always)]
+    fn fallible_load_u16(ptr: *const u16) -> AccessResult<u16> {
+        let res;
+        if unsafe { noexc_asm!("lhu {}, 0({})", out(reg)res, in(reg)ptr) } {
+            return Err(AccessFault);
+        }
+        Ok(res)
+    }
+
+    #[inline(always)]
+    fn fallible_load_u32(ptr: *const u32) -> AccessResult<u32> {
+        let res;
+        if unsafe { noexc_asm!("lwu {}, 0({})", out(reg)res, in(reg)ptr) } {
+            return Err(AccessFault);
+        }
+        Ok(res)
+    }
+
+    #[inline(always)]
+    fn fallible_load_u64(ptr: *const u64) -> AccessResult<u64> {
+        let res;
+        if unsafe { noexc_asm!("ld {}, 0({})", out(reg)res, in(reg)ptr) } {
+            return Err(AccessFault);
+        }
+        Ok(res)
+    }
+
+    #[inline(always)]
+    fn fallible_load_usize(ptr: *const usize) -> AccessResult<usize> {
+        let res;
+        if unsafe { noexc_asm!("ld {}, 0({})", out(reg)res, in(reg)ptr) } {
+            return Err(AccessFault);
+        }
+        Ok(res)
+    }
+
+    #[inline(always)]
+    fn fallible_store_u8(ptr: *const u8, value: u8) -> AccessResult<()> {
+        if unsafe { noexc_asm!("sb {}, 0({})", in(reg)value, in(reg)ptr) } {
+            return Err(AccessFault);
+        }
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn fallible_store_u16(ptr: *const u16, value: u16) -> AccessResult<()> {
+        if unsafe { noexc_asm!("sh {}, 0({})", in(reg)value, in(reg)ptr) } {
+            return Err(AccessFault);
+        }
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn fallible_store_u32(ptr: *const u32, value: u32) -> AccessResult<()> {
+        if unsafe { noexc_asm!("sw {}, 0({})", in(reg)value, in(reg)ptr) } {
+            return Err(AccessFault);
+        }
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn fallible_store_u64(ptr: *const u64, value: u64) -> AccessResult<()> {
+        if unsafe { noexc_asm!("sd {}, 0({})", in(reg)value, in(reg)ptr) } {
+            return Err(AccessFault);
+        }
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn fallible_store_usize(ptr: *const usize, value: usize) -> AccessResult<()> {
+        if unsafe { noexc_asm!("sd {}, 0({})", in(reg)value, in(reg)ptr) } {
+            return Err(AccessFault);
+        }
+        Ok(())
     }
 }
 
@@ -249,6 +363,7 @@ global_asm!(
     include_str!("except.S"),
 
     sstatus_spp_mask = const csr::sstatus::SPP_MASK,
+    sstatus_clear = const csr::sstatus::XS_MASK | csr::sstatus::FS_MASK | csr::sstatus::VS_MASK,
 
     ArchCpuLocalData_old_t0 = const offset_of!(RiscvCpuLocalData, old_t0),
     ArchCpuLocalData_old_tp = const offset_of!(RiscvCpuLocalData, old_tp),
