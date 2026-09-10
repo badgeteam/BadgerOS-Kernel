@@ -346,6 +346,7 @@ unsafe extern "C" fn riscv_exception_handler(frame: &mut RiscvExceptFrame) {
         Riscv::enable_irq();
 
         if lazy::check_lazy_init_state(frame) {
+            Riscv::disable_irq();
             return;
         }
         generic_trap(frame);

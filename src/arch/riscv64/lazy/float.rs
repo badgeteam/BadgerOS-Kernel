@@ -34,9 +34,8 @@ impl RiscvLazyFloat {
 
     /// Save the state of the floating-point register file.
     pub fn save_state(&mut self, frame: &mut RiscvExceptFrame) {
-        match (frame.sstatus & FS_MASK) >> FS_BIT {
-            xs::INIT | xs::CLEAN => return, // No need to save clean state.
-            _ => (),
+        if (frame.sstatus & FS_MASK) >> FS_BIT != xs::DIRTY {
+            return; // No need to save clean state.
         }
         unsafe {
             asm!(

@@ -1,7 +1,11 @@
 use core::arch::asm;
 
 use crate::{
-    arch::riscv64::{csr, except::RiscvExceptFrame, lazy::insn::is_float_insn},
+    arch::{
+        except::ArchTrapFrame,
+        riscv64::{csr, except::RiscvExceptFrame, lazy::insn::is_float_insn},
+    },
+    bindings::log::LogLevel,
     kcore::sched::Thread,
     process::usercopy::UserPtr,
 };
@@ -13,7 +17,9 @@ pub mod insn;
 // For example, initializes the float state if and only if a float op is being run.
 // Returns true if the instruction should be retried.
 pub fn check_lazy_init_state(frame: &mut RiscvExceptFrame) -> bool {
-    debug_assert!(frame.scause == csr::scause::IILLEGAL); // This is useless for other faults.
+    if frame.scause != csr::scause::IILLEGAL || frame.is_kernel_mode() {
+        return false;
+    }
 
     // Fetch the affected instruction.
     let mut insn = 0;
@@ -34,9 +40,19 @@ pub fn check_lazy_init_state(frame: &mut RiscvExceptFrame) -> bool {
         insn = frame.stval as u32;
     }
 
-    if is_float_insn(insn) {}
+    let state;
+    unsafe {
+        let ptr = Thread::current();
+        assert!(!ptr.is_null());
+        state = &mut (*ptr).runtime().arch;
+    }
 
-    false
+    if is_float_insn(insn) {
+        logkf!(LogLevel::Debug, "Lazy-FP enable");
+        state.enable(frame)
+    } else {
+        false
+    }
 }
 
 // Save all lazy state.
@@ -64,5 +80,5 @@ pub fn load_lazy_state(frame: &mut RiscvExceptFrame) {
         state = &mut (*ptr).runtime().arch;
     }
 
-    state.save_state(frame);
+    state.load_state(frame);
 }
