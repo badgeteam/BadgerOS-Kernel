@@ -1,3 +1,5 @@
+use core::arch::naked_asm;
+
 use bytemuck_derive::{AnyBitPattern, NoUninit};
 
 use super::ArchTrait;
@@ -74,4 +76,17 @@ pub struct RiscvRegfile {
     pub t4: usize,
     pub t5: usize,
     pub t6: usize,
+}
+
+#[unsafe(naked)]
+#[unsafe(no_mangle)]
+unsafe extern "C" fn _start() -> ! {
+    naked_asm!(
+        ".option push
+        .option norelax
+        la gp, __global_pointer$
+        .option pop
+        call basic_runtime_init
+        ebreak"
+    )
 }
