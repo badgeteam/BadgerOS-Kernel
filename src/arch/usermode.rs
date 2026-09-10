@@ -14,13 +14,13 @@ pub trait ArchUsermode {
 
     /// Enter userspace signal handler.
     fn enter_signal(
-        frame: &TrapFrame,
+        frame: &mut TrapFrame,
         siginfo: siginfo_t,
         handler: *const (),
         returner: *const (),
     ) -> AccessResult<()>;
     /// Exit userspace signal handler.
-    fn exit_signal(frame: &SyscallFrame) -> AccessResult<()>;
+    fn exit_signal(frame: &mut SyscallFrame) -> AccessResult<()>;
     /// Enter usermode given a prepared PC and stack.
     unsafe extern "C" fn enter_usermode(load: &UserRegs);
     /// Exit usermode by restoring the kernel register state.

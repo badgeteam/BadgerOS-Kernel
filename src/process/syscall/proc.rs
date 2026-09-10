@@ -26,7 +26,7 @@ use core::{ffi::*, ptr::null};
 
 pub(super) fn exit(code: c_int) -> EResult<()> {
     current().unwrap().die(w_exited(code));
-    Ok(())
+    unsafe { (*Thread::current()).die() };
 }
 
 pub(super) fn fork(frame: &SyscallFrame) -> EResult<PID> {
@@ -117,7 +117,7 @@ pub(super) fn sigaction(
     Ok(())
 }
 
-pub(super) fn sigret(frame: &SyscallFrame) -> EResult<()> {
+pub(super) fn sigret(frame: &mut SyscallFrame) -> EResult<()> {
     logkf!(LogLevel::Debug, "syscall proc::sigret frame:\n{}", frame);
 
     if let Err(x) = Arch::exit_signal(frame) {

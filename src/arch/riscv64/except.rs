@@ -309,6 +309,7 @@ impl ArchTrapFrame for RiscvExceptFrame {
 unsafe extern "C" fn riscv_exception_handler(frame: &mut RiscvExceptFrame) {
     lazy::save_lazy_state(frame);
 
+    let current = Thread::current();
     if frame.scause < 0 && frame.scause & 0xff == 5 {
         // Timer interrupt.
         unsafe {
@@ -353,7 +354,6 @@ unsafe extern "C" fn riscv_exception_handler(frame: &mut RiscvExceptFrame) {
 
         unsafe {
             // Exit user-mode upon thread stop request.
-            let current = Thread::current();
             if !current.is_null() && (*current).is_stopping() && !frame.is_kernel_mode() {
                 Riscv::exit_usermode(&(*current).runtime().uctx);
             }
@@ -362,6 +362,13 @@ unsafe extern "C" fn riscv_exception_handler(frame: &mut RiscvExceptFrame) {
     }
 
     lazy::load_lazy_state(frame);
+
+    if !frame.is_kernel_mode() {
+        assert!(!current.is_null());
+        if let Some(sig) = unsafe { (*current).get_async_sig(false) } {
+            process::signal::run_handler(sig, frame);
+        }
+    }
 }
 
 global_asm!(

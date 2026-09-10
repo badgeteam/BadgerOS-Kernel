@@ -5,15 +5,21 @@ use core::{
 
 use crate::{
     arch::{kcore::cpulocal::ArchCpuLocal, riscv64::csr, usermode::*},
-    bindings::error::Errno,
     kcore::sched::Thread,
     process::{
-        uapi::signal::siginfo_t,
-        usercopy::{AccessFault, AccessResult},
+        uapi::signal::{siginfo_t, ucontext_t},
+        usercopy::{AccessResult, UserCopyable, UserPtr, UserPtrMut},
     },
 };
 
 use super::{Riscv, RiscvRegfile, RiscvSavedRegs, except::RiscvExceptFrame};
+
+#[derive(Clone, Copy)]
+pub struct RiscvSignalFrame {
+    pub info: siginfo_t,
+    pub uctx: ucontext_t,
+}
+unsafe impl UserCopyable for RiscvSignalFrame {}
 
 #[unsafe(naked)]
 unsafe extern "C" fn enter_usermode_impl(
@@ -133,16 +139,49 @@ impl ArchUsermode for Riscv {
     type UserRegs = RiscvRegfile;
 
     fn enter_signal(
-        frame: &RiscvExceptFrame,
+        frame: &mut RiscvExceptFrame,
         siginfo: siginfo_t,
         handler: *const (),
         returner: *const (),
     ) -> AccessResult<()> {
-        Err(Errno::ENOSYS)
+        let fregs = unsafe { &(*Thread::current()).runtime().arch };
+
+        let mut sig = RiscvSignalFrame {
+            info: siginfo,
+            uctx: Default::default(),
+        };
+
+        sig.uctx
+            .uc_mcontext
+            .gregs
+            .copy_from_slice(bytemuck::cast_ref::<_, [usize; 32]>(&frame.regs));
+        let sig_fpregs = unsafe { &mut sig.uctx.uc_mcontext.fpregs.d };
+        sig_fpregs.f.copy_from_slice(&fregs.freg);
+        sig_fpregs.fcsr = fregs.fcsr as _;
+
+        frame.regs.sp = frame.regs.sp.wrapping_sub(size_of::<RiscvSignalFrame>());
+        UserPtrMut::new_mut(frame.regs.sp as _)?.write(sig)?;
+
+        frame.regs.pc = handler as _;
+        frame.regs.ra = returner as _;
+        frame.regs.a0 = siginfo.si_signo as _;
+        frame.regs.a1 = (frame.regs.sp + offset_of!(RiscvSignalFrame, info)) as _;
+        frame.regs.a2 = (frame.regs.sp + offset_of!(RiscvSignalFrame, uctx)) as _;
+
+        Ok(())
     }
 
-    fn exit_signal(frame: &RiscvExceptFrame) -> AccessResult<()> {
-        Err(Errno::ENOSYS)
+    fn exit_signal(frame: &mut RiscvExceptFrame) -> AccessResult<()> {
+        let fregs = unsafe { &mut (*Thread::current()).runtime().arch };
+        let sig: RiscvSignalFrame = UserPtr::new(frame.regs.sp as _)?.read()?;
+
+        bytemuck::cast_mut::<_, [usize; 32]>(&mut frame.regs)
+            .copy_from_slice(&sig.uctx.uc_mcontext.gregs);
+        let sig_fpregs = unsafe { &sig.uctx.uc_mcontext.fpregs.d };
+        fregs.freg.copy_from_slice(&sig_fpregs.f);
+        fregs.fcsr = sig_fpregs.fcsr as _;
+
+        Ok(())
     }
 
     unsafe extern "C" fn enter_usermode(load: &UserRegs) {

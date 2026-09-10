@@ -1,3 +1,5 @@
+use bytemuck_derive::{AnyBitPattern, NoUninit};
+
 use super::ArchTrait;
 
 pub struct Riscv;
@@ -38,7 +40,7 @@ pub struct RiscvSavedRegs {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, NoUninit, AnyBitPattern)]
 pub struct RiscvRegfile {
     pub pc: usize,
     pub ra: usize,
