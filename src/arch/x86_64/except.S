@@ -90,12 +90,14 @@ x86_idtstub_\index:
     # Generic IDT stub.
     .section ".interrupt_vector_table", "ax", @progbits
     .type x86_irq_asm, %function
+    .p2align 2
 x86_irq_asm:
     .cfi_startproc
     .cfi_def_cfa rsp, -15*8
+    .cfi_signal_frame
     .cfi_return_column rip
-    .cfi_rel_offset rip, {X86TrapFrame_rip}
-    .cfi_rel_offset rsp, {X86TrapFrame_rsp}
+    .cfi_offset rip, {X86TrapFrame_rip}
+    .cfi_offset rsp, {X86TrapFrame_rsp}
     
     # Save GPRs.
     push r15
@@ -129,21 +131,21 @@ x86_irq_asm:
     push rax
     .cfi_adjust_cfa_offset 8
     .cfi_remember_state
-    .cfi_rel_offset r15, {X86TrapFrame_r15}
-    .cfi_rel_offset r14, {X86TrapFrame_r14}
-    .cfi_rel_offset r13, {X86TrapFrame_r13}
-    .cfi_rel_offset r12, {X86TrapFrame_r12}
-    .cfi_rel_offset r11, {X86TrapFrame_r11}
-    .cfi_rel_offset r10, {X86TrapFrame_r10}
-    .cfi_rel_offset r9, {X86TrapFrame_r9}
-    .cfi_rel_offset r8, {X86TrapFrame_r8}
-    .cfi_rel_offset rdi, {X86TrapFrame_rdi}
-    .cfi_rel_offset rsi, {X86TrapFrame_rsi}
-    .cfi_rel_offset rbp, {X86TrapFrame_rbp}
-    .cfi_rel_offset rdx, {X86TrapFrame_rdx}
-    .cfi_rel_offset rcx, {X86TrapFrame_rcx}
-    .cfi_rel_offset rbx, {X86TrapFrame_rbx}
-    .cfi_rel_offset rax, {X86TrapFrame_rax}
+    .cfi_offset r15, {X86TrapFrame_r15}
+    .cfi_offset r14, {X86TrapFrame_r14}
+    .cfi_offset r13, {X86TrapFrame_r13}
+    .cfi_offset r12, {X86TrapFrame_r12}
+    .cfi_offset r11, {X86TrapFrame_r11}
+    .cfi_offset r10, {X86TrapFrame_r10}
+    .cfi_offset r9, {X86TrapFrame_r9}
+    .cfi_offset r8, {X86TrapFrame_r8}
+    .cfi_offset rdi, {X86TrapFrame_rdi}
+    .cfi_offset rsi, {X86TrapFrame_rsi}
+    .cfi_offset rbp, {X86TrapFrame_rbp}
+    .cfi_offset rdx, {X86TrapFrame_rdx}
+    .cfi_offset rcx, {X86TrapFrame_rcx}
+    .cfi_offset rbx, {X86TrapFrame_rbx}
+    .cfi_offset rax, {X86TrapFrame_rax}
     
     mov rdi, rsp
     call x86_irq_handler
