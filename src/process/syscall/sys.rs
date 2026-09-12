@@ -24,7 +24,7 @@ pub(super) fn uname(mut name: UserPtrMut<utsname>) -> EResult<()> {
 pub(super) fn log(message: UserSlice<u8>) -> EResult<()> {
     for i in 0..message.len() {
         unsafe {
-            rawputc(message.read(i)?);
+            rawputc(message.read(i)? as _);
         }
     }
     Ok(())

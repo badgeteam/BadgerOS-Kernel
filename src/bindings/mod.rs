@@ -8,14 +8,10 @@ use raw::timestamp_us_t;
 #[allow(non_upper_case_globals)]
 pub mod raw;
 
-pub mod dlist;
 #[macro_use]
 pub mod log;
 #[macro_use]
 pub mod error;
-pub mod isr_ctx;
-pub mod process;
-pub mod spinlock;
 
 pub fn time_us() -> timestamp_us_t {
     unsafe { raw::time_us() }

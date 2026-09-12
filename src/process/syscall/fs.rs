@@ -4,10 +4,7 @@
 use bytemuck::bytes_of;
 
 use crate::{
-    bindings::{
-        error::{EResult, Errno},
-        raw::{seek_mode_t_SEEK_CUR, seek_mode_t_SEEK_END, seek_mode_t_SEEK_SET},
-    },
+    bindings::error::{EResult, Errno},
     filesystem::{self, DentBuffer, Dirent, InodeType, MakeFileSpec, PATH_MAX, SeekMode},
     process::{
         self, FILE_MAX,
@@ -265,9 +262,9 @@ pub(super) fn pipe(mut fds: UserPtrMut<[c_int; 2]>, flags: c_int) -> EResult<()>
 pub(super) fn seek(fd: c_int, offset: i64, whence: c_int) -> EResult<u64> {
     #[allow(non_upper_case_globals)]
     let mode = match whence as u32 {
-        seek_mode_t_SEEK_CUR => SeekMode::Cur,
-        seek_mode_t_SEEK_SET => SeekMode::Set,
-        seek_mode_t_SEEK_END => SeekMode::End,
+        0 => SeekMode::Cur,
+        1 => SeekMode::Set,
+        2 => SeekMode::End,
         _ => return Err(Errno::EINVAL),
     };
     let proc = process::current().unwrap();

@@ -17,12 +17,12 @@ use super::{
     usercopy::{UserPtr, UserPtrMut, UserSlice, UserSliceMut},
 };
 
-pub mod time;
-pub mod mem;
-pub mod proc;
 pub mod thread;
-pub mod fs;
 pub mod sys;
+pub mod time;
+pub mod fs;
+pub mod proc;
+pub mod mem;
 
 pub static mut SYSCALL_TRACE: bool = false;
 
@@ -77,6 +77,7 @@ pub fn dispatch(frame: &mut SyscallFrame, arg0: usize, arg1: usize, arg2: usize,
             44 => logkf!(LogLevel::Debug, "syscall fs::setfd"),
             45 => logkf!(LogLevel::Debug, "syscall fs::getfl"),
             46 => logkf!(LogLevel::Debug, "syscall fs::setfl"),
+            47 => logkf!(LogLevel::Debug, "syscall thread::x86_set_fs_base"),
             x => logkf!(LogLevel::Warning, "unknown syscall {}", x),
         }
     }
@@ -128,6 +129,7 @@ pub fn dispatch(frame: &mut SyscallFrame, arg0: usize, arg1: usize, arg2: usize,
         44 => retval = marshal_fs_setfd(arg0 as _, arg1 as _) as _,
         45 => retval = marshal_fs_getfl(arg0 as _) as _,
         46 => retval = marshal_fs_setfl(arg0 as _, arg1 as _) as _,
+        47 => retval = marshal_thread_x86_set_fs_base(arg0 as _) as _,
         _ => retval = -(Errno::ENOSYS as i32) as _,
     }
     frame.set_retval(retval);
@@ -817,6 +819,17 @@ fn marshal_fs_setfl(
     match fs::setfl(
         fd,
         flags,
+    ) {
+        Ok(()) => 0,
+        Err(x) => -(x as u32 as c_int),
+    }
+}
+
+fn marshal_thread_x86_set_fs_base(
+    addr: u64,
+) -> c_int {
+    match thread::x86_set_fs_base(
+        addr,
     ) {
         Ok(()) => 0,
         Err(x) => -(x as u32 as c_int),

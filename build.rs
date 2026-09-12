@@ -6,7 +6,6 @@ fn main() {
         .clang_args([
             "-Iinclude",
             "-Iinclude/badgelib",
-            "-Icpu/riscv64/include",
             "-Wno-unknown-attributes",
             "-DBADGEROS_KERNEL",
         ])

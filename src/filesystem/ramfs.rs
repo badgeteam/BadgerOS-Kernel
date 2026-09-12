@@ -17,14 +17,11 @@ use crate::{
         irq::IrqGuard,
         time::{AtomicTimespec, Timespec},
     },
-    bindings::{
-        error::{EResult, Errno},
-        spinlock::Spinlock,
-    },
+    bindings::error::{EResult, Errno},
     config::PAGE_SIZE,
     device::{Device, class::block::BlockDevice},
     filesystem::mount,
-    kcore::sync::mutex::Mutex,
+    kcore::sync::{mutex::Mutex, spinlock::Spinlock},
     process::usercopy::{UserSlice, UserSliceMut},
     register_kmodule,
 };

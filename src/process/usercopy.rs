@@ -460,7 +460,7 @@ pub unsafe fn copy_from_user(dest: *mut (), src: *const (), size: usize) -> Acce
 }
 
 /// Read a C-string from user memory into a preallocated buffer.
-pub fn read_user_cstr(mut user_cstr: *const c_char, buffer: &mut [u8]) -> AccessResult<usize> {
+pub fn read_user_cstr(mut user_cstr: *const u8, buffer: &mut [u8]) -> AccessResult<usize> {
     Arch::enable_sum();
 
     for i in 0..buffer.len() {
@@ -486,7 +486,7 @@ pub fn read_user_cstr(mut user_cstr: *const c_char, buffer: &mut [u8]) -> Access
 }
 
 /// Read a C-string from user memory into a new [`CString`].
-pub fn copy_user_cstr(mut user_cstr: *const c_char) -> EResult<CString> {
+pub fn copy_user_cstr(mut user_cstr: *const u8) -> EResult<CString> {
     Arch::enable_sum();
     let mut res = Vec::new();
 

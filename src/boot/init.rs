@@ -2,7 +2,9 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use alloc::{boxed::Box, sync::Arc, vec::Vec};
+use core::mem::MaybeUninit;
+
+use alloc::{sync::Arc, vec::Vec};
 
 use crate::{
     arch::{
@@ -28,14 +30,17 @@ use crate::{
     util::version,
 };
 
+static mut BSP_CPULOCAL: MaybeUninit<CpuLocal> = MaybeUninit::uninit();
+
 /// Sets up basic things like memory management and the scheduler.
 /// Called by the entrypoint assembly code.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn basic_runtime_init() -> ! {
+pub unsafe extern "C" fn basic_runtime_init() -> ! {
     unsafe {
         // Temporary CPU-local data in case an exception occurs before MM is up.
-        let mut tmp_cpulocal = CpuLocal::default();
-        Arch::set_cpulocal(&raw mut tmp_cpulocal);
+        BSP_CPULOCAL = MaybeUninit::new(CpuLocal::default());
+        let bsp_cpulocal = (*&raw mut BSP_CPULOCAL).assume_init_mut();
+        Arch::set_cpulocal(bsp_cpulocal);
         Arch::cpu_spinup();
         ktests_runlevel(KTestWhen::Early);
 
@@ -61,15 +66,11 @@ unsafe extern "C" fn basic_runtime_init() -> ! {
         protocol::late_init();
         ktests_runlevel(KTestWhen::VMM);
 
-        // Move the CPU-local data onto the heap.
-        let cpulocal = Box::into_raw(Box::new(tmp_cpulocal));
-        Arch::set_cpulocal(cpulocal);
-
         // Do the remainder of initialization with scheduler up.
-        (*cpulocal).sched = Some(Scheduler::new().expect("Failed to prepare scheduler"));
+        (*bsp_cpulocal).sched = Some(Scheduler::new().expect("Failed to prepare scheduler"));
         Thread::new(|| general_init(), None, Some("Kernel init".into()))
             .expect("Failed to prepare main init thread");
-        (*cpulocal).sched.as_mut().unwrap().exec();
+        (*bsp_cpulocal).sched.as_mut().unwrap().exec();
     }
 }
 

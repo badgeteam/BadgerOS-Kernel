@@ -118,7 +118,6 @@ set(kernel_src
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/rawprint.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/refcount.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/set.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/spinlock.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/nanoprintf.c
     
     ${CMAKE_CURRENT_LIST_DIR}/src/freestanding/int_routines.c

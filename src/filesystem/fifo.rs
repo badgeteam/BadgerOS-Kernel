@@ -11,10 +11,9 @@ use crate::{
     bindings::{
         error::{EResult, Errno},
         raw::timestamp_us_t,
-        spinlock::Spinlock,
     },
     filesystem::VfsLoc,
-    kcore::sync::{mutex::Mutex, waitlist::Waitlist},
+    kcore::sync::{mutex::Mutex, spinlock::Spinlock, waitlist::Waitlist},
     process::usercopy::{UserSlice, UserSliceMut},
 };
 

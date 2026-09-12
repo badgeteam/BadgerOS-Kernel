@@ -4,28 +4,26 @@
 
 use core::{
     mem::swap,
-    ptr::{null_mut, slice_from_raw_parts_mut},
-    sync::atomic::{AtomicU32, AtomicUsize, Ordering},
+    sync::atomic::{AtomicU32, Ordering},
 };
 
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc};
 
 #[cfg(feature = "dtb")]
 use dtb;
+use limine::{mp::MpInfo, request::MpRequest};
 
 use crate::{
     arch::{
         Arch,
         kcore::{
             cpulocal::ArchCpuLocal,
-            sched::ArchSched,
             smp::{ArchSmp, CpuID},
         },
     },
     bindings::{
         error::{EResult, Errno},
         log::LogLevel,
-        raw::{limine_smp_info, limine_smp_request},
     },
     config,
     device::class::irqctl::IrqCtlDevice,
@@ -91,36 +89,16 @@ static SMP_MAPS: Mutex<SmpMaps> = Mutex::new(SmpMaps {
 });
 
 #[unsafe(link_section = ".requests")]
-#[unsafe(no_mangle)]
-static mut SMP_REQ: limine_smp_request = limine_smp_request {
-    id: [
-        0xc7b1dd30df4c8b88,
-        0x0a82e883a194f07b,
-        0x95a67b819a1b857e,
-        0xa0b61b723b6a73e0,
-    ],
-    revision: 3,
-    response: null_mut(),
-    flags: 0,
-};
+static SMP_REQ: MpRequest = MpRequest::new(0);
 
 /// Initialize the SMP subsystem from DTB.
 #[cfg(feature = "dtb")]
 pub fn init_dtb(cpus_node: &dtb::DtbNode) {
-    let bsp_cpuid: CpuID;
-    unsafe {
-        if SMP_REQ.response.is_null() {
-            panic!("Missing Limine SMP response");
-        }
-        #[cfg(target_arch = "riscv64")]
-        {
-            bsp_cpuid = (*SMP_REQ.response).bsp_hartid as CpuID;
-        }
-        #[cfg(target_arch = "x86_64")]
-        {
-            bsp_cpuid = (*SMP_REQ.response).bsp_lapic_id as CpuID;
-        }
-    };
+    let smp_req = SMP_REQ.response().expect("Missing SMP response");
+    #[cfg(target_arch = "riscv64")]
+    let bsp_cpuid = smp_req.bsp_hartid as CpuID;
+    #[cfg(target_arch = "x86_64")]
+    let bsp_cpuid = smp_req.bsp_lapic_id as CpuID;
 
     let mut maps = SMP_MAPS.unintr_lock();
     let mut smp_counter = 1u32;
@@ -199,33 +177,26 @@ fn poweron_from_prehandover<'a>(index: u32, mut maps: MutexGuard<'a, SmpMaps>) -
     let status = maps.by_index.get_mut(&index).unwrap();
     status.cpulocal.sched = Some(Scheduler::new()?);
 
-    let smp_resp = unsafe { &*SMP_REQ.response };
-    let cpus = unsafe {
-        &mut *slice_from_raw_parts_mut(
-            smp_resp.cpus as *mut &'static mut limine_smp_info,
-            smp_resp.cpu_count as usize,
-        )
-    };
+    let smp_resp = SMP_REQ.response().unwrap();
+    let cpus = smp_resp.cpus();
 
     logkf!(LogLevel::Info, "Powering on CPU{}", index);
 
     // find the correct CPU from the Limine MP response.
     #[cfg(target_arch = "riscv64")]
     let cpu = cpus
-        .iter_mut()
+        .iter()
         .find(|x| x.hartid == status.cpulocal.cpuid as _)
         .unwrap();
     #[cfg(target_arch = "x86_64")]
     let cpu = cpus
-        .iter_mut()
-        .find(|x| x.hartid == status.cpulocal.cpuid as _)
+        .iter()
+        .find(|x| x.lapic_id == status.cpulocal.cpuid as _)
         .unwrap();
 
-    cpu.extra_argument = status.cpulocal.as_mut() as *mut _ as _;
-    let goto_addr = unsafe { &*((&raw const cpu.goto_address) as *const AtomicUsize) };
-    goto_addr.store(
-        Arch::limine_trampoline_1 as *const () as _,
-        Ordering::Release,
+    cpu.bootstrap(
+        Arch::limine_trampoline_1,
+        status.cpulocal.as_mut() as *mut _ as _,
     );
 
     let maps = maps.demote();
@@ -292,9 +263,9 @@ pub fn report_online() {
 }
 
 /// Second stage trampoline for transferring control from Limine to BadgerOS.
-pub unsafe extern "C" fn limine_trampoline_2(info: *mut limine_smp_info) -> ! {
+pub unsafe extern "C" fn limine_trampoline_2(info: &MpInfo) -> ! {
     unsafe {
-        let cpulocal = (*info).extra_argument as *mut CpuLocal;
+        let cpulocal = info.extra_argument() as *mut CpuLocal;
         Arch::set_cpulocal(cpulocal);
         Arch::cpu_spinup();
         (*cpulocal).sched.as_mut().unwrap().exec();

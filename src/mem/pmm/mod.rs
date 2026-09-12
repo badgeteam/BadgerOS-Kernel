@@ -14,9 +14,9 @@ use crate::{
     bindings::{
         error::{EResult, Errno},
         log::LogLevel,
-        spinlock::Spinlock,
     },
     config::PAGE_SIZE,
+    kcore::sync::spinlock::Spinlock,
     mem::vmm,
 };
 
@@ -124,7 +124,7 @@ pub fn page_range() -> Range<usize> {
 static mut PAGE_STRUCTS_PADDR: PAddrr = 0;
 /// Free lists per buddy order.
 static FREE_LIST: Spinlock<[PAddrr; MAX_ORDER as usize]> =
-    unsafe { Spinlock::new_static([PAddrr::MAX; MAX_ORDER as usize]) };
+    Spinlock::new([PAddrr::MAX; MAX_ORDER as usize]);
 
 /// Calculates the minimum sized order that will fit this many bytes.
 pub const fn size_to_order(byte_size: usize) -> u8 {

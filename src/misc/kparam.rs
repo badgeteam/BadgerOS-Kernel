@@ -4,12 +4,7 @@
 
 use alloc::{string::String, vec::Vec};
 
-use crate::{LogLevel, bindings::raw::limine_executable_cmdline_request};
-
-unsafe extern "C" {
-    #[link_name = "bootp_cmdline_req"]
-    static CMDLINE: limine_executable_cmdline_request;
-}
+use crate::LogLevel;
 
 /// Map of kernel parameters.
 static mut KPARAMS: Vec<(String, String)> = Vec::new();

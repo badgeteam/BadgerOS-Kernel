@@ -4,7 +4,7 @@
 
 use crate::{
     badgelib::irq::IrqGuard,
-    bindings::{self, spinlock::Spinlock},
+    kcore::{sync::spinlock::Spinlock, timer::time_us},
     process::uapi::time::timespec,
 };
 
@@ -23,7 +23,7 @@ pub struct Timespec {
 impl Timespec {
     pub fn now() -> Self {
         // TODO: Use actual RTC time instead of time since boot with kernel compile time added.
-        let micros = unsafe { bindings::raw::time_us() } as u64 + compile_time::unix!() * 1000000;
+        let micros = time_us() + compile_time::unix!() * 1000000;
         Self {
             sec: micros / 1000000,
             nsec: (micros % 1000000) as u32 * 1000,

@@ -254,6 +254,10 @@ int __syscall_fs_setfl(
     int __flags
 );
 
+int __syscall_thread_x86_set_fs_base(
+    __mlibc_uint64 __addr
+);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

@@ -70,3 +70,13 @@ pub(super) fn sigmask(
 
     Ok(())
 }
+
+#[cfg(target_arch = "x86_64")]
+pub(super) fn x86_set_fs_base(addr: u64) -> EResult<()> {
+    todo!()
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+pub(super) fn x86_set_fs_base(_addr: u64) -> EResult<()> {
+    Err(Errno::ENOSYS)
+}

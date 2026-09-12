@@ -385,3 +385,10 @@ int __syscall_fs_setfl(
 ) {
     _DO_SYSCALL_ASM(46);
 }
+
+__attribute__((naked))
+int __syscall_thread_x86_set_fs_base(
+    __mlibc_uint64 __addr
+) {
+    _DO_SYSCALL_ASM(47);
+}
