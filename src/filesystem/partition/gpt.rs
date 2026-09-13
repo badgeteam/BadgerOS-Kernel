@@ -177,7 +177,7 @@ impl GptDriver {
         let mut name = Vec::<u8>::try_with_capacity(max_name_len)?;
         name.resize(max_name_len, 0);
         drive.readk_bytes(part_ent_offset + 56, &mut name)?;
-        let name = util::parse_utf16_le(&name)?;
+        let name = util::utf8::parse_utf16_le(&name)?;
 
         Ok(Some(Partition {
             index,

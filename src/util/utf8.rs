@@ -6,6 +6,27 @@ use core::str;
 
 use alloc::string::String;
 
+use crate::error::EResult;
+
+/// Try to parse a null-terminated UTF-16-LE string.
+pub fn parse_utf16_le(raw: &[u8]) -> EResult<String> {
+    let mut buf = String::new();
+
+    let mut iter = raw.iter();
+    while let Some(low) = iter.next()
+        && let Some(high) = iter.next()
+    {
+        let ord = ((*high as u16) << 8) | (*low as u16);
+        if ord == 0 {
+            break;
+        }
+        buf.try_reserve(buf.len() + 1)?;
+        buf.push(char::from_u32(ord as u32).unwrap_or(char::REPLACEMENT_CHARACTER));
+    }
+
+    Ok(buf)
+}
+
 /// Trait that contains the common interface to [`StaticString`] and [`String`].
 pub trait StringLike {
     /// Clear the contents of this buffer.
