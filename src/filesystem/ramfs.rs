@@ -13,10 +13,6 @@ use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc, vec::Vec};
 
 use crate::{
     LogLevel,
-    badgelib::{
-        irq::IrqGuard,
-        time::{AtomicTimespec, Timespec},
-    },
     bindings::error::{EResult, Errno},
     config::PAGE_SIZE,
     device::{Device, class::block::BlockDevice},
@@ -24,6 +20,10 @@ use crate::{
     kcore::sync::{mutex::Mutex, spinlock::Spinlock},
     process::usercopy::{UserSlice, UserSliceMut},
     register_kmodule,
+    util::{
+        irq::IrqGuard,
+        time::{AtomicTimespec, Timespec},
+    },
 };
 
 use super::{

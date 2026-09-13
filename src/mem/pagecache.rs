@@ -12,7 +12,6 @@ use core::{
 use alloc::vec::Vec;
 
 use crate::{
-    badgelib::irq::IrqGuard,
     bindings::{
         error::{EResult, Errno},
         log::LogLevel,
@@ -22,7 +21,7 @@ use crate::{
     kcore::sync::{mutex::Mutex, spinlock::Spinlock, waitlist::Waitlist},
     mem::pmm::{self, PAddrr},
     process::usercopy::{UserSlice, UserSliceMut},
-    util::rtree::RadixTree,
+    util::{irq::IrqGuard, rtree::RadixTree},
 };
 
 use super::vmm::{

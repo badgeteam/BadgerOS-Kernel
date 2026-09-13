@@ -9,11 +9,11 @@ use crate::{
             msr::{self, efer},
         },
     },
-    badgelib::irq::IrqGuard,
     mem::{
         pmm::PAddrr,
         vmm::physmap::{self, ASID_BITS, PAGING_LEVELS, PTE},
     },
+    util::irq::IrqGuard,
 };
 
 pub mod cr4 {

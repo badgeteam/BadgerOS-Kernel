@@ -8,8 +8,8 @@ use crate::{
         kcore::{cpulocal::ArchCpuLocal, sched::ArchSched},
         riscv64::{Riscv, lazy::float::RiscvLazyFloat},
     },
-    badgelib::irq::IrqGuard,
     kcore::sched::{Scheduler, Thread},
+    util::irq::IrqGuard,
 };
 
 impl ArchSched for Riscv {

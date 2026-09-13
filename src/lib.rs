@@ -54,7 +54,6 @@ pub mod bindings;
 pub mod ktest;
 
 pub mod arch;
-pub mod badgelib;
 pub mod boot;
 pub mod config;
 pub mod device;

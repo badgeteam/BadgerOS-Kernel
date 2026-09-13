@@ -21,7 +21,6 @@ use crate::{
         },
         usermode::{ArchUsermode, KernelRegs},
     },
-    badgelib::irq::IrqGuard,
     bindings::{error::EResult, raw::timestamp_us_t, time_us},
     config::{self, STACK_SIZE},
     impl_has_list_node,
@@ -42,6 +41,7 @@ use crate::{
             sigset::sigset_t,
         },
     },
+    util::irq::IrqGuard,
     util::{
         bitset::BitSet,
         list::{ArcInvasiveList, InvasiveListNode},

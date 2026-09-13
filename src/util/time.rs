@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: MIT
 
 use crate::{
-    badgelib::irq::IrqGuard,
     kcore::{sync::spinlock::Spinlock, timer::time_us},
     process::uapi::time::timespec,
+    util::irq::IrqGuard,
 };
 
 // TODO: Replace this code with the chrono crate where possible.

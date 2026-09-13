@@ -11,10 +11,10 @@ use core::{
 use super::*;
 use crate::{
     arch::{Arch, mmu::ArchMMU},
-    badgelib::irq::IrqGuard,
     bindings::{error::EResult, raw::phys_page_free},
     config::PAGE_SIZE,
     mem::pmm::{self, page_struct_base},
+    util::irq::IrqGuard,
 };
 
 pub static mut ASID_BITS: u32 = 0;

@@ -18,7 +18,6 @@ use vfs::{DentCache, DentCacheDir, DentCacheType, FlagsAndOffset, VNode, VfsDriv
 
 use crate::{
     LogLevel,
-    badgelib::time::Timespec,
     bindings::error::{EResult, Errno},
     device::{Device, class::block::BlockDevice},
     filesystem::{
@@ -32,6 +31,7 @@ use crate::{
         uapi::stat::stat,
         usercopy::{UserSlice, UserSliceMut},
     },
+    util::time::Timespec,
 };
 
 pub mod device;

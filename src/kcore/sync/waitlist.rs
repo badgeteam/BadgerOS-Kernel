@@ -7,7 +7,6 @@ use core::sync::atomic::Ordering;
 use alloc::{boxed::Box, vec::Vec};
 
 use crate::{
-    badgelib::irq::IrqGuard,
     bindings::{
         error::{EResult, Errno},
         log::LogLevel,
@@ -15,6 +14,7 @@ use crate::{
     },
     impl_has_list_node,
     kcore::sched::{Thread, tflags, thread_yield},
+    util::irq::IrqGuard,
     util::list::{InvasiveList, InvasiveListNode},
 };
 

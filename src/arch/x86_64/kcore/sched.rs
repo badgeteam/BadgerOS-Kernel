@@ -5,8 +5,8 @@ use crate::{
         kcore::{cpulocal::ArchCpuLocal, sched::ArchSched},
         x86_64::X86_64,
     },
-    badgelib::irq::IrqGuard,
     kcore::sched::{Scheduler, Thread},
+    util::irq::IrqGuard,
 };
 
 impl ArchSched for X86_64 {

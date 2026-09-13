@@ -10,7 +10,6 @@ use core::{
 };
 
 use crate::{
-    badgelib::irq::IrqGuard,
     bindings::{
         error::{EResult, Errno},
         log::LogLevel,
@@ -18,6 +17,7 @@ use crate::{
     config::PAGE_SIZE,
     kcore::sync::spinlock::Spinlock,
     mem::vmm,
+    util::irq::IrqGuard,
 };
 
 use super::vmm::memobject::MemObject;

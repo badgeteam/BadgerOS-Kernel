@@ -6,10 +6,10 @@ use alloc::{collections::btree_map::BTreeMap, vec::Vec};
 
 use crate::{
     arch::{Arch, except::ArchExcept},
-    badgelib::irq::IrqGuard,
     bindings::{error::EResult, log::LogLevel},
     device::Device,
     kcore::sync::spinlock::Spinlock,
+    util::irq::IrqGuard,
 };
 
 /// Base interrupt controller struct; intended for use by implementers of [`IrqCtlDevice`].

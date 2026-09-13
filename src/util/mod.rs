@@ -9,8 +9,11 @@ pub mod atomic_bitset;
 pub mod bitset;
 pub mod fifo;
 pub mod id_alloc;
+pub mod irq;
 pub mod list;
 pub mod rtree;
+pub mod time;
+pub mod utf8;
 
 pub mod version {
     include!("../../target/version.rs");

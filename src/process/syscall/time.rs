@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: CC0
 
 use crate::{
-    badgelib::time::Timespec,
     bindings::error::EResult,
     process::{uapi::time::timespec, usercopy::UserPtrMut},
+    util::time::Timespec,
 };
 use core::ffi::*;
 

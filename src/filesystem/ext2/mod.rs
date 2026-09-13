@@ -20,14 +20,13 @@ use alloc::{
 
 use crate::{
     LogLevel,
-    badgelib::time::Timespec,
     bindings::error::{EResult, Errno},
     device::Device,
     filesystem::mount,
     kcore::sync::mutex::Mutex,
     process::usercopy::{UserSlice, UserSliceMut},
     register_kmodule,
-    util::MaybeMut,
+    util::{MaybeMut, time::Timespec},
 };
 use spec::*;
 

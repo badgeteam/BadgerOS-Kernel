@@ -7,7 +7,6 @@ use core::sync::atomic::{AtomicU32, Ordering, fence};
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
 use crate::{
-    badgelib::irq::IrqGuard,
     bindings::{
         error::{EResult, Errno},
         raw::timestamp_us_t,
@@ -15,7 +14,7 @@ use crate::{
     filesystem::VfsLoc,
     kcore::sync::{mutex::Mutex, spinlock::Spinlock, waitlist::Waitlist},
     process::usercopy::{UserSlice, UserSliceMut},
-    util::fifo::Fifo,
+    util::{fifo::Fifo, irq::IrqGuard},
 };
 
 use super::{DentBuffer, File, SeekMode, Stat, oflags, poll};

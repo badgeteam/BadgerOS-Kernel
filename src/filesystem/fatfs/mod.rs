@@ -8,10 +8,6 @@ use cluster::{ClusterAlloc, ClusterChain};
 use spec::{Bpb, Dirent, Header16, Header32, LfnEnt, attr};
 
 use crate::{
-    badgelib::{
-        time::Timespec,
-        utf8::{StaticString, StringLike},
-    },
     bindings::error::{EResult, Errno},
     device::Device,
     filesystem::{fatfs::spec::attr2, vfs::vnflags},
@@ -19,6 +15,10 @@ use crate::{
     mem::vmm::zeroes,
     process::usercopy::{UserSlice, UserSliceMut},
     register_kmodule,
+    util::{
+        time::Timespec,
+        utf8::{StaticString, StringLike},
+    },
 };
 
 use super::{

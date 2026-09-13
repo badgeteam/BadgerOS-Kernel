@@ -7,7 +7,6 @@ use core::{mem::offset_of, sync::atomic::AtomicU32};
 use super::*;
 
 use crate::{
-    badgelib::irq::IrqGuard,
     bindings::raw::timestamp_us_t,
     device::{bus::ata::AtaBus, registry},
     kcore::{
@@ -15,6 +14,7 @@ use crate::{
         sync::{semaphore::Semaphore, spinlock::RawSpinlock, waitlist::Waitlist},
     },
     mem::{dma::DmaTarget, pmm::phys_box::PhysBox},
+    util::irq::IrqGuard,
 };
 
 /// Number of commands per port.
