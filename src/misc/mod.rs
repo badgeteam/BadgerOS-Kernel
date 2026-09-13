@@ -5,3 +5,4 @@
 pub mod kmodule;
 pub mod kparam;
 pub mod panic;
+pub mod string;

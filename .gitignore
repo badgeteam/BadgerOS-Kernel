@@ -14,3 +14,4 @@ src/process/syscall/templates
 kernel/chromedump.json
 uftrace.data
 *.bak
+lib/runtime/test.o

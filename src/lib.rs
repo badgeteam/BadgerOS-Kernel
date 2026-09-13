@@ -40,6 +40,9 @@
 #![feature(downcast_unchecked)]
 #![feature(const_trait_impl)]
 #![feature(const_cmp)]
+#![feature(cfg_select)]
+#![feature(core_intrinsics)]
+#![allow(internal_features)]
 
 #[macro_use]
 extern crate alloc;

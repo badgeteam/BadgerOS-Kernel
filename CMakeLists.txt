@@ -120,9 +120,6 @@ set(kernel_src
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/set.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/nanoprintf.c
     
-    ${CMAKE_CURRENT_LIST_DIR}/src/freestanding/int_routines.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/freestanding/string.c
-    
     ${CMAKE_CURRENT_LIST_DIR}/src/malloc/malloc.c
     ${CMAKE_CURRENT_LIST_DIR}/src/malloc/static-buddy-compat.c
     ${CMAKE_CURRENT_LIST_DIR}/src/malloc/slab-alloc.c
