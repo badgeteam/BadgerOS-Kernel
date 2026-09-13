@@ -1,11 +1,10 @@
 use core::arch::{asm, naked_asm};
 
-use crate::{
-    arch::{
-        kcore::smp::ArchSmp,
-        riscv64::{Riscv, except::riscv_exception_vector},
-    },
-    bindings::{log::LogLevel, raw::limine_smp_info},
+use limine::mp::MpInfo;
+
+use crate::arch::{
+    kcore::smp::ArchSmp,
+    riscv64::{Riscv, except::riscv_exception_vector},
 };
 
 impl ArchSmp for Riscv {
@@ -16,12 +15,11 @@ impl ArchSmp for Riscv {
             asm!("csrw sstatus, 0");
             asm!("csrw stvec, {}", in(reg) riscv_exception_vector as *const ());
             asm!("csrw sie, {}", in(reg)(1 << 9)); // Supervisor external interrupt.
-            logkf_unlocked!(LogLevel::Info, "STVEC init OK");
         }
     }
 
     #[unsafe(naked)]
-    unsafe extern "C" fn limine_trampoline_1(info: *mut limine_smp_info) {
+    unsafe extern "C" fn limine_trampoline_1(info: &MpInfo) {
         naked_asm!(
             ".option push",
             ".option norelax",
