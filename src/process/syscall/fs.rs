@@ -262,8 +262,8 @@ pub(super) fn pipe(mut fds: UserPtrMut<[c_int; 2]>, flags: c_int) -> EResult<()>
 pub(super) fn seek(fd: c_int, offset: i64, whence: c_int) -> EResult<u64> {
     #[allow(non_upper_case_globals)]
     let mode = match whence as u32 {
-        0 => SeekMode::Cur,
-        1 => SeekMode::Set,
+        0 => SeekMode::Set,
+        1 => SeekMode::Cur,
         2 => SeekMode::End,
         _ => return Err(Errno::EINVAL),
     };
