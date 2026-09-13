@@ -54,22 +54,20 @@ fn check_demand_paging(is_kernel_mode: bool, vaddr: usize, access: u8) -> bool {
 
 /// Generic exception handler.
 pub fn generic_trap(frame: &mut TrapFrame) {
-    let Some(cause) = frame.get_cause() else {
-        unhandled_trap(frame);
-    };
+    let cause = frame.get_cause();
 
     let demand_paging_ok = match cause {
-        TrapCause::PageFaultLoad => check_demand_paging(
+        Some(TrapCause::PageFaultLoad) => check_demand_paging(
             frame.is_kernel_mode(),
             frame.get_addr().unwrap(),
             vmm::prot::READ,
         ),
-        TrapCause::PageFaultStore => check_demand_paging(
+        Some(TrapCause::PageFaultStore) => check_demand_paging(
             frame.is_kernel_mode(),
             frame.get_addr().unwrap(),
             vmm::prot::WRITE,
         ),
-        TrapCause::PageFaultExec => check_demand_paging(
+        Some(TrapCause::PageFaultExec) => check_demand_paging(
             frame.is_kernel_mode(),
             frame.get_addr().unwrap(),
             vmm::prot::EXEC,

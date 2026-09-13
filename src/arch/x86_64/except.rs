@@ -13,6 +13,33 @@ use crate::{
     process::usercopy::{AccessFault, AccessResult},
 };
 
+/// Run an ASM instruction and return true if it causes an exception.
+#[macro_export]
+macro_rules! noexc_asm {
+    (
+        $code: literal
+        $(, $($params: tt)+)?
+    ) => {{
+        let mut exc = 0usize;
+        core::arch::asm!{
+            // This will be set to 1 by the exception handler when it detects that the fallible instructions faulted.
+            ".equ __noexc_asm_start, .",
+            $code, // Actual instruction to check.
+            ".equ __noexc_asm_end, .",
+            // This adds it to the table of fallible instructions.
+            ".pushsection \".noexc_table\", \"a\", @progbits",
+            ".8byte __noexc_asm_start",
+            ".8byte __noexc_asm_end",
+            ".popsection"
+            // Optional extra in/outs, options, etc.
+            $(, $($params)+)?
+            // Return value.
+            , inout("rax") exc
+        }
+        exc != 0
+    }};
+}
+
 global_asm!(
     include_str!("except.S"),
 
@@ -21,6 +48,7 @@ global_asm!(
     X86TrapFrame_cs = const offset_of!(X86TrapFrame, cs),
     X86TrapFrame_rip = const offset_of!(X86TrapFrame, rip),
     X86TrapFrame_rsp = const offset_of!(X86TrapFrame, rsp),
+    X86TrapFrame_fake_fp = const offset_of!(X86TrapFrame, fake_fp),
 
     X86TrapFrame_r15 = const offset_of!(X86TrapFrame, r15),
     X86TrapFrame_r14 = const offset_of!(X86TrapFrame, r14),
@@ -59,49 +87,86 @@ impl ArchExcept for X86_64 {
     }
 
     fn fallible_load_u8(ptr: *const u8) -> AccessResult<u8> {
-        Err(AccessFault)
+        let res;
+        if unsafe { noexc_asm!("mov {}, [{}]", out(reg_byte)res, in(reg)ptr) } {
+            return Err(AccessFault);
+        }
+        Ok(res)
     }
 
     fn fallible_load_u16(ptr: *const u16) -> AccessResult<u16> {
-        Err(AccessFault)
+        let res;
+        if unsafe { noexc_asm!("mov {:x}, [{}]", out(reg)res, in(reg)ptr) } {
+            return Err(AccessFault);
+        }
+        Ok(res)
     }
 
     fn fallible_load_u32(ptr: *const u32) -> AccessResult<u32> {
-        Err(AccessFault)
+        let res;
+        if unsafe { noexc_asm!("mov {:e}, [{}]", out(reg)res, in(reg)ptr) } {
+            return Err(AccessFault);
+        }
+        Ok(res)
     }
 
     fn fallible_load_u64(ptr: *const u64) -> AccessResult<u64> {
-        Err(AccessFault)
+        let res;
+        if unsafe { noexc_asm!("mov {:r}, [{}]", out(reg)res, in(reg)ptr) } {
+            return Err(AccessFault);
+        }
+        Ok(res)
     }
 
     fn fallible_load_usize(ptr: *const usize) -> AccessResult<usize> {
-        Err(AccessFault)
+        let res;
+        if unsafe { noexc_asm!("mov {:r}, [{}]", out(reg)res, in(reg)ptr) } {
+            return Err(AccessFault);
+        }
+        Ok(res)
     }
 
     fn fallible_store_u8(ptr: *const u8, value: u8) -> AccessResult<()> {
-        Err(AccessFault)
+        if unsafe { noexc_asm!("mov [{1}], {0}", in(reg_byte)value, in(reg)ptr) } {
+            return Err(AccessFault);
+        }
+        Ok(())
     }
 
     fn fallible_store_u16(ptr: *const u16, value: u16) -> AccessResult<()> {
-        Err(AccessFault)
+        if unsafe { noexc_asm!("mov [{1}], {0:x}", in(reg)value, in(reg)ptr) } {
+            return Err(AccessFault);
+        }
+        Ok(())
     }
 
     fn fallible_store_u32(ptr: *const u32, value: u32) -> AccessResult<()> {
-        Err(AccessFault)
+        if unsafe { noexc_asm!("mov [{1}], {0:e}", in(reg)value, in(reg)ptr) } {
+            return Err(AccessFault);
+        }
+        Ok(())
     }
 
     fn fallible_store_u64(ptr: *const u64, value: u64) -> AccessResult<()> {
-        Err(AccessFault)
+        if unsafe { noexc_asm!("mov [{1}], {0:r}", in(reg)value, in(reg)ptr) } {
+            return Err(AccessFault);
+        }
+        Ok(())
     }
 
     fn fallible_store_usize(ptr: *const usize, value: usize) -> AccessResult<()> {
-        Err(AccessFault)
+        if unsafe { noexc_asm!("mov [{1}], {0:r}", in(reg)value, in(reg)ptr) } {
+            return Err(AccessFault);
+        }
+        Ok(())
     }
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct X86TrapFrame {
+    pub fake_fp: *const (),
+
     pub rax: u64,
     pub rbx: u64,
     pub rcx: u64,
@@ -211,11 +276,12 @@ impl ArchTrapFrame for X86TrapFrame {
     }
 
     fn noexc_skip(&mut self, addr: *const ()) {
-        todo!()
+        self.rip = addr as _;
+        self.rax = 1;
     }
 
     fn get_frame_ptr(&self) -> *const () {
-        0 as _
+        self.fake_fp
     }
 }
 

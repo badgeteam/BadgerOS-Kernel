@@ -93,7 +93,7 @@ x86_idtstub_\index:
     .p2align 2
 x86_irq_asm:
     .cfi_startproc
-    .cfi_def_cfa rsp, -15*8
+    .cfi_def_cfa rsp, -16*8
     .cfi_signal_frame
     .cfi_return_column rip
     .cfi_offset rip, {X86TrapFrame_rip}
@@ -146,6 +146,8 @@ x86_irq_asm:
     .cfi_offset rcx, {X86TrapFrame_rcx}
     .cfi_offset rbx, {X86TrapFrame_rbx}
     .cfi_offset rax, {X86TrapFrame_rax}
+    sub rsp, 8                                              # Reserve space for the fake frame ptr.
+    mov rdi, rsp                                            # Set first argument to the trap frame pointer.
     
     cld
     cmp word ptr [rsp+{X86TrapFrame_cs}], {KCODE_SEL}
@@ -153,10 +155,23 @@ x86_irq_asm:
     swapgs
 1:
     
-    mov rdi, rsp
+    # Fake kernel unwind frame.
+    .cfi_adjust_cfa_offset 8
+    mov rax, qword ptr [rsp+{X86TrapFrame_rip}]
+    mov rbx, qword ptr [rsp+{X86TrapFrame_rbp}]
+    inc rax                                                 # The undwinder biases PC-1; undo that here.
+    push rax
+    .cfi_adjust_cfa_offset 8
+    push rbp
+    .cfi_adjust_cfa_offset 8
+    mov qword ptr [rdi+{X86TrapFrame_fake_fp}], rsp
+    
     call x86_irq_handler
     
-    cmp word ptr [rsp+{X86TrapFrame_cs}], {KCODE_SEL}
+    add rsp, 24
+    .cfi_adjust_cfa_offset -24
+    
+    cmp word ptr [rsp+{X86TrapFrame_cs}-8], {KCODE_SEL}     # One of the three qwords just popped is actually in the trap frame.
     je 1f
     swapgs
 1:
@@ -194,7 +209,7 @@ x86_irq_asm:
     pop r15
     .cfi_adjust_cfa_offset -8
     
-    sub rsp, 16 # IRQ numer and error code.
+    add rsp, 16 # IRQ numer and error code.
     .cfi_adjust_cfa_offset -16
     iretq
     .cfi_endproc
