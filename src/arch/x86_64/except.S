@@ -147,8 +147,19 @@ x86_irq_asm:
     .cfi_offset rbx, {X86TrapFrame_rbx}
     .cfi_offset rax, {X86TrapFrame_rax}
     
+    cld
+    cmp word ptr [rsp+{X86TrapFrame_cs}], {KCODE_SEL}
+    je 1f
+    swapgs
+1:
+    
     mov rdi, rsp
     call x86_irq_handler
+    
+    cmp word ptr [rsp+{X86TrapFrame_cs}], {KCODE_SEL}
+    je 1f
+    swapgs
+1:
     
     # Restore GPRs.
     .cfi_restore_state

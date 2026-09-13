@@ -27,7 +27,6 @@ impl ArchCpuLocal for X86_64 {
         unsafe {
             (*next).arch.self_ptr = next;
             msr::write(msr::gsbase::ADDR, next as _);
-            msr::write(msr::kgsbase::ADDR, next as _);
         }
     }
 }

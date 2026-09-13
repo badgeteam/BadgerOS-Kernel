@@ -32,7 +32,7 @@ pub mod prot {
     /// Mapping is executable.
     pub const EXEC: u8 = 1 << 2;
     /// Mapping is non-cacheable, idempotent, weakly-ordered (e.g. framebuffer memory).
-    pub const NC: u8 = 1 << 3;
+    pub const WC: u8 = 1 << 3;
     /// Mapping is non-cacheable, non-idempotent, strongly-ordered (e.g. memory-mapped I/O).
     pub const IO: u8 = 1 << 4;
 
@@ -48,8 +48,8 @@ pub mod prot {
         if mmu_flags & physmap::flags::X != 0 {
             prot |= EXEC;
         }
-        if mmu_flags & physmap::flags::NC != 0 {
-            prot |= NC;
+        if mmu_flags & physmap::flags::WC != 0 {
+            prot |= WC;
         }
         if mmu_flags & physmap::flags::IO != 0 {
             prot |= IO;
@@ -69,8 +69,8 @@ pub mod prot {
         if prot_flags & EXEC != 0 {
             mmu |= physmap::flags::X;
         }
-        if prot_flags & NC != 0 {
-            mmu |= physmap::flags::NC;
+        if prot_flags & WC != 0 {
+            mmu |= physmap::flags::WC;
         }
         if prot_flags & IO != 0 {
             mmu |= physmap::flags::IO;

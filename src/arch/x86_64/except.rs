@@ -16,6 +16,9 @@ use crate::{
 global_asm!(
     include_str!("except.S"),
 
+    KCODE_SEL = const KCODE_SEL,
+
+    X86TrapFrame_cs = const offset_of!(X86TrapFrame, cs),
     X86TrapFrame_rip = const offset_of!(X86TrapFrame, rip),
     X86TrapFrame_rsp = const offset_of!(X86TrapFrame, rsp),
 
@@ -42,11 +45,11 @@ impl ArchExcept for X86_64 {
     type TrapFrame = X86TrapFrame;
 
     fn enable_irq() {
-        unsafe { asm!("cli") }
+        unsafe { asm!("sti") }
     }
 
     fn disable_irq() {
-        unsafe { asm!("sti") }
+        unsafe { asm!("cli") }
     }
 
     fn get_irq_enabled() -> bool {

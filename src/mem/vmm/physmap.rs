@@ -44,7 +44,7 @@ pub mod flags {
     /// Map memory as I/O (uncached, no write coalescing).
     pub const IO: u32 = 0b0100_0000_0000;
     /// Map memory as uncached write coalescing.
-    pub const NC: u32 = 0b1000_0000_0000;
+    pub const WC: u32 = 0b1000_0000_0000;
 
     pub const RW: u32 = R | W;
     pub const RX: u32 = R | X;
@@ -499,7 +499,7 @@ impl Debug for Virt2Phys {
                     },
                     if self.flags & IO != 0 {
                         "IO"
-                    } else if self.flags & NC != 0 {
+                    } else if self.flags & WC != 0 {
                         "NC"
                     } else {
                         "--"

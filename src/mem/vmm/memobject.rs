@@ -20,7 +20,7 @@ pub struct MappablePage(NonZeroUsize);
 
 impl MappablePage {
     pub unsafe fn new(paddr: usize, refcounted: bool, writable: bool, tracks_dirty: bool) -> Self {
-        assert!(paddr != 0);
+        // We allow `paddr == 0` because despite it often being a bug, some platforms, especially x86, require it.
         assert!(paddr % PAGE_SIZE as usize == 0);
         // SAFETY: Already checked for zero with the assert above.
         Self(unsafe {

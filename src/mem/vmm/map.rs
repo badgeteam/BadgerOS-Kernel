@@ -1014,7 +1014,7 @@ impl VmSpace {
                 hint,
                 Self::bounds(),
                 map_flags,
-                prot_flags & !prot::IO & !prot::NC,
+                prot_flags & !prot::IO & !prot::WC,
                 mapping,
             )
         }

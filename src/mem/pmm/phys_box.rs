@@ -33,7 +33,7 @@ impl<T: Sized> PhysBox<T> {
         let ptr = PhysPtr::new(order, PageUsage::KernelAnon)?;
 
         let prot = vmm::prot::READ
-            | vmm::prot::WRITE + io as u8 * vmm::prot::IO + nc as u8 * vmm::prot::NC;
+            | vmm::prot::WRITE + io as u8 * vmm::prot::IO + nc as u8 * vmm::prot::WC;
 
         let vaddr;
         unsafe {

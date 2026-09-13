@@ -13,7 +13,6 @@ use crate::{
         except::{ArchExcept, ArchTrapFrame, TrapFrame},
         kcore::sched::ArchSched,
         misc::ArchMisc,
-        usermode::ArchUsermode,
     },
     bindings::log::{LogLevel, logkf_unlocked, write_unlocked},
     process::usercopy::AccessResult,

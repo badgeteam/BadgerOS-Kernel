@@ -54,8 +54,8 @@ impl ArchSched for X86_64 {
             push r15
             
             mov rax, rdi
-            mov [rsi], rsp
-            mov rsp, [rdx]
+            mov [rdx], rsp
+            mov rsp, [rsi]
             
             pop r15
             pop r14
@@ -72,9 +72,16 @@ impl ArchSched for X86_64 {
 #[unsafe(naked)]
 pub unsafe extern "C" fn thread_trampoline_1() {
     naked_asm!(
-        "pop rdi
+        "
+        .cfi_startproc simple
+        .cfi_return_column rip
+        .cfi_undefined rip
+        mov rdi, rax
         pop rsi
-        jmp  {}",
+        pop rdx
+        call {}
+        .cfi_endproc
+        ",
         sym Thread::thread_trampoline_2
     );
 }

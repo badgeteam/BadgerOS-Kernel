@@ -186,7 +186,7 @@ impl Thread {
         sched: *const Scheduler,
         ptr: *mut (),
         meta: *mut (),
-    ) {
+    ) -> ! {
         unsafe {
             let code: *mut dyn FnOnce() =
                 core::ptr::from_raw_parts_mut(ptr, core::mem::transmute(meta));

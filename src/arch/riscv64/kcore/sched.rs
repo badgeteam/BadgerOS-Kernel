@@ -99,9 +99,15 @@ impl ArchSched for Riscv {
 #[cfg(target_arch = "riscv64")]
 pub unsafe extern "C" fn thread_trampoline_1() {
     naked_asm!(
-        "ld   a1, 0(sp)",
-        "ld   a2, 8(sp)",
-        "j    {}",
+        "
+        .cfi_startproc simple
+        .cfi_return_column 64
+        .cfi_undefined 64
+        ld   a1, 0(sp)
+        ld   a2, 8(sp)
+        call {}
+        .cfi_endproc
+        ",
         sym Thread::thread_trampoline_2
     );
 }

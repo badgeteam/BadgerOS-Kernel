@@ -12,10 +12,7 @@ use crate::{
     badgelib::irq::IrqGuard,
     mem::{
         pmm::PAddrr,
-        vmm::{
-            self,
-            physmap::{self, ASID_BITS, PAGING_LEVELS, PTE},
-        },
+        vmm::physmap::{self, ASID_BITS, PAGING_LEVELS, PTE},
     },
 };
 
@@ -31,10 +28,30 @@ pub mod cr4 {
 }
 
 pub mod pte {
-    // Non-executable page.
+    /// Enable reference-counting logic in [`PhysMap`].
+    /// Uses one of the available bits of the PTE.
+    pub const REFCOUNT: usize = 1 << 9;
+
+    /// Non-executable page.
     pub const NX: usize = 1 << 63;
-    // Global page.
+    /// Global page.
     pub const G: usize = 1 << 8;
+    /// Page size bit.
+    pub const PS: usize = 1 << 7;
+    /// Page has been been written to.
+    pub const D: usize = 1 << 5;
+    /// Page has been accessed.
+    pub const A: usize = 1 << 5;
+    /// Disable caching.
+    pub const PCD: usize = 1 << 4;
+    /// Use write-through caching.
+    pub const PWT: usize = 1 << 3;
+    /// User-accessible.
+    pub const US: usize = 1 << 2;
+    /// Writeable.
+    pub const RW: usize = 1 << 1;
+    /// Present.
+    pub const P: usize = 1 << 0;
 }
 
 // TODO: Supporting INVLPGB and TLBSYNC needs further support in the VMM subsystem.
@@ -161,17 +178,84 @@ impl ArchMMU for X86_64 {
     }
 
     fn pack_pte(pte: PTE) -> usize {
-        let mut packed = 0;
+        let mut packed = pte.ppn << 12;
 
-        if unsafe { PTE_G } && (pte.flags & physmap::flags::G) != 0 {
-            packed |= pte::G;
+        if pte.valid {
+            packed |= pte::P;
+        }
+
+        if pte.leaf {
+            if pte.level > 0 {
+                packed |= pte::PS;
+            }
+            if unsafe { PTE_G } && (pte.flags & physmap::flags::G) != 0 {
+                packed |= pte::G;
+            }
+            if unsafe { PTE_NX } && (pte.flags & physmap::flags::X) == 0 {
+                packed |= pte::NX;
+            }
+            if (pte.flags & physmap::flags::W) != 0 {
+                packed |= pte::RW;
+            }
+            if (pte.flags & physmap::flags::A) != 0 {
+                packed |= pte::A;
+            }
+            if (pte.flags & physmap::flags::D) != 0 {
+                packed |= pte::D;
+            }
+            if (pte.flags & physmap::flags::REFCOUNT) != 0 {
+                packed |= pte::REFCOUNT;
+            }
+            if (pte.flags & physmap::flags::IO) != 0 {
+                packed |= pte::PCD;
+            } else if (pte.flags & physmap::flags::WC) != 0 {
+                packed |= pte::PWT;
+            }
+        } else {
+            packed |= pte::RW | pte::US;
         }
 
         packed
     }
 
     fn unpack_pte(raw: usize, level: u8) -> PTE {
-        todo!()
+        let mut flags = 0;
+        let leaf = level == 0 || (raw & pte::PS) != 0;
+
+        if leaf {
+            flags |= physmap::flags::R;
+            if unsafe { PTE_G } && (raw & pte::G) != 0 {
+                flags |= physmap::flags::G;
+            }
+            if !unsafe { PTE_NX } || (raw & pte::NX) == 0 {
+                flags |= physmap::flags::X;
+            }
+            if (raw & pte::RW) != 0 {
+                flags |= physmap::flags::W;
+            }
+            if (raw & pte::A) != 0 {
+                flags |= physmap::flags::A;
+            }
+            if (raw & pte::D) != 0 {
+                flags |= physmap::flags::D;
+            }
+            if (raw & pte::REFCOUNT) != 0 {
+                flags |= physmap::flags::REFCOUNT;
+            }
+            if (raw & pte::PCD) != 0 {
+                flags |= physmap::flags::IO;
+            } else if (raw & pte::PWT) != 0 {
+                flags |= physmap::flags::WC;
+            }
+        }
+
+        PTE {
+            ppn: (raw & 0x0007_ffff_ffff_f000) >> 12,
+            flags,
+            level,
+            valid: (raw & pte::P) != 0,
+            leaf,
+        }
     }
 
     unsafe fn mmu_early_init() {

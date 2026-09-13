@@ -376,7 +376,7 @@ impl MmioMapping {
                 phys_page_end - phys_page_start,
                 0,
                 map::SHARED,
-                io as u8 * prot::IO + nc as u8 * prot::NC + prot::READ + prot::WRITE,
+                io as u8 * prot::IO + nc as u8 * prot::WC + prot::READ + prot::WRITE,
                 Some(Mapping {
                     offset: 0,
                     object: Arc::try_new(RawMemory::new(

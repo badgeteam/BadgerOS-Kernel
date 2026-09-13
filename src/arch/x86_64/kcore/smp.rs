@@ -5,7 +5,11 @@ use limine::mp::MpInfo;
 use crate::{
     arch::{
         kcore::{cpulocal::ArchCpuLocal, smp::ArchSmp},
-        x86_64::{X86_64, seg::*},
+        x86_64::{
+            X86_64,
+            msr::{self, gsbase},
+            seg::*,
+        },
     },
     kcore::smp::limine_trampoline_2,
 };
@@ -15,10 +19,10 @@ impl ArchSmp for X86_64 {
 
     fn cpu_spinup() {
         unsafe {
-            let cpulocal = &*X86_64::get_cpulocal();
+            let cpulocal = X86_64::get_cpulocal();
             let _guard = TSS_LOCK.lock();
 
-            let tss_addr = &raw const cpulocal.arch.tss as u64;
+            let tss_addr = &raw const (*cpulocal).arch.tss as u64;
             GDT[TSS_INDEX].generic = GenericDesc::new(
                 tss_addr as u32,
                 size_of::<Tss>() as u32,
@@ -71,6 +75,8 @@ impl ArchSmp for X86_64 {
                 tss = const TSS_SEL,
                 out("rax") _,
             }
+            // Reloading `gs` will have destroyed the `GSBASE` MSR; reload it.
+            msr::write(gsbase::ADDR, cpulocal as u64);
         }
     }
 
