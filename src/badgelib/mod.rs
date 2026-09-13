@@ -1,4 +1,4 @@
-pub mod fifo;
+// pub mod fifo;
 pub mod irq;
 // pub mod rcu;
 pub mod time;

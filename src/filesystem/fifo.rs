@@ -7,7 +7,7 @@ use core::sync::atomic::{AtomicU32, Ordering, fence};
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
 use crate::{
-    badgelib::{self, irq::IrqGuard},
+    badgelib::irq::IrqGuard,
     bindings::{
         error::{EResult, Errno},
         raw::timestamp_us_t,
@@ -15,16 +15,15 @@ use crate::{
     filesystem::VfsLoc,
     kcore::sync::{mutex::Mutex, spinlock::Spinlock, waitlist::Waitlist},
     process::usercopy::{UserSlice, UserSliceMut},
+    util::fifo::Fifo,
 };
 
 use super::{DentBuffer, File, SeekMode, Stat, oflags, poll};
 
-pub type FifoBuffer = badgelib::fifo::Fifo;
-
 /// Data shared between all FIFO handles, regardless of whether it has a vnode.
 pub(super) struct FifoShared {
     /// FIFO data storage.
-    buffer: Spinlock<Option<Box<FifoBuffer>>>,
+    buffer: Spinlock<Option<Box<Fifo>>>,
     /// Number of readers.
     read_count: AtomicU32,
     /// Number of writers.
@@ -109,7 +108,7 @@ impl FifoShared {
             && self.write_count.load(Ordering::Relaxed) != 0
             && guard.is_none()
         {
-            *guard = Some(Box::new(FifoBuffer::new(FifoBuffer::DEFAULT_SIZE).unwrap()));
+            *guard = Some(Box::new(Fifo::new(Fifo::DEFAULT_SIZE).unwrap()));
         }
         drop(guard);
 
@@ -241,7 +240,7 @@ unsafe impl Send for FifoShared {}
 unsafe impl Sync for FifoShared {}
 
 /// A FIFO or a pipe file descriptor.
-pub struct Fifo {
+pub struct FifoFile {
     /// VNode, if any.
     loc: Option<VfsLoc>,
     /// Mode flags.
@@ -250,7 +249,7 @@ pub struct Fifo {
     shared: Arc<FifoShared>,
 }
 
-impl Fifo {
+impl FifoFile {
     pub(super) fn new(vnode: Option<VfsLoc>, flags: u32, shared: Arc<FifoShared>) -> EResult<Self> {
         shared.open(
             flags & oflags::NONBLOCK != 0,
@@ -265,7 +264,7 @@ impl Fifo {
     }
 }
 
-impl Drop for Fifo {
+impl Drop for FifoFile {
     fn drop(&mut self) {
         let flags = *self.flags.unintr_lock_shared();
         self.shared.close(
@@ -275,7 +274,7 @@ impl Drop for Fifo {
     }
 }
 
-impl File for Fifo {
+impl File for FifoFile {
     fn poll(&self) -> u32 {
         let read_avl = self.shared.read_avl() > 0;
         let write_avl = self.shared.write_avl() > 0;

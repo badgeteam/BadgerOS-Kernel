@@ -19,7 +19,7 @@ impl ArchSmp for Riscv {
     }
 
     #[unsafe(naked)]
-    unsafe extern "C" fn limine_trampoline_1(info: &MpInfo) {
+    unsafe extern "C" fn limine_trampoline_1(info: &MpInfo) -> ! {
         naked_asm!(
             ".option push",
             ".option norelax",

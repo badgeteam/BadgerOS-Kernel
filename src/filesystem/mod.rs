@@ -22,7 +22,7 @@ use crate::{
     bindings::error::{EResult, Errno},
     device::{Device, class::block::BlockDevice},
     filesystem::{
-        fifo::{Fifo, FifoShared},
+        fifo::{FifoFile, FifoShared},
         mount::{Mount, MountTable, root_loc_unlocked},
         vfs::{VNodeMtxInner, vnflags},
     },
@@ -822,7 +822,7 @@ pub fn open(at: Option<&dyn File>, path: &[u8], mut oflags: OFlags) -> EResult<A
             // FIFO file ops.
             let fifo = open_loc.vnode.fifo.clone().unwrap();
             Ok(
-                Box::<dyn File>::from(Box::try_new(Fifo::new(Some(open_loc), oflags, fifo)?)?)
+                Box::<dyn File>::from(Box::try_new(FifoFile::new(Some(open_loc), oflags, fifo)?)?)
                     .into(),
             )
         }
@@ -1324,12 +1324,12 @@ pub fn pipe(oflags: OFlags) -> EResult<(Arc<dyn File>, Arc<dyn File>)> {
     // TODO: OOM handling.
     let shared = FifoShared::new();
     shared.open(true, true, true)?;
-    let write_end = Arc::new(Fifo::new(
+    let write_end = Arc::new(FifoFile::new(
         None,
         (oflags & oflags::NONBLOCK) | oflags::WRITE_ONLY,
         shared.clone(),
     )?);
-    let read_end = Arc::new(Fifo::new(
+    let read_end = Arc::new(FifoFile::new(
         None,
         (oflags & oflags::NONBLOCK) | oflags::READ_ONLY,
         shared,

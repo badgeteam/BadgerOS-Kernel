@@ -12,10 +12,7 @@ use tock_registers::{
 };
 
 use crate::{
-    badgelib::{
-        fifo::{BlockingFifo, Fifo},
-        irq::IrqGuard,
-    },
+    badgelib::irq::IrqGuard,
     bindings::error::EResult,
     device::{
         Device, DeviceBase,
@@ -35,6 +32,7 @@ use crate::{
         usercopy::{UserSlice, UserSliceMut},
     },
     register_kmodule,
+    util::fifo::{BlockingFifo, Fifo},
 };
 
 /// Enable for receive data available IRQ.
