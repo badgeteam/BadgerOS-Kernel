@@ -4,7 +4,7 @@ use crate::{
         except::{ArchTrapFrame, TrapCause, TrapFrame},
         mmu::ArchMMU,
     },
-    bindings::log::LogLevel,
+    util::log::LogLevel,
     kcore::sched::Thread,
     mem::vmm::{self, kernel_mm},
     misc::panic::unhandled_trap,

@@ -21,10 +21,7 @@ use crate::{
             smp::{ArchSmp, CpuID},
         },
     },
-    bindings::{
-        error::{EResult, Errno},
-        log::LogLevel,
-    },
+LogLevel, error::{EResult, Errno},
     config,
     device::class::irqctl::IrqCtlDevice,
     kcore::{

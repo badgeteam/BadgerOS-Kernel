@@ -16,10 +16,7 @@ use alloc::sync::{Arc, Weak};
 use dtb::DtbNode;
 
 use crate::{
-    bindings::{
-        error::{EResult, Errno},
-        raw::timestamp_us_t,
-    },
+    error::{EResult, Errno},
     device::Device,
     kcore::sync::{mutex::Mutex, waitlist::Waitlist},
 };
@@ -120,7 +117,7 @@ impl dyn Bus {
 
         // Wait for in-flight calls from a potential previous reservation to finish.
         while base.inflight.load(atomic::Ordering::Relaxed) != 0 {
-            base.waitlist.unintr_block(timestamp_us_t::MAX, || {
+            base.waitlist.unintr_block(u64::MAX, || {
                 base.inflight.load(atomic::Ordering::Relaxed) != 0
             });
         }

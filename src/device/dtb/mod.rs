@@ -9,10 +9,7 @@ use dtb::{Dtb, DtbNode, DtbProp, spec::FdtHeader};
 
 use crate::{
     arch::{Arch, kcore::timer::ArchTimer},
-    bindings::{
-        error::{EResult, Errno},
-        log::LogLevel,
-    },
+LogLevel, error::{EResult, Errno},
     device::{probe, registry},
     kcore::{self},
     misc::kparam,

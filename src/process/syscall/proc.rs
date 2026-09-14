@@ -5,10 +5,7 @@ use alloc::{ffi::CString, sync::Arc, vec::Vec};
 
 use crate::{
     arch::{Arch, except::SyscallFrame, usermode::ArchUsermode},
-    bindings::{
-        error::{EResult, Errno},
-        log::LogLevel,
-    },
+LogLevel, error::{EResult, Errno},
     kcore::sched::Thread,
     process::{
         Cmdline, PID, PROCESSES, current,

@@ -7,7 +7,7 @@ use core::{fmt::Debug, ops::Range};
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
 use crate::{
-    bindings::error::{EResult, Errno},
+    error::{EResult, Errno},
     config::PAGE_SIZE,
     impl_has_list_node,
     kcore::sync::spinlock::Spinlock,

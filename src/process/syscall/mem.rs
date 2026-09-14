@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: CC0
 
 use crate::{
-    bindings::error::{EResult, Errno},
+    error::{EResult, Errno},
     config::PAGE_SIZE,
     mem::vmm::{self, map::Mapping},
     process,

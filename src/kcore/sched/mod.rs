@@ -5,7 +5,7 @@
 use core::{
     cell::UnsafeCell,
     ptr::{null, null_mut, slice_from_raw_parts_mut},
-    sync::atomic::{AtomicI32, AtomicI64, AtomicU32, Ordering, fence},
+    sync::atomic::{AtomicU32, AtomicU64, Ordering, fence},
 };
 
 use alloc::{boxed::Box, collections::linked_list::LinkedList, string::String, sync::Arc};
@@ -21,7 +21,7 @@ use crate::{
         },
         usermode::{ArchUsermode, KernelRegs},
     },
-    bindings::{error::EResult, raw::timestamp_us_t, time_us},
+    error::EResult,
     config::{self, STACK_SIZE},
     impl_has_list_node,
     kcore::{
@@ -31,6 +31,7 @@ use crate::{
             spinlock::{RawSpinlockGuard, Spinlock},
             waitlist::Waitlist,
         },
+        timer::time_us,
     },
     mem::vmm::{self, map::VmSpace},
     misc::panic,
@@ -41,9 +42,9 @@ use crate::{
             sigset::sigset_t,
         },
     },
-    util::irq::IrqGuard,
     util::{
         bitset::BitSet,
+        irq::IrqGuard,
         list::{ArcInvasiveList, InvasiveListNode},
     },
 };
@@ -80,7 +81,7 @@ pub struct ThreadRuntime {
     /// Context for running in userspace.
     pub uctx: KernelRegs,
     /// Timestamp until which to keep the thread blocked.
-    pub timeout: timestamp_us_t,
+    pub timeout: u64,
     /// Architecture-specific thread state.
     pub arch: ThreadArchState,
     /// Alternate signal stack.
@@ -161,9 +162,9 @@ pub struct Thread {
     /// Dynamic state only alive while the thread is runnable.
     runtime: UnsafeCell<Option<ThreadRuntime>>,
     /// How many microseconds of CPU time this thread has spent in kernel mode.
-    ktime: AtomicI64,
+    ktime: AtomicU64,
     /// How many microseconds of CPU time this thread has spent in user mode.
-    utime: AtomicI64,
+    utime: AtomicU64,
     /// Waitlist for objects blocking on a state update of this thread.
     pub waitlist: Waitlist,
     /// Process with which this thread is associated.
@@ -208,8 +209,8 @@ impl Thread {
             flags: AtomicU32::new(0),
             node: InvasiveListNode::new(),
             runtime: UnsafeCell::new(Some(ThreadRuntime::new(code)?)),
-            ktime: AtomicI64::new(0),
-            utime: AtomicI64::new(0),
+            ktime: AtomicU64::new(0),
+            utime: AtomicU64::new(0),
             waitlist: Waitlist::new(),
             process,
             name,
@@ -278,7 +279,7 @@ impl Thread {
     /// Wait for this thread to stop.
     pub fn join(&self) -> EResult<()> {
         while self.flags.load(Ordering::Relaxed) & tflags::STOPPED == 0 {
-            self.waitlist.block(timestamp_us_t::MAX, || {
+            self.waitlist.block(u64::MAX, || {
                 self.flags.load(Ordering::Relaxed) & tflags::STOPPED == 0
             })?;
         }
@@ -367,13 +368,13 @@ pub struct Scheduler {
     /// If set to 0, the thread will not be preempted.
     preempt_ticks: u32,
     /// Last microsecond timestamp at which time usage was accounted.
-    last_account_us: i64,
+    last_account_us: u64,
     /// Bit-set used as a ringbuffer to measure load average.
     active_set: BitSet<{ config::LOAD_MEASURE_WINDOW as usize }>,
     /// Which bit within `active_ticks` is written next.
     active_next: u32,
     /// Atomically-updated sum of active ticks within the last LOAD_MEASURE_WINDOW ticks.
-    load_average: AtomicI32,
+    load_average: AtomicU32,
 }
 
 impl Scheduler {
@@ -418,7 +419,7 @@ impl Scheduler {
             last_account_us: time_us(),
             active_set: BitSet::EMPTY,
             active_next: 0,
-            load_average: AtomicI32::new(0),
+            load_average: AtomicU32::new(0),
         })
     }
 
@@ -433,7 +434,7 @@ impl Scheduler {
 
             let _noirq = IrqGuard::new();
 
-            unsafe { thread_self.runtime().timeout = timestamp_us_t::MAX };
+            unsafe { thread_self.runtime().timeout = u64::MAX };
             thread_self
                 .flags
                 .fetch_or(tflags::BLOCKED, Ordering::Relaxed);
@@ -581,7 +582,7 @@ impl Scheduler {
         // Measure load average.
         let was_active = self.active_set.test(self.active_next as usize);
         let now_active = self.idle.is_none();
-        let delta = now_active as i32 - was_active as i32;
+        let delta = now_active as u32 - was_active as u32; // TODO: Probably wrong.
         self.load_average.fetch_add(delta, Ordering::Relaxed);
         self.active_next = (self.active_next + 1) % config::LOAD_MEASURE_WINDOW as u32;
 
@@ -614,31 +615,10 @@ pub extern "C" fn thread_yield() {
 
 /// Sleep for a fixed amount of time.
 /// Only fails if interrupted by a signal.
-pub fn thread_sleep(amount: timestamp_us_t) -> EResult<()> {
+pub fn thread_sleep(amount: u64) -> EResult<()> {
     let ts = time_us() + amount;
     while time_us() < ts {
         thread_yield();
     }
     Ok(())
-}
-
-mod c_api {
-    use core::ffi::c_void;
-
-    use crate::bindings::{
-        error::Errno,
-        raw::{errno_t, timestamp_us_t},
-    };
-
-    use super::Thread;
-
-    #[unsafe(no_mangle)]
-    extern "C" fn thread_sleep(amount: timestamp_us_t) -> errno_t {
-        Errno::extract(super::thread_sleep(amount))
-    }
-
-    #[unsafe(no_mangle)]
-    extern "C" fn thread_current() -> *mut c_void {
-        Thread::current() as *mut c_void
-    }
 }

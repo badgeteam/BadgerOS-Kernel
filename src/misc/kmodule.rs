@@ -2,7 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use crate::bindings::log::LogLevel;
+use crate::util::log::LogLevel;
 
 /// Kernel module metadata.
 pub struct KModule {

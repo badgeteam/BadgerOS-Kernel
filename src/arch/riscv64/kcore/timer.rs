@@ -5,7 +5,7 @@ use crate::{
         kcore::timer::ArchTimer,
         riscv64::{Riscv, csr, sbi},
     },
-    bindings::log::LogLevel,
+    util::log::LogLevel,
     config,
 };
 

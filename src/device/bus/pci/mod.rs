@@ -10,10 +10,8 @@ use bar::BarInfo;
 use classcode::ClassCode;
 
 use crate::{
-    bindings::{
-        error::{EResult, Errno},
-        log::LogLevel,
-    },
+    LogLevel,
+    error::{EResult, Errno},
     device::{Device, class::pcictl::PciCtlDevice},
 };
 

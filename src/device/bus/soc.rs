@@ -14,10 +14,8 @@ use alloc::{boxed::Box, sync::Arc};
 use dtb::DtbNode;
 
 use crate::{
-    bindings::{
-        error::{EResult, Errno},
-        log::LogLevel,
-    },
+    LogLevel,
+    error::{EResult, Errno},
     config::PAGE_SIZE,
     device::{Device, bus::Bus, class::irqctl::IrqCtlDevice},
     mem::{

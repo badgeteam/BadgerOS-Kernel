@@ -14,10 +14,7 @@ use core::{any::Any, fmt::Display};
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
 use crate::{
-    bindings::{
-        error::{EResult, Errno},
-        log::LogLevel,
-    },
+LogLevel, error::{EResult, Errno},
     device::{
         Device, DeviceBase,
         bus::{

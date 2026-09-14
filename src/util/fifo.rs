@@ -10,7 +10,7 @@ use core::{
 use alloc::{boxed::Box, vec::Vec};
 
 use crate::{
-    bindings::{error::EResult, raw::timestamp_us_t},
+    error::EResult,
     kcore::sync::waitlist::Waitlist,
     process::usercopy::{AccessResult, UserSlice, UserSliceMut},
 };
@@ -225,7 +225,7 @@ impl BlockingFifo {
                     return Ok(ramt);
                 }
                 self.read_waitlist
-                    .block(timestamp_us_t::MAX, || self.fifo.read_avl() == 0)?;
+                    .block(u64::MAX, || self.fifo.read_avl() == 0)?;
             }
         }
     }
@@ -257,7 +257,7 @@ impl BlockingFifo {
 
                 if let Err(x) = self
                     .write_waitlist
-                    .block(timestamp_us_t::MAX, || self.fifo.write_avl() == 0)
+                    .block(u64::MAX, || self.fifo.write_avl() == 0)
                 {
                     if wsize > 0 {
                         break;

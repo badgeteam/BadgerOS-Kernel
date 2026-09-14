@@ -7,14 +7,12 @@ use core::mem::MaybeUninit;
 use alloc::{sync::Arc, vec::Vec};
 
 use crate::{
+    LogLevel,
     arch::{
         Arch, ArchTrait,
         kcore::{cpulocal::ArchCpuLocal, smp::ArchSmp, timer::ArchTimer},
     },
-    bindings::{
-        log::{LogLevel, logk_unlocked},
-        raw::kernel_heap_init,
-    },
+    bindings::raw::kernel_heap_init,
     boot::protocol,
     device,
     filesystem::mount_root::mount_root_fs,
@@ -23,11 +21,13 @@ use crate::{
         sched::{Scheduler, Thread},
         sync::mutex::Mutex,
     },
-    ktest::{KTestWhen, ktests_runlevel},
     mem::vmm,
     misc::kmodule,
     process::Process,
-    util::version,
+    util::{
+        ktest::{KTestWhen, ktests_runlevel},
+        version,
+    },
 };
 
 static mut BSP_CPULOCAL: MaybeUninit<CpuLocal> = MaybeUninit::uninit();
@@ -49,15 +49,15 @@ pub unsafe extern "C" fn basic_runtime_init() -> ! {
         ktests_runlevel(KTestWhen::PMM);
 
         // Announce the kernel is alive.
-        logk_unlocked(LogLevel::Info, "==============================");
+        logkf_unlocked!(LogLevel::Info, "==============================");
         logkf_unlocked!(
             LogLevel::Info,
             "BadgerOS {} {}",
             Arch::MACHINE,
             version::RELEASE
         );
-        logk_unlocked(LogLevel::Info, version::VERSION);
-        logk_unlocked(LogLevel::Info, "==============================");
+        logkf_unlocked!(LogLevel::Info, "{}", version::VERSION);
+        logkf_unlocked!(LogLevel::Info, "==============================");
 
         // Set up memory management.
         kernel_heap_init();

@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: CC0
 
 use crate::{
-    bindings::{
-        error::{EResult, Errno},
-        raw::timestamp_us_t,
-    },
+    error::{EResult, Errno},
     kcore::sched::{Thread, thread_sleep, thread_yield},
     process::{
         TID,
@@ -24,7 +21,7 @@ pub(super) fn yield_time() -> EResult<()> {
 }
 
 pub(super) fn sleep(delay: u64) -> EResult<()> {
-    thread_sleep(delay.try_into().unwrap_or(timestamp_us_t::MAX))
+    thread_sleep(delay.try_into().unwrap_or(u64::MAX))
 }
 
 pub(super) fn create(_entry: usize, _arg: usize, _priority: u32) -> EResult<TID> {

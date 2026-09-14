@@ -4,7 +4,7 @@
 use bytemuck::bytes_of;
 
 use crate::{
-    bindings::error::{EResult, Errno},
+    error::{EResult, Errno},
     filesystem::{self, DentBuffer, Dirent, InodeType, MakeFileSpec, PATH_MAX, SeekMode},
     process::{
         self, FILE_MAX,

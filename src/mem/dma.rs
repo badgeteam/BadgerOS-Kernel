@@ -5,7 +5,7 @@
 use core::usize;
 
 use crate::{
-    bindings::error::{EResult, Errno},
+    error::{EResult, Errno},
     config::PAGE_SIZE,
     mem::{
         pmm::PAddrr,

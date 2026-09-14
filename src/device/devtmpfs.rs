@@ -5,11 +5,9 @@
 use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
 
 use crate::{
-    bindings::{
-        error::{EResult, Errno},
-        log::LogLevel,
-    },
+    LogLevel,
     device::class::block::BlockDevice,
+    error::{EResult, Errno},
     filesystem::{
         File, MakeFileSpec, VfsLoc, make_file,
         mount::{self, Mount},

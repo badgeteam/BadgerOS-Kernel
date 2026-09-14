@@ -10,12 +10,9 @@ use core::{
 };
 
 use crate::{
-    bindings::{
-        error::{EResult, Errno},
-        raw::{errno_t, timestamp_us_t},
-        time_us,
-    },
-    kcore::sync::waitlist::Waitlist,
+    bindings::raw::errno_t,
+    error::{EResult, Errno},
+    kcore::{sync::waitlist::Waitlist, timer::time_us},
 };
 
 /// Raw mutually-exclusive resource access guard.
@@ -34,21 +31,18 @@ impl RawMutex {
     }
 
     pub fn lock<'a>(&'a self) -> EResult<RawMutexGuard<'a>> {
-        RawMutexGuard::new(self, timestamp_us_t::MAX)
+        RawMutexGuard::new(self, u64::MAX)
     }
 
     pub fn lock_shared<'a>(&'a self) -> EResult<SharedRawMutexGuard<'a>> {
-        SharedRawMutexGuard::new(self, timestamp_us_t::MAX)
+        SharedRawMutexGuard::new(self, u64::MAX)
     }
 
-    pub fn timed_lock<'a>(&'a self, timeout: timestamp_us_t) -> EResult<RawMutexGuard<'a>> {
+    pub fn timed_lock<'a>(&'a self, timeout: u64) -> EResult<RawMutexGuard<'a>> {
         RawMutexGuard::new(self, timeout)
     }
 
-    pub fn timed_lock_shared<'a>(
-        &'a self,
-        timeout: timestamp_us_t,
-    ) -> EResult<SharedRawMutexGuard<'a>> {
+    pub fn timed_lock_shared<'a>(&'a self, timeout: u64) -> EResult<SharedRawMutexGuard<'a>> {
         SharedRawMutexGuard::new(self, timeout)
     }
 
@@ -62,13 +56,13 @@ impl RawMutex {
         self.lock_shared().unwrap()
     }
 
-    pub fn unintr_timed_lock<'a>(&'a self, timeout: timestamp_us_t) -> EResult<RawMutexGuard<'a>> {
+    pub fn unintr_timed_lock<'a>(&'a self, timeout: u64) -> EResult<RawMutexGuard<'a>> {
         RawMutexGuard::unintr_new(self, timeout)
     }
 
     pub fn unintr_timed_lock_shared<'a>(
         &'a self,
-        timeout: timestamp_us_t,
+        timeout: u64,
     ) -> EResult<SharedRawMutexGuard<'a>> {
         SharedRawMutexGuard::unintr_new(self, timeout)
     }
@@ -85,7 +79,7 @@ impl<'a> RawMutexGuard<'a> {
         Self { mutex }
     }
 
-    fn new(mutex: &'a RawMutex, timeout: timestamp_us_t) -> EResult<Self> {
+    fn new(mutex: &'a RawMutex, timeout: u64) -> EResult<Self> {
         // Fast path.
         for _ in 0..50 {
             if mutex
@@ -115,7 +109,7 @@ impl<'a> RawMutexGuard<'a> {
         Ok(Self { mutex })
     }
 
-    fn unintr_new(mutex: &'a RawMutex, timeout: timestamp_us_t) -> EResult<Self> {
+    fn unintr_new(mutex: &'a RawMutex, timeout: u64) -> EResult<Self> {
         // Fast path.
         for _ in 0..50 {
             if mutex
@@ -170,7 +164,7 @@ impl<'a> SharedRawMutexGuard<'a> {
         Self { mutex }
     }
 
-    fn new(mutex: &'a RawMutex, timeout: timestamp_us_t) -> EResult<Self> {
+    fn new(mutex: &'a RawMutex, timeout: u64) -> EResult<Self> {
         // Fast path.
         let mut old = mutex.shares.load(Ordering::Relaxed);
         for _ in 0..50 {
@@ -216,7 +210,7 @@ impl<'a> SharedRawMutexGuard<'a> {
         }
     }
 
-    fn unintr_new(mutex: &'a RawMutex, timeout: timestamp_us_t) -> EResult<Self> {
+    fn unintr_new(mutex: &'a RawMutex, timeout: u64) -> EResult<Self> {
         // Fast path.
         let mut old = mutex.shares.load(Ordering::Relaxed);
         for _ in 0..50 {
@@ -295,32 +289,29 @@ impl<T> Mutex<T> {
     }
 
     pub fn lock<'a>(&'a self) -> EResult<MutexGuard<'a, T>> {
-        MutexGuard::new(self, timestamp_us_t::MAX)
+        MutexGuard::new(self, u64::MAX)
     }
 
-    pub fn timed_lock<'a>(&'a self, timeout: timestamp_us_t) -> EResult<MutexGuard<'a, T>> {
+    pub fn timed_lock<'a>(&'a self, timeout: u64) -> EResult<MutexGuard<'a, T>> {
         MutexGuard::new(self, timeout)
     }
 
     pub fn lock_shared<'a>(&'a self) -> EResult<SharedMutexGuard<'a, T>> {
-        SharedMutexGuard::new(self, timestamp_us_t::MAX)
+        SharedMutexGuard::new(self, u64::MAX)
     }
 
-    pub fn timed_lock_shared<'a>(
-        &'a self,
-        timeout: timestamp_us_t,
-    ) -> EResult<SharedMutexGuard<'a, T>> {
+    pub fn timed_lock_shared<'a>(&'a self, timeout: u64) -> EResult<SharedMutexGuard<'a, T>> {
         SharedMutexGuard::new(self, timeout)
     }
 
     /// Version of [`Self::lock`] that can't be interrupted.
     pub fn unintr_lock<'a>(&'a self) -> MutexGuard<'a, T> {
-        MutexGuard::unintr_new(self, timestamp_us_t::MAX).unwrap()
+        MutexGuard::unintr_new(self, u64::MAX).unwrap()
     }
 
     /// Version of [`Self::lock_shared`] that can't be interrupted.
     pub fn unintr_lock_shared<'a>(&'a self) -> SharedMutexGuard<'a, T> {
-        SharedMutexGuard::unintr_new(self, timestamp_us_t::MAX).unwrap()
+        SharedMutexGuard::unintr_new(self, u64::MAX).unwrap()
     }
 
     pub unsafe fn data(&self) -> &mut T {
@@ -348,14 +339,14 @@ impl<'a, T> MutexGuard<'a, T> {
         self.inner
     }
 
-    fn new(mutex: &'a Mutex<T>, timeout: timestamp_us_t) -> EResult<Self> {
+    fn new(mutex: &'a Mutex<T>, timeout: u64) -> EResult<Self> {
         Ok(Self {
             inner: mutex.inner.timed_lock(timeout)?,
             data: unsafe { mutex.data.as_mut_unchecked() },
         })
     }
 
-    fn unintr_new(mutex: &'a Mutex<T>, timeout: timestamp_us_t) -> EResult<Self> {
+    fn unintr_new(mutex: &'a Mutex<T>, timeout: u64) -> EResult<Self> {
         Ok(Self {
             inner: mutex.inner.timed_lock(timeout)?,
             data: unsafe { mutex.data.as_mut_unchecked() },
@@ -439,14 +430,14 @@ impl<'a, T> SharedMutexGuard<'a, T> {
         self.inner
     }
 
-    fn new(mutex: &'a Mutex<T>, timeout: timestamp_us_t) -> EResult<Self> {
+    fn new(mutex: &'a Mutex<T>, timeout: u64) -> EResult<Self> {
         Ok(Self {
             inner: mutex.inner.timed_lock_shared(timeout)?,
             data: unsafe { mutex.data.as_ref_unchecked() },
         })
     }
 
-    fn unintr_new(mutex: &'a Mutex<T>, timeout: timestamp_us_t) -> EResult<Self> {
+    fn unintr_new(mutex: &'a Mutex<T>, timeout: u64) -> EResult<Self> {
         Ok(Self {
             inner: mutex.inner.unintr_timed_lock_shared(timeout)?,
             data: unsafe { mutex.data.as_ref_unchecked() },
@@ -511,12 +502,12 @@ unsafe extern "C" fn mutex_lock_shared(mutex: &RawMutex) -> errno_t {
 }
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn mutex_timed_lock(mutex: &RawMutex, timeout: timestamp_us_t) -> errno_t {
+unsafe extern "C" fn mutex_timed_lock(mutex: &RawMutex, timeout: u64) -> errno_t {
     Errno::extract(try { core::mem::forget(mutex.timed_lock(timeout)?) })
 }
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn mutex_timed_lock_shared(mutex: &RawMutex, timeout: timestamp_us_t) -> errno_t {
+unsafe extern "C" fn mutex_timed_lock_shared(mutex: &RawMutex, timeout: u64) -> errno_t {
     Errno::extract(try { core::mem::forget(mutex.timed_lock_shared(timeout)?) })
 }
 

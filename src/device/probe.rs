@@ -5,7 +5,7 @@
 use alloc::{boxed::Box, collections::btree_set::BTreeSet, sync::Arc, vec::Vec};
 
 use crate::{
-    bindings::{log::LogLevel, raw::timestamp_us_t},
+    LogLevel,
     kcore::{
         sched::Thread,
         sync::{mutex::Mutex, waitlist::Waitlist},
@@ -98,7 +98,7 @@ pub unsafe fn probe_bus(bus: Arc<dyn Bus>) {
 
 /// Driver probing loop.
 fn probe_loop() {
-    WAITLIST.unintr_block(timestamp_us_t::MAX, || {
+    WAITLIST.unintr_block(u64::MAX, || {
         BUS_PROBE_LIST.unintr_lock_shared().is_empty()
             && DRIVER_PROBE_LIST.unintr_lock_shared().is_empty()
     });

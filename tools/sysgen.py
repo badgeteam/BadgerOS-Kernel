@@ -10,7 +10,8 @@ gen_warning = """
 rust_imports = """
 use crate::{
     arch::except::{ArchSyscallFrame, SyscallFrame},
-    bindings::{error::Errno, log::LogLevel},
+    LogLevel,
+    error::Errno,
 };
 use core::ffi::*;
 

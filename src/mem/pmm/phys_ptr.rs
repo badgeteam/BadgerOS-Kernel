@@ -2,7 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use crate::bindings::error::EResult;
+use crate::error::EResult;
 
 use super::{PAddrr, PageUsage, page_alloc, page_free};
 

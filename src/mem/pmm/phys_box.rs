@@ -7,7 +7,7 @@ use core::ops::{Deref, DerefMut};
 use alloc::sync::Arc;
 
 use crate::{
-    bindings::error::EResult,
+    error::EResult,
     config::PAGE_SIZE,
     mem::{
         pmm,

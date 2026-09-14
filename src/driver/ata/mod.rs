@@ -10,10 +10,7 @@ use core::{
 use alloc::{boxed::Box, sync::Arc};
 
 use crate::{
-    bindings::{
-        error::{EResult, Errno},
-        log::LogLevel,
-    },
+LogLevel, error::{EResult, Errno},
     device::{
         self, Device, DeviceBase,
         bus::{

@@ -9,7 +9,7 @@ use alloc::sync::Arc;
 use dtb::DtbNode;
 
 use crate::{
-    bindings::error::EResult,
+    error::EResult,
     device::{Device, class::atactl::AtaCtlDevice},
     mem::dma::DmaTarget,
 };

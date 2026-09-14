@@ -7,7 +7,6 @@ use core::{mem::offset_of, sync::atomic::AtomicU32};
 use super::*;
 
 use crate::{
-    bindings::raw::timestamp_us_t,
     device::{bus::ata::AtaBus, registry},
     kcore::{
         sched::{Thread, thread_yield},
@@ -179,7 +178,7 @@ impl Port {
             }
 
             // Wait for something to need attention.
-            self.work_waitlist.unintr_block(timestamp_us_t::MAX, || {
+            self.work_waitlist.unintr_block(u64::MAX, || {
                 if self.cmd_issue_map.load(Ordering::Relaxed) != 0 {
                     return false;
                 }
@@ -389,7 +388,7 @@ impl Port {
                 return Err(Errno::ETIMEDOUT);
             };
 
-            self.cmd_waitlist[list].unintr_block(timeout as i64, || {
+            self.cmd_waitlist[list].unintr_block(timeout, || {
                 (self.cmd_finish_map.load(Ordering::Relaxed)
                     | self.cmd_err_map.load(Ordering::Relaxed))
                     & mask

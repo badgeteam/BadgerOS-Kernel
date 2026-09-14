@@ -11,9 +11,9 @@ use core::{
 use super::*;
 use crate::{
     arch::{Arch, mmu::ArchMMU},
-    bindings::{error::EResult, raw::phys_page_free},
     config::PAGE_SIZE,
-    mem::pmm::{self, page_struct_base},
+    error::EResult,
+    mem::pmm::{self, page_free, page_struct_base},
     util::irq::IrqGuard,
 };
 
@@ -273,7 +273,7 @@ impl PhysMap {
                         );
                         if !res {
                             // If the PTE had concurrently changed, try again.
-                            phys_page_free(paddr);
+                            page_free(paddr, 0);
                             continue;
                         } else {
                             paddr

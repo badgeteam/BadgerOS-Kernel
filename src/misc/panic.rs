@@ -14,8 +14,8 @@ use crate::{
         kcore::sched::ArchSched,
         misc::ArchMisc,
     },
-    bindings::log::{LogLevel, logkf_unlocked, write_unlocked},
     process::usercopy::AccessResult,
+    util::log::{LogLevel, logkf_unlocked, write_unlocked},
 };
 
 static IS_PANICKING: AtomicU32 = AtomicU32::new(0);

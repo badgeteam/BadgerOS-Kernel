@@ -13,7 +13,7 @@ use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc, vec::Vec};
 
 use crate::{
     LogLevel,
-    bindings::error::{EResult, Errno},
+    error::{EResult, Errno},
     config::PAGE_SIZE,
     device::{Device, class::block::BlockDevice},
     filesystem::mount,

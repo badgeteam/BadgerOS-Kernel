@@ -4,7 +4,7 @@
 
 use static_assertions::assert_eq_size;
 
-use crate::{bindings::error::Errno, filesystem::InodeType};
+use crate::{error::Errno, filesystem::InodeType};
 
 /// Calls conversion function `$func` on integers in `$type`.
 #[rustfmt::skip]

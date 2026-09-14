@@ -10,7 +10,7 @@ use memobject::{MappablePage, RawMemory};
 
 use crate::{
     arch::{Arch, mmu::ArchMMU},
-    bindings::log::LogLevel,
+    util::log::LogLevel,
     config::PAGE_SIZE,
     mem::pmm::{self, PAddrr},
 };

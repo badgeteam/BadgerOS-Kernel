@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: MIT
 
 use crate::{
-    bindings::{error::EResult, log::LogLevel},
+    LogLevel,
+    error::EResult,
     device::{
         Device,
         bus::{

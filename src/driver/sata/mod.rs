@@ -8,10 +8,7 @@ use alloc::sync::Arc;
 use tock_registers::interfaces::{ReadWriteable, Readable, Writeable};
 
 use crate::{
-    bindings::{
-        error::{EResult, Errno},
-        log::LogLevel,
-    },
+LogLevel, error::{EResult, Errno},
     device::{
         Device, DeviceBase,
         bus::{

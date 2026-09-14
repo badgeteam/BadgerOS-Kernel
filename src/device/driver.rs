@@ -5,11 +5,11 @@
 use alloc::sync::Arc;
 
 use crate::{
-    bindings::error::EResult,
     device::{
         Device,
         bus::{Bus, BusResv},
     },
+    error::EResult,
 };
 
 pub trait Driver: Send + Sync + 'static {

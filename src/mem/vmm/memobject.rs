@@ -5,10 +5,7 @@
 use core::{fmt::Debug, num::NonZeroUsize, sync::atomic::Ordering};
 
 use crate::{
-    bindings::{
-        error::{EResult, Errno},
-        log::LogLevel,
-    },
+LogLevel, error::{EResult, Errno},
     config::PAGE_SIZE,
     mem::pmm::{self, PAddrr},
 };

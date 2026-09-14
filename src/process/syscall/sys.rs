@@ -3,7 +3,7 @@
 
 use crate::{
     arch::{Arch, ArchTrait},
-    bindings::{error::EResult, raw::rawputc},
+    error::EResult,
     process::{
         uapi::uname::utsname,
         usercopy::{UserPtrMut, UserSlice},
@@ -22,9 +22,18 @@ pub(super) fn uname(mut name: UserPtrMut<utsname>) -> EResult<()> {
 }
 
 pub(super) fn log(message: UserSlice<u8>) -> EResult<()> {
+    // TODO: Replace with proper earlycon.
+    let mut prev = 0u8;
     for i in 0..message.len() {
+        let c = message.read(i)?;
         unsafe {
-            rawputc(message.read(i)? as _);
+            if c == b'\n' && prev != b'\r' {
+                crate::boot::protocol::bootp_early_putc(b'\r');
+            } else if prev == b'\r' && c != b'\n' {
+                crate::boot::protocol::bootp_early_putc(b'\n');
+            }
+            crate::boot::protocol::bootp_early_putc(c);
+            prev = c;
         }
     }
     Ok(())

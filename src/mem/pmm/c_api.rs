@@ -2,7 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use crate::bindings::{error::Errno, raw::errno_size_t};
+use crate::{bindings::raw::errno_size_t, error::Errno};
 
 use super::{
     PAddrr, Page, PageUsage, init, mark_free, page_alloc, page_free, page_struct, page_struct_base,

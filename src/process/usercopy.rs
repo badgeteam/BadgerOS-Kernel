@@ -8,7 +8,7 @@ use alloc::{ffi::CString, vec::Vec};
 
 use crate::{
     arch::{Arch, except::ArchExcept, mmu::ArchMMU},
-    bindings::error::{EResult, Errno},
+    error::{EResult, Errno},
     mem::vmm::physmap::{is_canon_user_addr, is_canon_user_range},
 };
 

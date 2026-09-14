@@ -51,23 +51,23 @@ extern crate chrono;
 #[macro_use]
 pub mod bindings;
 #[macro_use]
-pub mod ktest;
+pub mod util;
 
 pub mod arch;
 pub mod boot;
 pub mod config;
 pub mod device;
 pub mod driver;
+pub mod error;
 pub mod except;
 pub mod filesystem;
 pub mod kcore;
 pub mod mem;
 pub mod misc;
 pub mod process;
-pub mod util;
 
-use bindings::log::*;
 use core::{alloc::GlobalAlloc, ffi::c_void};
+use util::log::*;
 
 #[global_allocator]
 pub static BADGEROS_RUST_MALLOC: BadgerOSMalloc = BadgerOSMalloc {};

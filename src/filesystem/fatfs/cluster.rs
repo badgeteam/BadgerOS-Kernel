@@ -13,7 +13,7 @@ use core::{
 use alloc::{collections::TryReserveError, vec::Vec};
 
 use crate::{
-    bindings::error::{EResult, Errno},
+    error::{EResult, Errno},
     process::usercopy::{UserSlice, UserSliceMut},
 };
 

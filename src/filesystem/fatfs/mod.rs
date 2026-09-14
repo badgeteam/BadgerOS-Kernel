@@ -8,7 +8,7 @@ use cluster::{ClusterAlloc, ClusterChain};
 use spec::{Bpb, Dirent, Header16, Header32, LfnEnt, attr};
 
 use crate::{
-    bindings::error::{EResult, Errno},
+    error::{EResult, Errno},
     device::Device,
     filesystem::{fatfs::spec::attr2, vfs::vnflags},
     kcore::sync::mutex::Mutex,

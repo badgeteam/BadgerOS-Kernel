@@ -7,13 +7,13 @@ use core::sync::atomic::Ordering;
 use limine::{BaseRevision, RequestsEndMarker, RequestsStartMarker, memmap, request::*};
 
 use crate::{
-    bindings::log::{LogLevel, write_unlocked},
     config::PAGE_SIZE,
     mem::{
         pmm::{self, PAddrr},
         vmm,
     },
     misc::kparam,
+    util::log::{LogLevel, write_unlocked},
 };
 
 // Aarch64 and loongarch64 have critical problems before base revision 6, but RISC-V and x86_64 do not.

@@ -10,10 +10,7 @@ use core::{
 };
 
 use crate::{
-    bindings::{
-        error::{EResult, Errno},
-        log::LogLevel,
-    },
+LogLevel, error::{EResult, Errno},
     config::PAGE_SIZE,
     kcore::sync::spinlock::Spinlock,
     mem::vmm,

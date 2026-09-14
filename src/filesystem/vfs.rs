@@ -25,7 +25,7 @@ use super::{
 };
 use crate::{
     LogLevel,
-    bindings::error::{EResult, Errno},
+    error::{EResult, Errno},
     config::PAGE_SIZE,
     device::Device,
     filesystem::{

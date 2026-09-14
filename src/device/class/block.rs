@@ -7,12 +7,10 @@ use core::{fmt::Display, ops::Range, ptr::NonNull};
 use alloc::{sync::Arc, vec::Vec};
 
 use crate::{
-    bindings::{
-        error::{EResult, Errno},
-        log::LogLevel,
-    },
+    LogLevel,
     device::{Device, DeviceBase, registry},
     device_get_trait_vtable,
+    error::{EResult, Errno},
     filesystem::partition::{VolumeInfo, get_volume_info},
     kcore::sync::mutex::{Mutex, MutexGuard, SharedMutexGuard},
     mem::{

@@ -5,12 +5,13 @@
 use core::{ffi::c_void, ptr::null};
 
 use crate::{
+    LogLevel,
     arch::{
         Arch,
         except::{ArchTrapFrame, TrapFrame},
         usermode::ArchUsermode,
     },
-    bindings::{error::Errno, log::LogLevel},
+    error::Errno,
     kcore::sched::Thread,
     process::{self, uapi::wait::w_signalled},
 };

@@ -4,7 +4,8 @@
 
 use crate::{
     arch::except::{ArchSyscallFrame, SyscallFrame},
-    bindings::{error::Errno, log::LogLevel},
+    LogLevel,
+    error::Errno,
 };
 use core::ffi::*;
 

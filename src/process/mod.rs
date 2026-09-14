@@ -31,18 +31,15 @@ use uapi::{
 use usercopy::{AccessResult, UserSlice, UserSliceMut};
 
 use crate::{
+    LogLevel,
     arch::{
         Arch,
         except::SyscallFrame,
         usermode::{ArchUserRegs, ArchUsermode, UserRegs},
     },
-    bindings::{
-        error::{EResult, Errno},
-        log::LogLevel,
-        raw::timestamp_us_t,
-    },
     config::STACK_SIZE,
     device::{self, class::char::CharDevice},
+    error::{EResult, Errno},
     filesystem::{self, File, SeekMode, device::CharDevFile, mode, oflags},
     kcore::{
         sched::Thread,
@@ -608,9 +605,8 @@ impl Process {
         if flags & WNOHANG == 0 {
             // Blocking wait.
             loop {
-                self.waitlist.block(timestamp_us_t::MAX, || {
-                    !self.status.lock_shared().wait_matches(flags)
-                })?;
+                self.waitlist
+                    .block(u64::MAX, || !self.status.lock_shared().wait_matches(flags))?;
                 let mut status = self.status.lock();
                 if status.wait_matches(flags) {
                     if flags & WNOWAIT == 0 {
@@ -640,7 +636,7 @@ impl Process {
             let mut res = None;
             while res.is_none() {
                 let pcr = self.pcr.lock_shared()?.clone();
-                self.child_waitlist.block(timestamp_us_t::MAX, || {
+                self.child_waitlist.block(u64::MAX, || {
                     for child in pcr.children.values() {
                         let mut status = child.status.lock();
                         if status.wait_matches(flags) {
@@ -714,8 +710,7 @@ impl Process {
     /// Wait until this process is resumes.
     pub fn block_if_paused(&self) {
         while self.is_paused() {
-            self.waitlist
-                .unintr_block(timestamp_us_t::MAX, || self.is_paused())
+            self.waitlist.unintr_block(u64::MAX, || self.is_paused())
         }
     }
 }

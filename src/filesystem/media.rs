@@ -2,7 +2,7 @@ use alloc::sync::Arc;
 use num::traits::{FromBytes, ToBytes};
 
 use crate::{
-    bindings::error::{EResult, Errno},
+    error::{EResult, Errno},
     device::class::block::BlockDevice,
     mem::dma::DmaTarget,
     process::usercopy::{UserSlice, UserSliceMut},

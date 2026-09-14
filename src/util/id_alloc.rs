@@ -6,7 +6,7 @@ use core::{
 
 use alloc::{alloc::AllocError, collections::TryReserveError, vec::Vec};
 
-use crate::{LogLevel, bindings::error::Errno};
+use crate::{LogLevel, error::Errno};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdAllocError {

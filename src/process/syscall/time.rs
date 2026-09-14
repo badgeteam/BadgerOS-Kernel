@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: CC0
 
 use crate::{
-    bindings::error::EResult,
+    error::EResult,
     process::{uapi::time::timespec, usercopy::UserPtrMut},
     util::time::Timespec,
 };

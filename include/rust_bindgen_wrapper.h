@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "badgeros-abi/errno.h"
 #include "log.h"
 #include "malloc.h"
 #include "page_alloc.h"

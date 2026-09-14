@@ -5,7 +5,7 @@ use crate::{
         except::ArchTrapFrame,
         riscv64::{csr, except::RiscvExceptFrame, lazy::insn::is_float_insn},
     },
-    bindings::log::LogLevel,
+    util::log::LogLevel,
     kcore::sched::Thread,
     process::usercopy::UserPtr,
 };

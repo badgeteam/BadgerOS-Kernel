@@ -111,11 +111,9 @@ set(kernel_src
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/fifo.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/hash.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/list.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/log.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/map.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/num_to_str.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/radixtree.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/rawprint.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/refcount.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/set.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/nanoprintf.c

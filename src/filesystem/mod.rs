@@ -18,7 +18,7 @@ use vfs::{DentCache, DentCacheDir, DentCacheType, FlagsAndOffset, VNode, VfsDriv
 
 use crate::{
     LogLevel,
-    bindings::error::{EResult, Errno},
+    error::{EResult, Errno},
     device::{Device, class::block::BlockDevice},
     filesystem::{
         fifo::{FifoFile, FifoShared},

@@ -20,7 +20,7 @@ use alloc::{
 
 use crate::{
     LogLevel,
-    bindings::error::{EResult, Errno},
+    error::{EResult, Errno},
     device::Device,
     filesystem::mount,
     kcore::sync::mutex::Mutex,

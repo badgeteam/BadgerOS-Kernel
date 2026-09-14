@@ -12,12 +12,9 @@ use core::{
 use alloc::vec::Vec;
 
 use crate::{
-    bindings::{
-        error::{EResult, Errno},
-        log::LogLevel,
-        raw::timestamp_us_t,
-    },
+    LogLevel,
     config::PAGE_SIZE,
+    error::{EResult, Errno},
     kcore::sync::{mutex::Mutex, spinlock::Spinlock, waitlist::Waitlist},
     mem::pmm::{self, PAddrr},
     process::usercopy::{UserSlice, UserSliceMut},
@@ -278,7 +275,7 @@ impl PageCache {
         while (ent.flags.load(Ordering::Relaxed) & flags::READING) != 0 {
             drop(pages);
 
-            self.read_waitlist.block(timestamp_us_t::MAX, || {
+            self.read_waitlist.block(u64::MAX, || {
                 self.pages
                     .lock_shared()
                     .get(index)

@@ -2,7 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use crate::bindings::error::EResult;
+use crate::error::EResult;
 
 /// Describes at what level of init a testcase should run.
 #[repr(C)]
@@ -93,7 +93,7 @@ pub fn ktests_runlevel(_level: KTestWhen) {}
 #[macro_export]
 macro_rules! early_ktest {
     ($name: ident, $($code: tt)*) => {
-        crate::ktest!(crate::ktest::KTestWhen::Early, $name, $($code)*);
+        crate::ktest!(crate::util::ktest::KTestWhen::Early, $name, $($code)*);
     };
 }
 
@@ -101,7 +101,7 @@ macro_rules! early_ktest {
 #[macro_export]
 macro_rules! pmm_ktest {
     ($name: ident, $($code: tt)*) => {
-        crate::ktest!(crate::ktest::KTestWhen::PMM, $name, $($code)*);
+        crate::ktest!(crate::util::ktest::KTestWhen::PMM, $name, $($code)*);
     };
 }
 
@@ -109,7 +109,7 @@ macro_rules! pmm_ktest {
 #[macro_export]
 macro_rules! vmm_ktest {
     ($name: ident, $($code: tt)*) => {
-        crate::ktest!(crate::ktest::KTestWhen::VMM, $name, $($code)*);
+        crate::ktest!(crate::util::ktest::KTestWhen::VMM, $name, $($code)*);
     };
 }
 
@@ -117,7 +117,7 @@ macro_rules! vmm_ktest {
 #[macro_export]
 macro_rules! heap_ktest {
     ($name: ident, $($code: tt)*) => {
-        crate::ktest!(crate::ktest::KTestWhen::Heap, $name, $($code)*);
+        crate::ktest!(crate::util::ktest::KTestWhen::Heap, $name, $($code)*);
     };
 }
 
@@ -125,7 +125,7 @@ macro_rules! heap_ktest {
 #[macro_export]
 macro_rules! sched_ktest {
     ($name: ident, $($code: tt)*) => {
-        crate::ktest!(crate::ktest::KTestWhen::Sched, $name, $($code)*);
+        crate::ktest!(crate::util::ktest::KTestWhen::Sched, $name, $($code)*);
     };
 }
 
@@ -133,7 +133,7 @@ macro_rules! sched_ktest {
 #[macro_export]
 macro_rules! rootfs_ktest {
     ($name: ident, $($code: tt)*) => {
-        crate::ktest!(crate::ktest::KTestWhen::RootFs, $name, $($code)*);
+        crate::ktest!(crate::util::ktest::KTestWhen::RootFs, $name, $($code)*);
     };
 }
 
@@ -144,15 +144,15 @@ macro_rules! ktest {
         #[used]
         #[unsafe(link_section = ".ktests")]
         #[cfg(feature = "ktest")]
-        static $name: crate::ktest::KTest = crate::ktest::KTest {
+        static $name: crate::util::ktest::KTest = crate::util::ktest::KTest {
             when: $when,
             name: stringify!($name),
             func: {
-                fn func() -> crate::bindings::error::EResult<()> {
+                fn func() -> crate::error::EResult<()> {
                     {$($code)*}
                     Ok(())
                 }
-                &(func as fn() -> crate::bindings::error::EResult<()>)
+                &(func as fn() -> crate::error::EResult<()>)
             },
         };
     };
@@ -172,7 +172,7 @@ macro_rules! ktest_expect {
             $($(
                 crate::printf!("    where {} => {}\n", stringify!($ctx), {$ctx});
             )*)?
-            Err(crate::bindings::error::Errno::EASSERT)?;
+            Err(crate::error::Errno::EASSERT)?;
         }
     };
     ($lhs: expr, $rhs: expr $(, [ $($ctx: expr),* ])?) => {
@@ -192,7 +192,7 @@ macro_rules! ktest_assert {
             $($(
                 crate::printf!("    where {} => {:?}\n", stringify!($ctx), {$ctx});
             )*)?
-            Err(crate::bindings::error::Errno::EASSERT)?;
+            Err(crate::error::Errno::EASSERT)?;
         }
     };
 }

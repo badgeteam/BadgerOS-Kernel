@@ -12,7 +12,7 @@ use tock_registers::{
 };
 
 use crate::{
-    bindings::error::EResult,
+    error::EResult,
     device::{
         Device, DeviceBase,
         bus::{

@@ -3,7 +3,7 @@ use bytemuck::{AnyBitPattern, NoUninit, Zeroable, cast_slice_mut};
 use uuid::Uuid;
 
 use crate::{
-    bindings::error::EResult,
+    error::EResult,
     device::class::block::BlockDevice,
     filesystem::partition::{Partition, PartitionDriver, VolumeInfo},
     register_kmodule,

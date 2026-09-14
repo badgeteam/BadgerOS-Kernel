@@ -4,10 +4,7 @@
 
 use alloc::sync::Arc;
 
-use crate::{
-    bindings::{error::Errno, raw::errno_t},
-    mem::pmm::PAddrr,
-};
+use crate::{bindings::raw::errno_t, error::Errno, mem::pmm::PAddrr};
 
 use super::{
     kernel_mm,

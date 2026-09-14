@@ -7,10 +7,7 @@ use core::sync::atomic::{AtomicU32, Ordering, fence};
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
 use crate::{
-    bindings::{
-        error::{EResult, Errno},
-        raw::timestamp_us_t,
-    },
+    error::{EResult, Errno},
     filesystem::VfsLoc,
     kcore::sync::{mutex::Mutex, spinlock::Spinlock, waitlist::Waitlist},
     process::usercopy::{UserSlice, UserSliceMut},
@@ -71,7 +68,7 @@ impl FifoShared {
             let mut taken_lock = None;
             let taken_lock_ptr = &mut taken_lock;
 
-            let res = queue.block(timestamp_us_t::MAX, move || {
+            let res = queue.block(u64::MAX, move || {
                 *taken_lock_ptr = Some(self.buffer.lock());
 
                 // Unblock if the other end is open.
@@ -149,7 +146,7 @@ impl FifoShared {
         } else {
             let mut buffer = None;
             let buffer_ptr = &mut buffer;
-            self.read_queue.block(timestamp_us_t::MAX, || {
+            self.read_queue.block(u64::MAX, || {
                 // Unblock if there is read data available.
                 *buffer_ptr = Some(self.buffer.lock_shared());
                 if let Some(buffer) = &**buffer_ptr.as_ref().unwrap()
@@ -192,7 +189,7 @@ impl FifoShared {
         } else {
             let mut buffer = None;
             let buffer_ptr = &mut buffer;
-            self.write_queue.block(timestamp_us_t::MAX, || {
+            self.write_queue.block(u64::MAX, || {
                 // Unblock if there is write data available.
                 *buffer_ptr = Some(self.buffer.lock_shared());
                 if let Some(buffer) = &**buffer_ptr.as_ref().unwrap()

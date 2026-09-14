@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 use crate::{
-    bindings::error::EResult,
+    error::EResult,
     device::{Device, bus::ata::Command},
     mem::dma::DmaTarget,
 };

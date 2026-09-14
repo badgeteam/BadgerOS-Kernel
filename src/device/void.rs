@@ -7,9 +7,9 @@ use core::fmt::Display;
 use alloc::{sync::Arc, vec::Vec};
 
 use crate::{
-    bindings::error::EResult,
     device::{Device, DeviceBase, class::char::CharDevice, registry},
     device_get_trait_vtable,
+    error::EResult,
     filesystem::poll,
     kcore::sync::waitlist::Waitlist,
     process::usercopy::{UserSlice, UserSliceMut},

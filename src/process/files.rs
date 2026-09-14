@@ -7,7 +7,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use alloc::{collections::btree_map::BTreeMap, sync::Arc, vec::Vec};
 
 use crate::{
-    bindings::error::{EResult, Errno},
+    error::{EResult, Errno},
     filesystem::{self, File, oflags},
     process::FILE_MAX,
 };

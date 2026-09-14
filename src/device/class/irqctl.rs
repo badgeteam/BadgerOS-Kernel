@@ -5,8 +5,9 @@
 use alloc::{collections::btree_map::BTreeMap, vec::Vec};
 
 use crate::{
+    LogLevel,
     arch::{Arch, except::ArchExcept},
-    bindings::{error::EResult, log::LogLevel},
+    error::EResult,
     device::Device,
     kcore::sync::spinlock::Spinlock,
     util::irq::IrqGuard,

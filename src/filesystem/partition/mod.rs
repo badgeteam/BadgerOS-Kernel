@@ -1,9 +1,7 @@
 use alloc::{boxed::Box, string::String, vec::Vec};
 use uuid::Uuid;
 
-use crate::{
-    bindings::error::EResult, device::class::block::BlockDevice, kcore::sync::mutex::Mutex,
-};
+use crate::{device::class::block::BlockDevice, error::EResult, kcore::sync::mutex::Mutex};
 
 pub mod gpt;
 pub mod mbr;

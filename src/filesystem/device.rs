@@ -1,5 +1,5 @@
 use crate::{
-    bindings::error::EResult,
+    error::EResult,
     device::{Device, class::char::CharDevice},
 };
 

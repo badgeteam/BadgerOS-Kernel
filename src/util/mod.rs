@@ -3,7 +3,12 @@ use core::ops::Deref;
 use alloc::string::String;
 use uuid::Uuid;
 
-use crate::bindings::error::EResult;
+use crate::error::EResult;
+
+#[macro_use]
+pub mod log;
+#[macro_use]
+pub mod ktest;
 
 pub mod atomic_bitset;
 pub mod bitset;

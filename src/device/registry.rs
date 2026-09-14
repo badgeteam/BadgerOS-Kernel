@@ -12,10 +12,8 @@ use alloc::{collections::btree_map::BTreeMap, sync::Arc, vec::Vec};
 use dtb::DtbNode;
 
 use crate::{
-    bindings::{
-        error::{EResult, Errno},
-        log::LogLevel,
-    },
+    LogLevel,
+    error::{EResult, Errno},
     device::probe,
     kcore::sync::mutex::{Mutex, SharedMutexGuard},
     util::id_alloc::IdAlloc,

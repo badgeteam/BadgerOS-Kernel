@@ -7,11 +7,8 @@ use core::sync::atomic::Ordering;
 use alloc::{boxed::Box, vec::Vec};
 
 use crate::{
-    bindings::{
-        error::{EResult, Errno},
-        log::LogLevel,
-        raw::timestamp_us_t,
-    },
+    LogLevel,
+    error::{EResult, Errno},
     impl_has_list_node,
     kcore::sched::{Thread, tflags, thread_yield},
     util::irq::IrqGuard,
@@ -43,13 +40,13 @@ impl Waitlist {
 
     /// Block on this list if a condition is met.
     /// May spuriously return early.
-    pub fn unintr_block(&self, timeout: timestamp_us_t, condition: impl FnOnce() -> bool) {
+    pub fn unintr_block(&self, timeout: u64, condition: impl FnOnce() -> bool) {
         self.block_impl(timeout, condition);
     }
 
     /// Block on this list if a condition is met.
     /// May spuriously return early, or return [`Errno::EINTR`] if the thread was signalled.
-    pub fn block(&self, timeout: timestamp_us_t, condition: impl FnOnce() -> bool) -> EResult<()> {
+    pub fn block(&self, timeout: u64, condition: impl FnOnce() -> bool) -> EResult<()> {
         let current = unsafe { &*Thread::current() };
         self.block_impl(timeout, || {
             condition() && unsafe { current.get_async_sig(true).is_none() }
@@ -62,7 +59,7 @@ impl Waitlist {
     }
 
     /// Implementation of [`Self::block`] and [`Self::unintr_block`].
-    fn block_impl(&self, timeout: timestamp_us_t, condition: impl FnOnce() -> bool) {
+    fn block_impl(&self, timeout: u64, condition: impl FnOnce() -> bool) {
         unsafe {
             let _noirq = IrqGuard::new();
             let current = { &*Thread::current() };
@@ -116,7 +113,7 @@ impl Waitlist {
     /// Implementation of [`Self::select`] and [`Self::unintr_select`].
     /// Can only fail if `interruptible` and a signal is pending on this thread.
     fn select_impl(
-        timeout: timestamp_us_t,
+        timeout: u64,
         lists: &[Waitlist],
         tickets: &mut [WaitingTicket],
         checks: Vec<Box<dyn FnOnce() -> bool>>,
@@ -160,7 +157,7 @@ impl Waitlist {
     /// Wait for one of any number of events to happen.
     /// The same waitlist may occur multiple times, but there is no real reason to do so.
     pub fn unintr_select(
-        timeout: timestamp_us_t,
+        timeout: u64,
         lists: &[Waitlist],
         checks: Vec<Box<dyn FnOnce() -> bool>>,
     ) -> EResult<()> {
@@ -190,7 +187,7 @@ impl Waitlist {
     /// Wait for one of any number of events to happen.
     /// The same waitlist may occur multiple times, but there is no real reason to do so.
     pub fn select(
-        timeout: timestamp_us_t,
+        timeout: u64,
         lists: &[Waitlist],
         checks: Vec<Box<dyn FnOnce() -> bool>>,
     ) -> EResult<()> {
