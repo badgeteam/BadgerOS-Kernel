@@ -83,7 +83,6 @@ impl PageCache {
         let mut guard = self.len.unintr_lock();
         let old_len = *guard;
         *guard = new_len;
-        drop(guard);
 
         if new_len >= old_len {
             return;
@@ -147,6 +146,7 @@ impl PageCache {
                 pages.remove(index);
             }
         }
+        drop(guard);
 
         for (paddr, order) in to_free {
             // SAFETY: entry removed from cache with refcount confirmed 0.

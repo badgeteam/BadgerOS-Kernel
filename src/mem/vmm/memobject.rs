@@ -16,23 +16,33 @@ use crate::{
 use super::map::{MapEntry, VmSpaceInner};
 
 /// A page that can be memory-mapped.
+#[repr(transparent)]
 pub struct MappablePage(NonZeroUsize);
 
 impl MappablePage {
+    const WRITABLE: usize = 1 << 0;
+    const REFCOUNTED: usize = 1 << 1;
+    const TRACK_DIRTY: usize = 1 << 2;
+    const VALID: usize = 1 << 3; // Dummy bit makes the value stored always non-zero.
+
     pub unsafe fn new(paddr: usize, refcounted: bool, writable: bool, tracks_dirty: bool) -> Self {
         // We allow `paddr == 0` because despite it often being a bug, some platforms, especially x86, require it.
         assert!(paddr % PAGE_SIZE as usize == 0);
         // SAFETY: Already checked for zero with the assert above.
         Self(unsafe {
             NonZeroUsize::new_unchecked(
-                paddr + tracks_dirty as usize * 4 + refcounted as usize * 2 + writable as usize,
+                paddr
+                    + tracks_dirty as usize * Self::TRACK_DIRTY
+                    + refcounted as usize * Self::REFCOUNTED
+                    + writable as usize * Self::WRITABLE
+                    + Self::VALID,
             )
         })
     }
 
     pub fn clear_writable(&mut self) {
         let tmp = self.0.get() & !1usize;
-        // SAFETY: Since the page cannot be null and is page-aligned, this can't make a zero value.
+        // SAFETY: Since Self::VALID is always set, this cannot create a zero value.
         self.0 = unsafe { NonZeroUsize::new_unchecked(tmp) };
     }
 
@@ -41,15 +51,15 @@ impl MappablePage {
     }
 
     pub const fn writable(&self) -> bool {
-        (self.0.get() & 1) != 0
+        (self.0.get() & Self::WRITABLE) != 0
     }
 
     pub const fn refcounted(&self) -> bool {
-        (self.0.get() & 2) != 0
+        (self.0.get() & Self::REFCOUNTED) != 0
     }
 
     pub const fn tracks_dirty(&self) -> bool {
-        (self.0.get() & 4) != 0
+        (self.0.get() & Self::TRACK_DIRTY) != 0
     }
 
     pub const fn into_paddr(self) -> PAddrr {
@@ -93,7 +103,7 @@ pub trait MemObject: Debug {
         Ok(())
     }
 
-    /// Called when a new mapping entry is made with this memory object.
+    /// Called when a previous mapping created by [`MemObject::on_mapped`] is removed.
     fn on_unmapped(
         &self,
         _denywrite: bool,
@@ -103,12 +113,12 @@ pub trait MemObject: Debug {
     }
 
     /// Try to get an existing page from the object.
-    /// Returns a mappable page and many bytes contiguous it is (refcount of the first page in the buddy block is used).
+    /// Returns a mappable page and how many bytes contiguous it is (refcount of the first page in the buddy block is used).
     /// May spuriously return [`None`] even if the page is available.
     fn get(&self, offset: u64) -> Option<(MappablePage, usize)>;
 
     /// Allocate a new page from the object.
-    /// Returns a mappable page and many bytes contiguous it is (refcount of the first page in the buddy block is used).
+    /// Returns a mappable page and how many bytes contiguous it is (refcount of the first page in the buddy block is used).
     fn alloc(&self, offset: u64) -> EResult<(MappablePage, usize)>;
 
     /// Mark a page as being dirty.
