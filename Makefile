@@ -17,4 +17,4 @@ build:
 
 .PHONY: clean
 clean:
-	rm -rf '$(BUILDDIR)' '$(OUTPUT)'
+	cargo clean
