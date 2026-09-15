@@ -5,7 +5,7 @@ use core::fmt::Display;
 use alloc::{boxed::Box, sync::Arc};
 
 use crate::{
-LogLevel, error::{EResult, Errno},
+    LogLevel,
     device::{
         self, Device, DeviceBase,
         bus::{
@@ -18,6 +18,7 @@ LogLevel, error::{EResult, Errno},
         registry,
     },
     device_get_trait_vtable,
+    error::{EResult, Errno},
     mem::pmm::PAddrr,
     register_kmodule,
 };
@@ -131,7 +132,7 @@ impl PciCtlDevice for PciCtlGeneric {
             #[cfg(target_arch = "x86_64")]
             asm!(
                 "mov eax, dword ptr [{}]",
-                in(reg) addr,
+                in(reg) ptr,
                 out("eax") res
             );
 
@@ -159,7 +160,7 @@ impl PciCtlDevice for PciCtlGeneric {
             #[cfg(target_arch = "x86_64")]
             asm!(
                 "mov dword ptr [{}], eax",
-                in(reg) addr,
+                in(reg) ptr,
                 in("eax") value
             );
 
