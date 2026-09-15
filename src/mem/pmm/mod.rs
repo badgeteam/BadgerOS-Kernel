@@ -4,28 +4,26 @@
 
 use core::{
     cell::UnsafeCell,
+    marker::ConstParamTy,
     ops::{Range, Sub},
     ptr::NonNull,
     sync::atomic::{AtomicU32, AtomicUsize, Ordering},
 };
 
+use alloc::alloc::AllocError;
+
 use crate::{
-LogLevel, error::{EResult, Errno},
-    config::PAGE_SIZE,
-    kcore::sync::spinlock::Spinlock,
-    mem::vmm,
-    util::irq::IrqGuard,
+    LogLevel, config::PAGE_SIZE, kcore::sync::spinlock::Spinlock, mem::vmm, util::irq::IrqGuard,
 };
 
 use super::vmm::memobject::MemObject;
 
-mod c_api;
 pub mod phys_box;
 pub mod phys_ptr;
 
 /// Kinds of usage for pages of memory.
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, ConstParamTy)]
 pub enum PageUsage {
     /// Dummy entry for unusable page.
     Unusable = 0,
@@ -223,7 +221,7 @@ unsafe fn free_list_contains(block: PAddrr, list_head: PAddrr) -> bool {
 }
 
 /// Allocate `1 << order` pages of physical memory.
-pub unsafe fn page_alloc(order: u8, usage: PageUsage) -> EResult<PAddrr> {
+pub unsafe fn page_alloc(order: u8, usage: PageUsage) -> Result<PAddrr, AllocError> {
     debug_assert!(order < MAX_ORDER);
     debug_assert!(usage != PageUsage::Unusable && usage != PageUsage::Free);
     let _noirq = IrqGuard::new();
@@ -238,7 +236,7 @@ pub unsafe fn page_alloc(order: u8, usage: PageUsage) -> EResult<PAddrr> {
                 "Out of memory (allocating block of order {})",
                 order
             );
-            return Err(Errno::ENOMEM);
+            return Err(AllocError);
         }
         split_order += 1;
     }
@@ -276,7 +274,7 @@ pub unsafe fn page_alloc(order: u8, usage: PageUsage) -> EResult<PAddrr> {
             "Out of memory (allocating block of order {})",
             order
         );
-        return Err(Errno::ENOMEM);
+        return Err(AllocError);
     }
     unsafe { free_list_unlink(block, &mut free_list[order as usize]) };
     let mut page_meta = page_struct(block);

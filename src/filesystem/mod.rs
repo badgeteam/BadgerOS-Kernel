@@ -18,8 +18,8 @@ use vfs::{DentCache, DentCacheDir, DentCacheType, FlagsAndOffset, VNode, VfsDriv
 
 use crate::{
     LogLevel,
-    error::{EResult, Errno},
     device::{Device, class::block::BlockDevice},
+    error::{EResult, Errno},
     filesystem::{
         fifo::{FifoFile, FifoShared},
         mount::{Mount, MountTable, root_loc_unlocked},
@@ -43,6 +43,7 @@ pub mod mount;
 pub mod mount_root;
 pub mod partition;
 pub mod ramfs;
+#[cfg(feature = "ktest")]
 pub mod test;
 pub mod vfs;
 

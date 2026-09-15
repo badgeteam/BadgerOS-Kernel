@@ -1,0 +1,204 @@
+use core::{
+    alloc::Layout,
+    ptr::{NonNull, null_mut},
+};
+
+use alloc::alloc::{AllocError, Allocator};
+
+use crate::{
+    config::PAGE_SIZE,
+    impl_has_list_node,
+    kcore::sync::mutex::Mutex,
+    mem::{pmm, vmm},
+    util::list::{InvasiveList, InvasiveListNode},
+};
+
+pub const SMALLEST: usize = 8;
+pub const SIZE_MUL: usize = 2;
+pub const SIZES: usize = 8;
+pub const LARGEST: usize = SMALLEST * SIZE_MUL.pow(SIZES as u32);
+pub const BUDDY_ORDER: u8 = 2;
+pub const BLOCK_SIZE: usize = (PAGE_SIZE as usize) << BUDDY_ORDER;
+
+#[repr(transparent)]
+struct SlabLink {
+    next: *mut SlabLink,
+}
+
+#[repr(C)]
+struct SlabBlockHeader {
+    node: InvasiveListNode,
+    occupancy: usize,
+    capacity: usize,
+    list_head: *mut SlabLink,
+}
+
+#[repr(C)]
+pub struct SlabBlock {
+    header: SlabBlockHeader,
+    data: [u8; BLOCK_SIZE - size_of::<SlabBlockHeader>()],
+}
+impl_has_list_node!(SlabBlock, header.node);
+
+impl SlabBlock {
+    fn new(slab_size: usize) -> Result<NonNull<Self>, AllocError> {
+        unsafe {
+            let mem = pmm::page_alloc(BUDDY_ORDER, pmm::PageUsage::KernelSlab)? as *mut Self;
+            mem.write(Self {
+                header: SlabBlockHeader {
+                    node: InvasiveListNode::new(),
+                    occupancy: 0,
+                    capacity: 0,
+                    list_head: null_mut(),
+                },
+                data: [0; _],
+            });
+
+            (*mem).init(slab_size);
+            Ok(NonNull::new_unchecked(mem))
+        }
+    }
+
+    fn init(&mut self, slab_size: usize) {
+        assert!(slab_size >= size_of::<*mut u8>());
+        assert!(slab_size.is_power_of_two());
+        let overhead = size_of::<SlabBlockHeader>().div_ceil(slab_size);
+        let first = overhead * slab_size - size_of::<SlabBlockHeader>();
+
+        let mut ptr = &raw mut self.data[first] as *mut SlabLink;
+        self.header.capacity = BLOCK_SIZE / slab_size - overhead;
+        self.header.occupancy = 0;
+        self.header.list_head = ptr;
+
+        for _ in overhead..self.header.capacity {
+            let next = ptr.wrapping_byte_add(slab_size);
+            unsafe { (*ptr).next = next };
+            ptr = next;
+        }
+    }
+
+    fn alloc(&mut self, slab_size: usize) -> Result<NonNull<[u8]>, AllocError> {
+        let ptr = NonNull::new(self.header.list_head).ok_or(AllocError)?;
+        self.header.list_head = unsafe { ptr.read().next };
+        self.header.occupancy += 1;
+        Ok(NonNull::slice_from_raw_parts(ptr.cast(), slab_size))
+    }
+
+    unsafe fn free(&mut self, ptr: NonNull<u8>) {
+        unsafe {
+            let ptr = ptr.cast::<SlabLink>();
+            ptr.write(SlabLink {
+                next: self.header.list_head,
+            });
+            self.header.occupancy -= 1;
+            self.header.list_head = ptr.as_ptr();
+        }
+    }
+}
+
+pub struct SlabPool {
+    empty: Option<*mut SlabBlock>,
+    partial: InvasiveList<SlabBlock>,
+    full: InvasiveList<SlabBlock>,
+}
+
+impl SlabPool {
+    const fn new() -> Self {
+        Self {
+            empty: None,
+            partial: InvasiveList::new(),
+            full: InvasiveList::new(),
+        }
+    }
+
+    fn alloc(&mut self, slab_size: usize) -> Result<NonNull<[u8]>, AllocError> {
+        assert!(slab_size.is_power_of_two());
+        unsafe {
+            if let Some(block) = self.partial.front() {
+                // Check partial blocks first.
+                let res = (*block)
+                    .alloc(slab_size)
+                    .expect("Empty block in partial list");
+
+                if (*block).header.occupancy == (*block).header.capacity {
+                    self.partial.remove(block);
+                    let _ = self.full.push_back(block);
+                }
+
+                Ok(res)
+            } else {
+                // If the partial list is empty, create a new block.
+                let block = SlabBlock::new(slab_size)?.as_ptr();
+                let res = (*block)
+                    .alloc(slab_size)
+                    .expect("New block is already full");
+                let _ = self.partial.push_back(block);
+                Ok(res)
+            }
+        }
+    }
+
+    unsafe fn free(&mut self, ptr: NonNull<u8>) {
+        unsafe {
+            // The blocks are naturally aligned; we can find the address by simply masking the bottom bits off.
+            let block = (ptr.as_ptr() as usize & !BLOCK_SIZE) as *mut SlabBlock;
+            let was_full = (*block).header.occupancy == (*block).header.capacity;
+            (*block).free(ptr);
+
+            if was_full {
+                self.full.remove(block);
+                let _ = self.partial.push_back(block);
+            } else if (*block).header.occupancy == 0 {
+                self.partial.remove(block);
+                // Retain up to one empty block.
+                if self.empty.is_none() {
+                    self.empty = Some(block);
+                } else {
+                    pmm::page_free(block as usize - vmm::HHDM_OFFSET, BUDDY_ORDER);
+                }
+            }
+        }
+    }
+}
+
+pub struct SlabsAlloc {
+    blocks: [Mutex<SlabPool>; SIZES],
+}
+
+impl SlabsAlloc {
+    pub const fn new() -> Self {
+        Self {
+            blocks: [const { Mutex::new(SlabPool::new()) }; _],
+        }
+    }
+
+    pub const fn bucket_for(layout: Layout) -> Option<(usize, usize)> {
+        assert!(layout.size() != 0);
+        let size_pow2 = layout
+            .pad_to_align()
+            .size()
+            .div_ceil(SMALLEST)
+            .next_power_of_two();
+        let log_size_mul = size_pow2.trailing_zeros() / SIZE_MUL.trailing_zeros();
+        if log_size_mul as usize >= SIZES {
+            return None;
+        }
+        let slab_size = SMALLEST * SIZE_MUL.pow(log_size_mul);
+        Some((log_size_mul as usize, slab_size))
+    }
+}
+
+unsafe impl Allocator for SlabsAlloc {
+    fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        let (bucket, slab_size) = Self::bucket_for(layout).ok_or(AllocError)?;
+        self.blocks[bucket].unintr_lock().alloc(slab_size)
+    }
+
+    unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+        let (bucket, _) =
+            Self::bucket_for(layout).expect("Invalid layout given to SlabsAlloc::deallocate");
+        unsafe { self.blocks[bucket].unintr_lock().free(ptr) };
+    }
+}
+
+pub static GLOBAL_SLABS: SlabsAlloc = SlabsAlloc::new();

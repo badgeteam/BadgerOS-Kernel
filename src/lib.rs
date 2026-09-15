@@ -43,6 +43,7 @@
 #![feature(cfg_select)]
 #![feature(core_intrinsics)]
 #![allow(internal_features)]
+#![feature(adt_const_params)]
 
 #[macro_use]
 extern crate alloc;
@@ -66,28 +67,4 @@ pub mod mem;
 pub mod misc;
 pub mod process;
 
-use core::{alloc::GlobalAlloc, ffi::c_void};
-use util::log::*;
-
-#[global_allocator]
-pub static BADGEROS_RUST_MALLOC: BadgerOSMalloc = BadgerOSMalloc {};
-
-pub struct BadgerOSMalloc {}
-
-unsafe impl GlobalAlloc for BadgerOSMalloc {
-    unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
-        unsafe { bindings::raw::malloc(layout.pad_to_align().size()) as *mut u8 }
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, _: core::alloc::Layout) {
-        unsafe { bindings::raw::free(ptr as *mut c_void) }
-    }
-
-    unsafe fn alloc_zeroed(&self, layout: core::alloc::Layout) -> *mut u8 {
-        unsafe { bindings::raw::calloc(1, layout.pad_to_align().size()) as *mut u8 }
-    }
-
-    unsafe fn realloc(&self, ptr: *mut u8, _: core::alloc::Layout, new_size: usize) -> *mut u8 {
-        unsafe { bindings::raw::realloc(ptr as *mut c_void, new_size) as *mut u8 }
-    }
-}
+pub use util::log::*;

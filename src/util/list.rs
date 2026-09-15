@@ -19,18 +19,18 @@ macro_rules! dlist_debug_assert {
 
 #[macro_export]
 macro_rules! impl_has_list_node {
-    ($Type: ty, $field: tt) => {
+    ($Type: ty, $($field: tt)+) => {
         impl crate::util::list::HasListNode<$Type> for $Type {
             unsafe fn from_node(node: *mut crate::util::list::InvasiveListNode) -> *mut $Type {
-                unsafe { node.byte_sub(core::mem::offset_of!($Type, $field)) as *mut $Type }
+                unsafe { node.byte_sub(core::mem::offset_of!($Type, $($field)+)) as *mut $Type }
             }
 
             fn list_node(&self) -> &crate::util::list::InvasiveListNode {
-                &self.$field
+                &self.$($field)+
             }
 
             fn list_node_mut(&mut self) -> &mut crate::util::list::InvasiveListNode {
-                &mut self.$field
+                &mut self.$($field)+
             }
         }
     };
@@ -105,6 +105,17 @@ pub struct InvasiveList<T: HasListNode<T>> {
     last: *mut InvasiveListNode,
     len: usize,
     marker: PhantomData<*mut T>,
+}
+
+impl<T: HasListNode<T>> Default for InvasiveList<T> {
+    fn default() -> Self {
+        Self {
+            first: null_mut(),
+            last: null_mut(),
+            len: 0,
+            marker: PhantomData,
+        }
+    }
 }
 
 impl<T: HasListNode<T>> InvasiveList<T> {
