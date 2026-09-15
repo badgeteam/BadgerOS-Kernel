@@ -10,7 +10,6 @@ use core::{
 };
 
 use crate::{
-    bindings::raw::errno_t,
     error::{EResult, Errno},
     kcore::{sync::waitlist::Waitlist, timer::time_us},
 };
@@ -489,34 +488,4 @@ impl<T> Deref for SharedMutexGuard<'_, T> {
     fn deref(&self) -> &Self::Target {
         self.data
     }
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn mutex_lock(mutex: &RawMutex) -> errno_t {
-    Errno::extract(try { core::mem::forget(mutex.lock()?) })
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn mutex_lock_shared(mutex: &RawMutex) -> errno_t {
-    Errno::extract(try { core::mem::forget(mutex.lock_shared()?) })
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn mutex_timed_lock(mutex: &RawMutex, timeout: u64) -> errno_t {
-    Errno::extract(try { core::mem::forget(mutex.timed_lock(timeout)?) })
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn mutex_timed_lock_shared(mutex: &RawMutex, timeout: u64) -> errno_t {
-    Errno::extract(try { core::mem::forget(mutex.timed_lock_shared(timeout)?) })
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn mutex_unlock(mutex: &RawMutex) {
-    drop(RawMutexGuard { mutex })
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn mutex_unlock_shared(mutex: &RawMutex) {
-    drop(SharedRawMutexGuard { mutex })
 }

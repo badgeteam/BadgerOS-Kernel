@@ -10,12 +10,11 @@ use memobject::{MappablePage, RawMemory};
 
 use crate::{
     arch::{Arch, mmu::ArchMMU},
-    util::log::LogLevel,
     config::PAGE_SIZE,
     mem::pmm::{self, PAddrr},
+    util::log::LogLevel,
 };
 
-mod c_api;
 pub mod map;
 pub mod memobject;
 pub mod physmap;
@@ -109,28 +108,23 @@ unsafe extern "C" {
     static __stop_rodata: [u8; 0];
     static __start_data: [u8; 0];
     static __stop_data: [u8; 0];
-
-    /// Higher-half direct map virtual address.
-    /// Provided by boot protocol.
-    #[link_name = "vmm_hhdm_vaddr"]
-    pub static mut HHDM_VADDR: usize;
-    /// Higher-half direct map address offset (paddr -> vaddr).
-    /// Provided by boot protocol.
-    #[link_name = "vmm_hhdm_offset"]
-    pub static mut HHDM_OFFSET: usize;
-    /// Higher-half direct map size.
-    /// Provided by boot protocol.
-    #[link_name = "vmm_hhdm_size"]
-    pub static mut HHDM_SIZE: usize;
-    /// Kernel base virtual address.
-    /// Provided by boot protocol.
-    #[link_name = "vmm_kernel_vaddr"]
-    pub static mut KERNEL_VADDR: usize;
-    /// Kernel base physical address.
-    /// Provided by boot protocol.
-    #[link_name = "vmm_kernel_paddr"]
-    pub static mut KERNEL_PADDR: usize;
 }
+
+/// Higher-half direct map virtual address.
+/// Provided by boot protocol.
+pub static mut HHDM_VADDR: usize = 0xcccccccc_cccccccc;
+/// Higher-half direct map address offset (paddr -> vaddr).
+/// Provided by boot protocol.
+pub static mut HHDM_OFFSET: usize = 0xcccccccc_cccccccc;
+/// Higher-half direct map size.
+/// Provided by boot protocol.
+pub static mut HHDM_SIZE: usize = 0xcccccccc_cccccccc;
+/// Kernel base virtual address.
+/// Provided by boot protocol.
+pub static mut KERNEL_VADDR: usize = 0xcccccccc_cccccccc;
+/// Kernel base physical address.
+/// Provided by boot protocol.
+pub static mut KERNEL_PADDR: usize = 0xcccccccc_cccccccc;
 
 /// The kernel memory map.
 static mut KERNEL_MM: MaybeUninit<KernelVmSpace> = MaybeUninit::uninit();

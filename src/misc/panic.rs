@@ -69,13 +69,6 @@ pub fn unhandled_trap(frame: &TrapFrame) -> ! {
     panic_spin();
 }
 
-/// Generic kernel panic.
-#[unsafe(no_mangle)]
-pub extern "C" fn kernel_panic() -> ! {
-    claim_panic();
-    kernel_panic_unchecked();
-}
-
 /// Generic kernel panic without checking for other cores panicking.
 pub fn kernel_panic_unchecked() -> ! {
     write_unlocked("\x1b[0m\n\n");
@@ -85,28 +78,6 @@ pub fn kernel_panic_unchecked() -> ! {
     write_unlocked("**** KERNEL PANIC ****\n");
     kekw();
 
-    panic_spin();
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn panic_abort() -> ! {
-    claim_panic();
-    kernel_panic_unchecked();
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn abort() -> ! {
-    claim_panic();
-    kernel_panic_unchecked();
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn panic_abort_unchecked() -> ! {
-    kernel_panic_unchecked();
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn panic_poweroff() -> ! {
     panic_spin();
 }
 
@@ -120,7 +91,6 @@ pub fn check_for_panic() {
 /// Start the process of kernel panicking.
 /// Checks whether other cores are panicking and spin early if they do.
 /// If no other core has panicked, returns and assumes the caller will eventually call [`kernel_panic_unchecked`].
-#[unsafe(no_mangle)]
 pub extern "C" fn claim_panic() {
     Arch::disable_irq();
     if IS_PANICKING.fetch_add(1, Ordering::Relaxed) != 0 {

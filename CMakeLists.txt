@@ -105,27 +105,7 @@ add_link_options(
 project(badgeros C ASM)
 
 set(kernel_src
-    ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/arrays.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/badge_format_str.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/badge_strings.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/fifo.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/hash.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/list.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/map.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/num_to_str.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/radixtree.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/refcount.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/set.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/nanoprintf.c
-    
-    ${CMAKE_CURRENT_LIST_DIR}/src/malloc/malloc.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/malloc/static-buddy-compat.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/malloc/slab-alloc.c
-    
-    ${CMAKE_CURRENT_LIST_DIR}/src/mem/mod.c
-    
-    ${CMAKE_CURRENT_LIST_DIR}/src/errno.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/page_alloc.c
 )
 set(kernel_include
     ${CMAKE_CURRENT_LIST_DIR}/lib/nanoprintf

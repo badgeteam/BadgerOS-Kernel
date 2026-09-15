@@ -204,7 +204,6 @@ pub fn get_fdt_ptr() -> *const () {
 pub unsafe fn reclaim_mem() {}
 
 /// Legacy, to be replaced with proper earlycon later on.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bootp_early_putc(c: u8) {
     unsafe {
         #[cfg(target_arch = "riscv64")]

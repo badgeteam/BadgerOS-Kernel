@@ -107,7 +107,7 @@ pub enum Errno {
     ENOPROTOOPT = raw::ENOPROTOOPT,
     EPROTONOSUPPORT = raw::EPROTONOSUPPORT,
     ESOCKTNOSUPPORT = raw::ESOCKTNOSUPPORT,
-    EOPNOTSUPP = raw::EOPNOTSUPP,
+    // EOPNOTSUPP duplicates ENOTSUPP
     EPFNOSUPPORT = raw::EPFNOSUPPORT,
     EAFNOSUPPORT = raw::EAFNOSUPPORT,
     EADDRINUSE = raw::EADDRINUSE,
@@ -149,6 +149,7 @@ pub enum Errno {
     ERFKILL = raw::ERFKILL,
     EHWPOISON = raw::EHWPOISON,
 
+    // BadgerOS-specific:
     EASSERT = raw::EASSERT,
     EALIGN = raw::EALIGN,
 }
@@ -250,7 +251,6 @@ impl Errno {
             Self::ENOPROTOOPT => "ENOPROTOOPT",
             Self::EPROTONOSUPPORT => "EPROTONOSUPPORT",
             Self::ESOCKTNOSUPPORT => "ESOCKTNOSUPPORT",
-            Self::EOPNOTSUPP => "EOPNOTSUPP",
             Self::EPFNOSUPPORT => "EPFNOSUPPORT",
             Self::EAFNOSUPPORT => "EAFNOSUPPORT",
             Self::EADDRINUSE => "EADDRINUSE",
@@ -289,6 +289,7 @@ impl Errno {
             Self::ENOTRECOVERABLE => "ENOTRECOVERABLE",
             Self::ERFKILL => "ERFKILL",
             Self::EHWPOISON => "EHWPOISON",
+            // BadgerOS-specific:
             Self::EASSERT => "EASSERT",
             Self::EALIGN => "EALIGN",
         }
@@ -390,7 +391,6 @@ impl Errno {
             Self::ENOPROTOOPT => "Protocol not available",
             Self::EPROTONOSUPPORT => "Protocol not supported",
             Self::ESOCKTNOSUPPORT => "Socket type not supported",
-            Self::EOPNOTSUPP => "Operation not supported on transport endpoint",
             Self::EPFNOSUPPORT => "Protocol family not supported",
             Self::EAFNOSUPPORT => "Address family not supported by protocol",
             Self::EADDRINUSE => "Address already in use",
@@ -429,6 +429,7 @@ impl Errno {
             Self::ENOTRECOVERABLE => "State not recoverable",
             Self::ERFKILL => "Operation not possible due to RF-kill",
             Self::EHWPOISON => "Memory page has hardware error",
+            // BadgerOS-specific:
             Self::EASSERT => "Assertion failed",
             Self::EALIGN => "Address misaligned",
         }

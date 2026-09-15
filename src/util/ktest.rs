@@ -31,9 +31,8 @@ pub struct KTest {
 }
 
 /// Run test cases of a certain level.
-#[unsafe(no_mangle)]
 #[cfg(feature = "ktest")]
-pub extern "C" fn ktests_runlevel(level: KTestWhen) {
+pub fn ktests_runlevel(level: KTestWhen) {
     unsafe extern "C" {
         static __start_ktests: u8;
         static __stop_ktests: u8;
@@ -85,7 +84,6 @@ pub extern "C" fn ktests_runlevel(level: KTestWhen) {
 }
 
 /// Dummy function; runs test cases of a certain level if ktest feature is enabled.
-#[unsafe(no_mangle)]
 #[cfg(not(feature = "ktest"))]
 pub fn ktests_runlevel(_level: KTestWhen) {}
 

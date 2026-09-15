@@ -12,7 +12,6 @@ use crate::{
         Arch, ArchTrait,
         kcore::{cpulocal::ArchCpuLocal, smp::ArchSmp, timer::ArchTimer},
     },
-    bindings::raw::kernel_heap_init,
     boot::protocol,
     device,
     filesystem::mount_root::mount_root_fs,
@@ -47,6 +46,7 @@ pub unsafe extern "C" fn basic_runtime_init() -> ! {
         // Early hand-over from bootloader to kernel.
         protocol::early_init();
         ktests_runlevel(KTestWhen::PMM);
+        ktests_runlevel(KTestWhen::Heap);
 
         // Announce the kernel is alive.
         logkf_unlocked!(LogLevel::Info, "==============================");
@@ -60,8 +60,6 @@ pub unsafe extern "C" fn basic_runtime_init() -> ! {
         logkf_unlocked!(LogLevel::Info, "==============================");
 
         // Set up memory management.
-        kernel_heap_init();
-        ktests_runlevel(KTestWhen::Heap);
         vmm::init();
         protocol::late_init();
         ktests_runlevel(KTestWhen::VMM);
