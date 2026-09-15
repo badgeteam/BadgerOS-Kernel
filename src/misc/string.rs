@@ -219,13 +219,13 @@ pub unsafe extern "C" fn memcmp(lhs: *const u8, rhs: *const u8, len: usize) -> i
             jl 2f
             jg 3f
             mov rax, 0
-            j 4f
+            jmp 4f
         2:
             mov rax, -1
-            j 4f
+            jmp 4f
         3:
             mov rax, 1
-            j 4f
+            jmp 4f
         4:
             ",
             inout("rdi") lhs => _,
