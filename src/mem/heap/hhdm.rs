@@ -7,6 +7,7 @@ use crate::{
     mem::{pmm, vmm},
 };
 
+#[derive(Clone, Copy, Default, Debug)]
 pub struct HhdmAlloc;
 
 unsafe impl Allocator for HhdmAlloc {

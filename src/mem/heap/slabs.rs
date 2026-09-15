@@ -1,7 +1,4 @@
-use core::{
-    alloc::Layout,
-    ptr::{NonNull, null_mut},
-};
+use core::{alloc::Layout, ptr::NonNull};
 
 use alloc::{
     alloc::{AllocError, Allocator},
@@ -13,9 +10,10 @@ use crate::{
     config::PAGE_SIZE,
     impl_has_list_node,
     kcore::sync::mutex::Mutex,
-    mem::{pmm, vmm},
-    util::list::{InvasiveList, InvasiveListNode},
+    util::list::{BoxInvasiveList, InvasiveListNode},
 };
+
+use super::hhdm::HhdmAlloc;
 
 pub const SMALLEST: usize = 8;
 pub const SIZE_MUL: usize = 2;
@@ -45,26 +43,18 @@ pub struct SlabBlock {
 impl_has_list_node!(SlabBlock, header.node);
 
 impl SlabBlock {
-    fn new(slab_size: usize) -> Result<NonNull<Self>, AllocError> {
+    fn new(slab_size: usize) -> Result<Box<Self, HhdmAlloc>, AllocError> {
         unsafe {
-            let mem = (pmm::page_alloc(BUDDY_ORDER, pmm::PageUsage::KernelSlab)? + vmm::HHDM_OFFSET)
-                as *mut Self;
-            mem.write(Self {
-                header: SlabBlockHeader {
-                    node: InvasiveListNode::new(),
-                    occupancy: 0,
-                    capacity: 0,
-                    list_head: null_mut(),
-                },
-                data: [0; _],
-            });
-
-            (*mem).init(slab_size);
-            Ok(NonNull::new_unchecked(mem))
+            // Must be done this way or Rust will allocate it on the stack!
+            let mut mem = Box::<SlabBlock, _>::try_new_uninit_in(HhdmAlloc)?.assume_init();
+            mem.init(slab_size);
+            Ok(mem)
         }
     }
 
     fn init(&mut self, slab_size: usize) {
+        self.header.node = InvasiveListNode::new();
+
         assert!(slab_size >= size_of::<*mut u8>());
         assert!(slab_size.is_power_of_two());
         let overhead = size_of::<SlabBlockHeader>().div_ceil(slab_size);
@@ -102,51 +92,42 @@ impl SlabBlock {
 }
 
 pub struct SlabPool {
-    empty: Option<*mut SlabBlock>,
-    partial: InvasiveList<SlabBlock>,
-    full: InvasiveList<SlabBlock>,
+    empty: Option<Box<SlabBlock, HhdmAlloc>>,
+    partial: BoxInvasiveList<SlabBlock, HhdmAlloc>,
+    full: BoxInvasiveList<SlabBlock, HhdmAlloc>,
 }
 
 impl SlabPool {
     const fn new() -> Self {
         Self {
             empty: None,
-            partial: InvasiveList::new(),
-            full: InvasiveList::new(),
+            partial: BoxInvasiveList::new_in(HhdmAlloc),
+            full: BoxInvasiveList::new_in(HhdmAlloc),
         }
     }
 
     fn alloc(&mut self, slab_size: usize) -> Result<NonNull<[u8]>, AllocError> {
         assert!(slab_size.is_power_of_two());
-        unsafe {
-            if let Some(block) = self.partial.front() {
-                // Check partial blocks first.
-                let res = (*block)
-                    .alloc(slab_size)
-                    .expect("Full block in partial list");
+        if let Some(block) = self.partial.front_mut() {
+            // Check partial blocks first.
+            let res = block.alloc(slab_size).expect("Full block in partial list");
 
-                if (*block).header.occupancy == (*block).header.capacity {
-                    self.partial.remove(block);
-                    let _ = self.full.push_back(block);
-                }
-
-                Ok(res)
-            } else if let Some(block) = self.empty {
-                self.empty = None;
-                let res = (*block)
-                    .alloc(slab_size)
-                    .expect("Full block in empty cache");
-                let _ = self.partial.push_back(block);
-                Ok(res)
-            } else {
-                // If the partial list is empty, create a new block.
-                let block = SlabBlock::new(slab_size)?.as_ptr();
-                let res = (*block)
-                    .alloc(slab_size)
-                    .expect("New block is already full");
-                let _ = self.partial.push_back(block);
-                Ok(res)
+            if block.header.occupancy == block.header.capacity {
+                let block = self.partial.pop_front().unwrap();
+                self.full.push_back(block);
             }
+
+            Ok(res)
+        } else if let Some(mut block) = self.empty.take() {
+            let res = block.alloc(slab_size).expect("Full block in empty cache");
+            let _ = self.partial.push_back(block);
+            Ok(res)
+        } else {
+            // If the partial list is empty, create a new block.
+            let mut block = SlabBlock::new(slab_size)?;
+            let res = block.alloc(slab_size).expect("New block is already full");
+            self.partial.push_back(block);
+            Ok(res)
         }
     }
 
@@ -158,15 +139,14 @@ impl SlabPool {
             (*block).free(ptr);
 
             if was_full {
-                self.full.remove(block);
-                let _ = self.partial.push_back(block);
+                self.full.inner.remove(block);
+                let _ = self.partial.push_back(Box::from_raw_in(block, HhdmAlloc));
             } else if (*block).header.occupancy == 0 {
-                self.partial.remove(block);
+                self.partial.inner.remove(block);
                 // Retain up to one empty block.
+                let block = Box::from_raw_in(block, HhdmAlloc);
                 if self.empty.is_none() {
                     self.empty = Some(block);
-                } else {
-                    pmm::page_free(block as usize - vmm::HHDM_OFFSET, BUDDY_ORDER);
                 }
             }
         }
@@ -232,20 +212,17 @@ pmm_ktest! { SLABS_BASIC,
 }
 
 pmm_ktest! { SLABS_EXHAUST,
-    unsafe {
-        let block = SlabBlock::new(SMALLEST)?.as_ptr();
-        let mut resv = Vec::<NonNull<u8>, _>::new_in(super::hhdm::HhdmAlloc);
+    let mut block = SlabBlock::new(SMALLEST)?;
+    let mut resv = Vec::<NonNull<u8>, _>::new_in(super::hhdm::HhdmAlloc);
 
-        let cap = (*block).header.capacity;
-        for _ in 0..cap {
-            resv.push((*block).alloc(SMALLEST)?.cast());
-        }
-        ktest_expect!((*block).header.occupancy, cap);
-        for alloc in resv {
-            (*block).free(alloc);
-        }
-        ktest_expect!((*block).header.occupancy, 0);
-
-        pmm::page_free(block as usize - vmm::HHDM_OFFSET, BUDDY_ORDER);
+    let cap = (*block).header.capacity;
+    for _ in 0..cap {
+        resv.push(block.alloc(SMALLEST)?.cast());
     }
+    ktest_expect!((*block).header.occupancy, cap);
+
+    for alloc in resv {
+        unsafe { block.free(alloc) };
+    }
+    ktest_expect!((*block).header.occupancy, 0);
 }

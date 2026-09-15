@@ -411,7 +411,7 @@ impl<T> InvasiveListAlloc for T where T: Allocator + Copy {}
 
 /// Invasive linked list for things stored in an [`Arc`].
 pub struct ArcInvasiveList<T: HasListNode<T>, A: InvasiveListAlloc = Global> {
-    inner: InvasiveList<T>,
+    pub inner: InvasiveList<T>,
     alloc: A,
 }
 
@@ -510,7 +510,7 @@ impl<T: HasListNode<T>, A: InvasiveListAlloc> Drop for ArcInvasiveList<T, A> {
 
 /// Invasive linked list for things stored in an [`Arc`].
 pub struct BoxInvasiveList<T: HasListNode<T>, A: InvasiveListAlloc = Global> {
-    inner: InvasiveList<T>,
+    pub inner: InvasiveList<T>,
     alloc: A,
 }
 
@@ -535,14 +535,12 @@ impl<T: HasListNode<T>, A: InvasiveListAlloc> BoxInvasiveList<T, A> {
         self.inner.len()
     }
 
-    pub fn push_front(&mut self, item: Box<T, A>) -> Result<(), ()> {
+    pub fn push_front(&mut self, item: Box<T, A>) {
         let item = Box::into_raw_with_allocator(item).0 as *mut T;
         unsafe {
-            let res = self.inner.push_front(&mut *item);
-            if res.is_err() {
-                drop(Box::from_raw(item));
-            }
-            res
+            self.inner
+                .push_front(item)
+                .expect("Item already in list, but Box has exclusive ownership");
         }
     }
 
@@ -555,14 +553,16 @@ impl<T: HasListNode<T>, A: InvasiveListAlloc> BoxInvasiveList<T, A> {
         self.inner.front().map(|x| unsafe { &*x })
     }
 
-    pub fn push_back(&mut self, item: Box<T, A>) -> Result<(), ()> {
+    pub fn front_mut(&mut self) -> Option<&mut T> {
+        self.inner.front().map(|x| unsafe { &mut *x })
+    }
+
+    pub fn push_back(&mut self, item: Box<T, A>) {
         let item = Box::into_raw_with_allocator(item).0 as *mut T;
         unsafe {
-            let res = self.inner.push_back(&mut *item);
-            if res.is_err() {
-                drop(Box::from_raw(item));
-            }
-            res
+            self.inner
+                .push_back(item)
+                .expect("Item already in list, but Box has exclusive ownership");
         }
     }
 
@@ -573,6 +573,10 @@ impl<T: HasListNode<T>, A: InvasiveListAlloc> BoxInvasiveList<T, A> {
 
     pub fn back(&self) -> Option<&T> {
         self.inner.back().map(|x| unsafe { &*x })
+    }
+
+    pub fn back_mut(&mut self) -> Option<&mut T> {
+        self.inner.back().map(|x| unsafe { &mut *x })
     }
 
     pub fn clear(&mut self) {

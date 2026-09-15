@@ -125,7 +125,7 @@ static FREE_LIST: Spinlock<[PAddrr; MAX_ORDER as usize]> =
 pub const fn size_to_order(byte_size: usize) -> u8 {
     debug_assert!(byte_size > 0);
     let pages = byte_size.div_ceil(PAGE_SIZE as usize) as usize;
-    (usize::BITS - (pages - 1).leading_zeros()) as u8
+    pages.next_power_of_two().trailing_zeros() as u8
 }
 
 /// Calculates how many bytes are in a block of a certain order.
@@ -137,7 +137,7 @@ pub const fn order_to_size(order: u8) -> usize {
 /// Calculates the minimum sized order that will fit this many pages.
 pub const fn pages_to_order(pages: usize) -> u8 {
     debug_assert!(pages > 0);
-    (usize::BITS - (pages - 1).leading_zeros()) as u8
+    pages.next_power_of_two().trailing_zeros() as u8
 }
 
 /// Calculates how many pages are in a block of a certain order.
