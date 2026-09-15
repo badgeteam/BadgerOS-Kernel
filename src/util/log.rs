@@ -1,12 +1,6 @@
-use core::{
-    ffi::{c_char, c_void},
-    fmt::{Display, Formatter, FormattingOptions, Write},
-};
+use core::fmt::{Display, Formatter, FormattingOptions, Write};
 
-use crate::{
-    boot,
-    kcore::{sync::mutex::RawMutex, timer::time_us},
-};
+use crate::kcore::{sync::mutex::RawMutex, timer::time_us};
 
 pub static LOG_MTX: RawMutex = RawMutex::new();
 

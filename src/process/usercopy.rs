@@ -2,7 +2,7 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::{ffi::c_char, marker::PhantomData, mem::MaybeUninit, ops::Range, ptr::NonNull};
+use core::{marker::PhantomData, mem::MaybeUninit, ops::Range, ptr::NonNull};
 
 use alloc::{ffi::CString, vec::Vec};
 
