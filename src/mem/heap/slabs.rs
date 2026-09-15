@@ -7,7 +7,7 @@ use alloc::{
 };
 
 use crate::{
-    config::PAGE_SIZE,
+    arch::mmu::PAGE_SIZE,
     impl_has_list_node,
     kcore::sync::mutex::Mutex,
     util::list::{BoxIntrusiveList, IntrusiveListNode},
@@ -20,7 +20,7 @@ pub const SIZE_MUL: usize = 2;
 pub const SIZES: usize = 9;
 pub const LARGEST: usize = SMALLEST * SIZE_MUL.pow(SIZES as u32 - 1);
 pub const BUDDY_ORDER: u8 = 2;
-pub const BLOCK_SIZE: usize = (PAGE_SIZE as usize) << BUDDY_ORDER;
+pub const BLOCK_SIZE: usize = PAGE_SIZE << BUDDY_ORDER;
 
 #[repr(transparent)]
 struct SlabLink {

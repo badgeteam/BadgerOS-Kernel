@@ -10,7 +10,7 @@ use memobject::{MappablePage, RawMemory};
 
 use crate::{
     arch::{Arch, mmu::ArchMMU},
-    config::PAGE_SIZE,
+    arch::mmu::PAGE_SIZE,
     mem::pmm::{self, PAddrr},
     util::log::LogLevel,
 };
@@ -86,7 +86,7 @@ static mut ZEROES_PADDR: PAddrr = 0;
 /// Get the page that is filled with zeroes.
 #[inline(always)]
 pub fn zeroes() -> &'static [u8] {
-    unsafe { &*core::ptr::slice_from_raw_parts(ZEROES, PAGE_SIZE as usize) }
+    unsafe { &*core::ptr::slice_from_raw_parts(ZEROES, PAGE_SIZE) }
 }
 
 /// Get the physical address of the page full of zeroes.
@@ -218,18 +218,18 @@ pub unsafe fn init() {
             .expect("Failed to allocate page of zeroes");
         (*core::ptr::slice_from_raw_parts_mut(
             (ZEROES_PADDR + HHDM_OFFSET) as *mut u8,
-            PAGE_SIZE as usize,
+            PAGE_SIZE,
         ))
         .fill(0);
         ZEROES = kernel_mm
             .map(
-                PAGE_SIZE as usize,
+                PAGE_SIZE,
                 0,
                 map::SHARED,
                 prot::READ,
                 Some(Mapping {
                     offset: 0,
-                    object: Arc::new(RawMemory::new(ZEROES_PADDR, PAGE_SIZE as usize)),
+                    object: Arc::new(RawMemory::new(ZEROES_PADDR, PAGE_SIZE)),
                 }),
             )
             .expect("Failed to map page of zeroes") as *const u8;
@@ -249,7 +249,7 @@ vmm_ktest! { MAP_BASIC,
 
         // Some random accesses must succeed.
         let ptr = &mut *core::ptr::slice_from_raw_parts_mut(vaddr as *mut u8, size);
-        for i in (0..size).step_by(PAGE_SIZE as usize) {
+        for i in (0..size).step_by(PAGE_SIZE) {
             let fault = Arch::fallible_store_u8(&raw mut ptr[i], 21);
             ktest_assert!(fault.is_ok());
         }
@@ -257,7 +257,7 @@ vmm_ktest! { MAP_BASIC,
         kernel_mm().unmap(vaddr..vaddr+size)?;
 
         // Assert now that trying to access again traps.
-        for i in (0..size).step_by(PAGE_SIZE as usize) {
+        for i in (0..size).step_by(PAGE_SIZE) {
             let fault = Arch::fallible_store_u8(&raw mut ptr[i], 21);
             ktest_assert!(fault.is_err());
         }

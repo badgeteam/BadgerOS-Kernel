@@ -14,6 +14,7 @@ use dtb;
 use limine::{mp::MpInfo, request::MpRequest};
 
 use crate::{
+    LogLevel,
     arch::{
         Arch,
         kcore::{
@@ -21,22 +22,16 @@ use crate::{
             smp::{ArchSmp, CpuID},
         },
     },
-LogLevel, error::{EResult, Errno},
-    config,
     device::class::irqctl::IrqCtlDevice,
+    error::{EResult, Errno},
     kcore::{
         cpulocal::CpuLocal,
         sched::{Scheduler, thread_yield},
         sync::mutex::{Mutex, SharedMutexGuard},
     },
-    util::bitset::BitSet,
 };
 
 use super::sync::mutex::MutexGuard;
-
-pub const CPU_SET_LEN: usize = config::MAX_CPUS.div_ceil(32) as usize;
-pub type CpuSet = BitSet<CPU_SET_LEN>;
-pub type AtomicCpuSet = BitSet<CPU_SET_LEN>;
 
 /// Power status for a CPU.
 #[repr(u32)]

@@ -8,7 +8,7 @@ use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
 use crate::{
     error::{EResult, Errno},
-    config::PAGE_SIZE,
+    arch::mmu::PAGE_SIZE,
     impl_has_list_node,
     kcore::sync::spinlock::Spinlock,
     mem::{
@@ -64,7 +64,7 @@ struct AnonMap {
 impl AnonMap {
     /// Split this entry into two starting at `offset`.
     fn split(&self, offset: usize) -> EResult<(Option<Self>, Option<Self>)> {
-        debug_assert!(offset % PAGE_SIZE as usize == 0);
+        debug_assert!(offset % PAGE_SIZE == 0);
         if offset < self.offset {
             return Ok((None, Some(self.clone())));
         }
@@ -72,7 +72,7 @@ impl AnonMap {
             return Ok((Some(self.clone()), None));
         }
 
-        let mut first = Vec::try_with_capacity((offset - self.offset) / PAGE_SIZE as usize)?;
+        let mut first = Vec::try_with_capacity((offset - self.offset) / PAGE_SIZE)?;
         let mut second = Vec::try_with_capacity(self.pages.len() - first.len())?;
         first.extend_from_slice(&self.pages[..first.len()]);
         second.extend_from_slice(&self.pages[first.len()..]);
@@ -91,8 +91,8 @@ impl AnonMap {
 
     /// Get the page currently mapped at `offset`.
     fn get_page(&self, offset: usize) -> Option<MappablePage> {
-        debug_assert!(offset % PAGE_SIZE as usize == 0);
-        let page_index = offset.checked_sub(self.offset)? / PAGE_SIZE as usize;
+        debug_assert!(offset % PAGE_SIZE == 0);
+        let page_index = offset.checked_sub(self.offset)? / PAGE_SIZE;
         if page_index >= self.pages.len() {
             return None;
         }
@@ -104,19 +104,19 @@ impl AnonMap {
     /// Get or allocate the page at `offset`.
     /// If a new page is allocated, the existing data in the page at `orig` is copied.
     unsafe fn alloc_page(&mut self, offset: usize, orig: Option<PAddrr>) -> EResult<MappablePage> {
-        debug_assert!(offset % PAGE_SIZE as usize == 0);
+        debug_assert!(offset % PAGE_SIZE == 0);
 
         if self.pages.len() == 0 {
             self.offset = offset;
             self.pages.try_reserve(1)?;
             self.pages.push(None);
         } else if offset < self.offset {
-            let shift = (self.offset - offset) / PAGE_SIZE as usize;
+            let shift = (self.offset - offset) / PAGE_SIZE;
             self.pages.try_reserve(shift)?;
             self.pages.splice(0..0, (0..shift).map(|_| None));
-            self.offset -= shift * PAGE_SIZE as usize;
-        } else if offset >= self.offset + self.pages.len() * PAGE_SIZE as usize {
-            let shift = offset + 1 - self.offset - self.pages.len() * PAGE_SIZE as usize;
+            self.offset -= shift * PAGE_SIZE;
+        } else if offset >= self.offset + self.pages.len() * PAGE_SIZE {
+            let shift = offset + 1 - self.offset - self.pages.len() * PAGE_SIZE;
             self.pages.try_reserve(shift)?;
             self.pages.resize(self.pages.len() + shift, None);
         }
@@ -139,14 +139,14 @@ impl AnonMap {
                 core::ptr::copy_nonoverlapping(
                     old_hhdm as *const u8,
                     new_hhdm as *mut u8,
-                    PAGE_SIZE as usize,
+                    PAGE_SIZE,
                 );
             } else {
-                core::ptr::write_bytes(new_hhdm as *mut u8, 0, PAGE_SIZE as usize);
+                core::ptr::write_bytes(new_hhdm as *mut u8, 0, PAGE_SIZE);
             }
         }
 
-        self.pages[(offset - self.offset) / PAGE_SIZE as usize] = Some(anon);
+        self.pages[(offset - self.offset) / PAGE_SIZE] = Some(anon);
 
         Ok(unsafe { MappablePage::new(new_page, false, true, false) })
     }
@@ -188,7 +188,7 @@ impl Debug for MapEntryInner {
 impl MapEntryInner {
     /// Split this entry into two starting at `offset` within this mapping.
     fn split(&self, offset: usize) -> EResult<(Self, Self)> {
-        debug_assert!(offset % PAGE_SIZE as usize == 0);
+        debug_assert!(offset % PAGE_SIZE == 0);
         let mut first = Self {
             prot_flags: self.prot_flags,
             map_flags: self.map_flags,
@@ -219,7 +219,7 @@ impl MapEntryInner {
     /// Must only be called if there is no page currently mapped for `offset`.
     /// Returns a mappable page and many pages contiguous it is (refcount of the first page in the buddy block is used).
     fn get_page(&self, offset: usize) -> Option<(MappablePage, usize)> {
-        debug_assert!(offset % PAGE_SIZE as usize == 0);
+        debug_assert!(offset % PAGE_SIZE == 0);
         if let Some(amap) = &self.amap
             && let Some(mut page) = amap.get_page(offset)
         {
@@ -228,7 +228,7 @@ impl MapEntryInner {
                 page.clear_writable();
             }
 
-            return Some((page, PAGE_SIZE as usize));
+            return Some((page, PAGE_SIZE));
         }
 
         if let Some(mapping) = &self.mapping {
@@ -239,7 +239,7 @@ impl MapEntryInner {
             }
             Some(page)
         } else {
-            Some((zeroes_page(), PAGE_SIZE as usize))
+            Some((zeroes_page(), PAGE_SIZE))
         }
     }
 
@@ -250,7 +250,7 @@ impl MapEntryInner {
         offset: usize,
         for_writing: bool,
     ) -> EResult<(MappablePage, usize)> {
-        debug_assert!(offset % PAGE_SIZE as usize == 0);
+        debug_assert!(offset % PAGE_SIZE == 0);
 
         let orig;
         if let Some(mut page) = try { self.amap.as_ref()?.get_page(offset)? } {
@@ -260,7 +260,7 @@ impl MapEntryInner {
                 page.clear_writable();
             }
             if !for_writing || page.writable() {
-                return Ok((page, PAGE_SIZE as usize));
+                return Ok((page, PAGE_SIZE));
             }
             orig = Some(page);
         } else {
@@ -269,7 +269,7 @@ impl MapEntryInner {
             if let Some(mapping) = &self.mapping {
                 paddr = mapping.object.alloc(offset as u64 + mapping.offset)?;
             } else {
-                paddr = (zeroes_page(), PAGE_SIZE as usize);
+                paddr = (zeroes_page(), PAGE_SIZE);
             }
 
             if !for_writing || ((self.map_flags & SHARED) != 0 && self.mapping.is_some()) {
@@ -303,7 +303,7 @@ impl MapEntryInner {
         // SAFETY: `orig` here comes from the memory object, which promises it is valid physical memory.
         Ok((
             unsafe { amap.alloc_page(offset, orig.as_ref().map(MappablePage::paddr))? },
-            PAGE_SIZE as usize,
+            PAGE_SIZE,
         ))
     }
 }
@@ -320,7 +320,7 @@ pub struct VmSpaceInner {
 
 impl VmSpaceInner {
     /// Margin in bytes between mappings that [`Self::map`] guarantees.
-    pub const MAP_MARGIN: usize = PAGE_SIZE as usize;
+    pub const MAP_MARGIN: usize = PAGE_SIZE;
 
     /// Create a new, empty address space.
     pub(super) fn new(pmap: PhysMap) -> Self {
@@ -334,7 +334,7 @@ impl VmSpaceInner {
     /// Used to implement the splitting logic used by the various manipulation functions.
     fn split(threshold: usize, map: &mut IntrusiveList<MapEntry>) -> EResult<()> {
         unsafe {
-            debug_assert!(threshold % PAGE_SIZE as usize == 0);
+            debug_assert!(threshold % PAGE_SIZE == 0);
             let mut cur = map.front();
             while let Some(entry) = cur {
                 let mut guard = (&*entry).inner.lock();
@@ -366,8 +366,8 @@ impl VmSpaceInner {
     ) {
         let mut deferred_free = Vec::new();
         unsafe {
-            debug_assert!(bounds.start % PAGE_SIZE as usize == 0);
-            debug_assert!(bounds.end % PAGE_SIZE as usize == 0);
+            debug_assert!(bounds.start % PAGE_SIZE == 0);
+            debug_assert!(bounds.end % PAGE_SIZE == 0);
             let mut cur = map.front();
             while let Some(entry) = cur {
                 let next = map.next(entry);
@@ -402,8 +402,8 @@ impl VmSpaceInner {
     /// Insert a new mapping.
     unsafe fn insert_mapping(map: &mut IntrusiveList<MapEntry>, insert: Box<MapEntry>) {
         unsafe {
-            debug_assert!(insert.range.start % PAGE_SIZE as usize == 0);
-            debug_assert!(insert.range.end % PAGE_SIZE as usize == 0);
+            debug_assert!(insert.range.start % PAGE_SIZE == 0);
+            debug_assert!(insert.range.end % PAGE_SIZE == 0);
             if map.len() == 0 {
                 map.push_front(Box::into_raw(insert)).unwrap();
                 return;
@@ -441,8 +441,8 @@ impl VmSpaceInner {
         prot_flags: u8,
         mapping: Option<Mapping>,
     ) -> EResult<()> {
-        debug_assert!(addr % PAGE_SIZE as usize == 0);
-        debug_assert!(size % PAGE_SIZE as usize == 0);
+        debug_assert!(addr % PAGE_SIZE == 0);
+        debug_assert!(size % PAGE_SIZE == 0);
         Self::split(addr, map)?;
         Self::split(addr + size, map)?;
 
@@ -487,10 +487,10 @@ impl VmSpaceInner {
         prot_flags: u8,
         mapping: Option<Mapping>,
     ) -> EResult<usize> {
-        debug_assert!(hint % PAGE_SIZE as usize == 0);
-        debug_assert!(size % PAGE_SIZE as usize == 0);
-        debug_assert!(bounds.start % PAGE_SIZE as usize == 0);
-        debug_assert!(bounds.end % PAGE_SIZE as usize == 0);
+        debug_assert!(hint % PAGE_SIZE == 0);
+        debug_assert!(size % PAGE_SIZE == 0);
+        debug_assert!(bounds.start % PAGE_SIZE == 0);
+        debug_assert!(bounds.end % PAGE_SIZE == 0);
         // Constrain bounds to the closest range that would fit the mapping.
         if map.len() > 0 {
             let mut closest: Option<usize> = None;
@@ -568,8 +568,8 @@ impl VmSpaceInner {
         mapping: Option<Mapping>,
     ) -> EResult<usize> {
         let has_mapping = mapping.is_some();
-        assert!(hint % PAGE_SIZE as usize == 0);
-        let size = size.div_ceil(PAGE_SIZE as usize) * PAGE_SIZE as usize;
+        assert!(hint % PAGE_SIZE == 0);
+        let size = size.div_ceil(PAGE_SIZE) * PAGE_SIZE;
 
         if size == 0 {
             return Err(Errno::EINVAL);
@@ -586,7 +586,7 @@ impl VmSpaceInner {
             let mut fences = VmFenceSet::new();
             let mut map = self.map.lock();
             let addr = if map_flags & FIXED != 0 {
-                assert!(hint % PAGE_SIZE as usize == 0);
+                assert!(hint % PAGE_SIZE == 0);
                 Self::map_fixed(
                     &mut fences,
                     &self.pmap,
@@ -632,8 +632,8 @@ impl VmSpaceInner {
     /// No changes are made on failure.
     /// Preserves the outer portion of mappings on the border of `bounds`.
     pub unsafe fn protect(&self, bounds: Range<usize>, prot_flags: u8) -> EResult<()> {
-        debug_assert!(bounds.start % PAGE_SIZE as usize == 0);
-        debug_assert!(bounds.end % PAGE_SIZE as usize == 0);
+        debug_assert!(bounds.start % PAGE_SIZE == 0);
+        debug_assert!(bounds.end % PAGE_SIZE == 0);
         let mut map = self.map.lock();
         Self::split(bounds.start, &mut map)?;
         Self::split(bounds.end, &mut map)?;
@@ -641,8 +641,8 @@ impl VmSpaceInner {
         let mut fences = VmFenceSet::new();
 
         unsafe {
-            debug_assert!(bounds.start % PAGE_SIZE as usize == 0);
-            debug_assert!(bounds.end % PAGE_SIZE as usize == 0);
+            debug_assert!(bounds.start % PAGE_SIZE == 0);
+            debug_assert!(bounds.end % PAGE_SIZE == 0);
             let mut cur = map.front();
             while let Some(entry) = cur {
                 let next = map.next(entry);
@@ -674,8 +674,8 @@ impl VmSpaceInner {
     /// No changes are made on failure.
     /// Preserves the outer portion of mappings on the border of `bounds`.
     pub unsafe fn unmap(&self, bounds: Range<usize>) -> EResult<()> {
-        debug_assert!(bounds.start % PAGE_SIZE as usize == 0);
-        debug_assert!(bounds.end % PAGE_SIZE as usize == 0);
+        debug_assert!(bounds.start % PAGE_SIZE == 0);
+        debug_assert!(bounds.end % PAGE_SIZE == 0);
         let mut map = self.map.lock();
         Self::split(bounds.start, &mut map)?;
         Self::split(bounds.end, &mut map)?;
@@ -711,7 +711,7 @@ impl VmSpaceInner {
             let valid = max_len.saturating_sub(m.offset).min(entry_len as u64) as usize;
             // Round up to a page boundary: the partial last page stays because the page cache
             // already zeroed its tail; only pages lying entirely beyond max_len are evicted.
-            let cutoff = valid.div_ceil(PAGE_SIZE as usize) * PAGE_SIZE as usize;
+            let cutoff = valid.div_ceil(PAGE_SIZE) * PAGE_SIZE;
 
             if cutoff < entry_len {
                 // Evict pmap entries while holding the inner lock so a concurrent fault
@@ -738,7 +738,7 @@ impl VmSpaceInner {
                     }
                 } else if let Some(amap) = inner.amap.as_mut() {
                     let amap = Arc::make_mut(amap);
-                    let start_page = (cutoff - amap.offset) / PAGE_SIZE as usize;
+                    let start_page = (cutoff - amap.offset) / PAGE_SIZE;
                     for slot in &mut amap.pages[start_page..] {
                         if let Some(anon) = slot.take() {
                             deferred.push(anon);
@@ -756,7 +756,7 @@ impl VmSpaceInner {
 
         let mut fences = VmFenceSet::new();
         for vaddr in
-            (entry.range.start + cutoff_offset..entry.range.end).step_by(PAGE_SIZE as usize)
+            (entry.range.start + cutoff_offset..entry.range.end).step_by(PAGE_SIZE)
         {
             fences.add(Some(vaddr), None);
         }
@@ -774,7 +774,7 @@ impl VmSpaceInner {
         access: u8,
         entry: &MapEntry,
     ) -> EResult<usize> {
-        let page_vaddr = vaddr - vaddr % PAGE_SIZE as usize;
+        let page_vaddr = vaddr - vaddr % PAGE_SIZE;
         let v2p = pmap.virt2phys(page_vaddr);
         let flags = if v2p.valid {
             prot::from_mmu_flags(v2p.flags)
@@ -784,7 +784,7 @@ impl VmSpaceInner {
         if flags & access == access {
             // TLB must be outdated; flush it and retry.
             fences.add(Some(page_vaddr), None);
-            return Ok(PAGE_SIZE as usize - vaddr % PAGE_SIZE as usize);
+            return Ok(PAGE_SIZE - vaddr % PAGE_SIZE);
         }
 
         if v2p.valid {
@@ -844,7 +844,7 @@ impl VmSpaceInner {
             let len = page.1.min(entry.range.end - page_vaddr);
             pmap.map_mutiple(page_vaddr, page.0.into_paddr(), mmu_flags, len)?;
 
-            Ok(len - vaddr % PAGE_SIZE as usize)
+            Ok(len - vaddr % PAGE_SIZE)
         }
     }
 
@@ -999,12 +999,12 @@ impl VmSpace {
         mapping: Option<Mapping>,
     ) -> EResult<usize> {
         // Assert page-aligned hints.
-        if hint % PAGE_SIZE as usize != 0 {
+        if hint % PAGE_SIZE != 0 {
             return Err(Errno::EINVAL);
         }
         // Assert the virtual addresses are in the lower half.
         if map_flags & FIXED != 0
-            && (hint == 0 || hint.saturating_add(size) >= canon_half_size() - PAGE_SIZE as usize)
+            && (hint == 0 || hint.saturating_add(size) >= canon_half_size() - PAGE_SIZE)
         {
             return Err(Errno::EINVAL);
         }
@@ -1027,10 +1027,10 @@ impl VmSpace {
         if !is_canon_user_range(bounds.clone()) {
             return Err(Errno::EINVAL);
         }
-        if bounds.start % PAGE_SIZE as usize != 0 {
+        if bounds.start % PAGE_SIZE != 0 {
             return Err(Errno::EINVAL);
         }
-        bounds.end = bounds.end.div_ceil(PAGE_SIZE as usize) * PAGE_SIZE as usize;
+        bounds.end = bounds.end.div_ceil(PAGE_SIZE) * PAGE_SIZE;
         unsafe { self.0.protect(bounds, prot_flags) }
     }
 
@@ -1098,7 +1098,7 @@ impl KernelVmSpace {
     /// The bounds within which the kernel makes its own non-fixed mappings.
     pub fn bounds() -> Range<usize> {
         // The upper quarter of the higher half is used for miscellaneous mappings.
-        higher_half_vaddr() + canon_half_size() / 4..(PAGE_SIZE as usize).wrapping_neg()
+        higher_half_vaddr() + canon_half_size() / 4..(PAGE_SIZE).wrapping_neg()
     }
 
     /// Create a new mapping that must exist somewhere within `bounds` and try to place it at `hint`.
@@ -1112,7 +1112,7 @@ impl KernelVmSpace {
         prot_flags: u8,
         mapping: Option<Mapping>,
     ) -> EResult<usize> {
-        assert!(hint % PAGE_SIZE as usize == 0);
+        assert!(hint % PAGE_SIZE == 0);
         if map_flags & FIXED != 0 {
             assert!(hint >= higher_half_vaddr());
         }

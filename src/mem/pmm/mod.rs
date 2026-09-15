@@ -13,7 +13,7 @@ use core::{
 use alloc::alloc::AllocError;
 
 use crate::{
-    LogLevel, config::PAGE_SIZE, kcore::sync::spinlock::Spinlock, mem::vmm, util::irq::IrqGuard,
+    LogLevel, arch::mmu::PAGE_SIZE, kcore::sync::spinlock::Spinlock, mem::vmm, util::irq::IrqGuard,
 };
 
 use super::vmm::memobject::MemObject;
@@ -69,7 +69,7 @@ impl Page {
                 .wrapping_sub(vmm::HHDM_OFFSET)
                 / size_of::<Page>())
             .wrapping_add(PAGE_RANGE.start)
-                * PAGE_SIZE as usize
+                * PAGE_SIZE
         }
     }
     /// Get the buddy alloc page order.
@@ -124,14 +124,14 @@ static FREE_LIST: Spinlock<[PAddrr; MAX_ORDER as usize]> =
 /// Calculates the minimum sized order that will fit this many bytes.
 pub const fn size_to_order(byte_size: usize) -> u8 {
     debug_assert!(byte_size > 0);
-    let pages = byte_size.div_ceil(PAGE_SIZE as usize) as usize;
+    let pages = byte_size.div_ceil(PAGE_SIZE) as usize;
     pages.next_power_of_two().trailing_zeros() as u8
 }
 
 /// Calculates how many bytes are in a block of a certain order.
 pub const fn order_to_size(order: u8) -> usize {
     debug_assert!(order < MAX_ORDER);
-    (PAGE_SIZE as usize) << order
+   PAGE_SIZE<< order
 }
 
 /// Calculates the minimum sized order that will fit this many pages.
@@ -148,7 +148,7 @@ pub const fn order_to_pages(order: u8) -> usize {
 
 /// Helper function that gets the freelist link for a block, assuming it is free.
 unsafe fn free_list_struct(paddr: PAddrr) -> *mut FreeListLink {
-    debug_assert!(paddr % PAGE_SIZE as usize == 0);
+    debug_assert!(paddr % PAGE_SIZE == 0);
     (paddr + unsafe { vmm::HHDM_OFFSET }) as *mut FreeListLink
 }
 
@@ -200,16 +200,16 @@ unsafe fn free_list_link(block: PAddrr, list_head: &mut PAddrr) {
 
 /// Check whether a page is in a certain freelist.
 unsafe fn free_list_contains(block: PAddrr, list_head: PAddrr) -> bool {
-    debug_assert!(block % PAGE_SIZE as usize == 0);
+    debug_assert!(block % PAGE_SIZE == 0);
     debug_assert!(unsafe {
-        PAGE_RANGE.start <= (block / PAGE_SIZE as usize)
-            && (block / PAGE_SIZE as usize) < PAGE_RANGE.end
+        PAGE_RANGE.start <= (block / PAGE_SIZE)
+            && (block / PAGE_SIZE) < PAGE_RANGE.end
     });
     let mut cur_node = list_head;
     while cur_node != PAddrr::MAX {
         debug_assert!(unsafe {
-            PAGE_RANGE.start <= (cur_node / PAGE_SIZE as usize)
-                && (cur_node / PAGE_SIZE as usize) < PAGE_RANGE.end
+            PAGE_RANGE.start <= (cur_node / PAGE_SIZE)
+                && (cur_node / PAGE_SIZE) < PAGE_RANGE.end
         });
         if cur_node == block {
             return true;
@@ -259,7 +259,7 @@ pub unsafe fn page_alloc(order: u8, usage: PageUsage) -> Result<PAddrr, AllocErr
         unsafe {
             // Do not reorder these inserts.
             free_list_link(
-                block + ((PAGE_SIZE as usize) << (split_order - 1)),
+                block + ((PAGE_SIZE) << (split_order - 1)),
                 &mut free_list[split_order as usize - 1],
             );
             free_list_link(block, &mut free_list[split_order as usize - 1]);
@@ -317,9 +317,9 @@ pub unsafe fn page_alloc(order: u8, usage: PageUsage) -> Result<PAddrr, AllocErr
 /// Get the [`Page`] struct for some physical address.
 /// Manipulating the data within the struct is unsafe.
 pub fn page_struct(paddr: PAddrr) -> *mut Page {
-    debug_assert!(paddr % PAGE_SIZE as usize == 0);
+    debug_assert!(paddr % PAGE_SIZE == 0);
     unsafe {
-        let ppn = paddr / PAGE_SIZE as usize;
+        let ppn = paddr / PAGE_SIZE;
         debug_assert!(PAGE_RANGE.start <= ppn && ppn < PAGE_RANGE.end);
         let vaddr = PAGE_STRUCTS_PADDR
             .wrapping_add(vmm::HHDM_OFFSET)
@@ -334,14 +334,14 @@ pub fn page_struct(paddr: PAddrr) -> *mut Page {
 /// Get the [`Page`] struct for the start of the block that some physical address lies in.
 /// Manipulating the data within the struct is unsafe.
 pub fn page_struct_base(paddr: PAddrr) -> (*mut Page, u8) {
-    debug_assert!(paddr % PAGE_SIZE as usize == 0);
+    debug_assert!(paddr % PAGE_SIZE == 0);
     unsafe {
         let meta = page_struct(paddr);
         let order = (*meta).order();
         let shift = order + PAGE_SIZE.ilog2() as u8;
         let aligned_paddr = paddr >> shift << shift;
         (
-            meta.wrapping_sub(paddr.wrapping_sub(aligned_paddr) / PAGE_SIZE as usize),
+            meta.wrapping_sub(paddr.wrapping_sub(aligned_paddr) / PAGE_SIZE),
             order,
         )
     }
@@ -349,7 +349,7 @@ pub fn page_struct_base(paddr: PAddrr) -> (*mut Page, u8) {
 
 /// Mark a single block of arbitrary order as free.
 pub unsafe fn page_free(mut block: PAddrr, mut order: u8) {
-    debug_assert!(block % ((PAGE_SIZE as usize) << order) == 0);
+    debug_assert!(block % ((PAGE_SIZE) << order) == 0);
     let pages_freed: PAddrr = 1 << order;
     let _noirq = IrqGuard::new();
     let mut free_list = FREE_LIST.lock();
@@ -359,12 +359,12 @@ pub unsafe fn page_free(mut block: PAddrr, mut order: u8) {
         PageUsage::Free => unreachable!(
             "Unused page at 0x{:x} .. 0x{:x} marked as free again",
             block,
-            block + ((PAGE_SIZE as usize) << order)
+            block + ((PAGE_SIZE) << order)
         ),
         PageUsage::KernelSegment => unreachable!(
             "Kernel segment page at  0x{:x} .. 0x{:x} marked as free",
             block,
-            block + ((PAGE_SIZE as usize) << order)
+            block + ((PAGE_SIZE) << order)
         ),
         PageUsage::Unusable => (), // Not accounted as being used for something.
         PageUsage::Cache => {
@@ -386,8 +386,8 @@ pub unsafe fn page_free(mut block: PAddrr, mut order: u8) {
         free_list: &mut [PAddrr; MAX_ORDER as usize],
     ) -> bool {
         // Determine whether coalescing is possible.
-        let buddy = block ^ ((PAGE_SIZE as usize) << order);
-        let buddy_ppn = buddy / PAGE_SIZE as usize;
+        let buddy = block ^ ((PAGE_SIZE) << order);
+        let buddy_ppn = buddy / PAGE_SIZE;
         if !unsafe { PAGE_RANGE.start <= buddy_ppn && buddy_ppn < PAGE_RANGE.end } {
             return false;
         }
@@ -406,7 +406,7 @@ pub unsafe fn page_free(mut block: PAddrr, mut order: u8) {
 
     // Attempt to coalesce.
     while order < MAX_ORDER && try_coalesce(block, order, &mut free_list) {
-        block &= !((PAGE_SIZE as usize) << order);
+        block &= !((PAGE_SIZE) << order);
         order += 1;
     }
 
@@ -429,8 +429,8 @@ pub unsafe fn page_free(mut block: PAddrr, mut order: u8) {
 
 /// Mark a range of blocks as free.
 pub unsafe fn mark_free(mut memory: Range<PAddrr>) {
-    debug_assert!(memory.start % PAGE_SIZE as usize == 0);
-    debug_assert!(memory.end % PAGE_SIZE as usize == 0);
+    debug_assert!(memory.start % PAGE_SIZE == 0);
+    debug_assert!(memory.end % PAGE_SIZE == 0);
     while memory.end > memory.start {
         // Max order of the page depends on physical address and available space.
         let max_order = memory
@@ -439,22 +439,22 @@ pub unsafe fn mark_free(mut memory: Range<PAddrr>) {
             .min((memory.end - memory.start).ilog2())
             .sub(PAGE_SIZE.ilog2()) as u8;
         unsafe { page_free(memory.start, max_order) };
-        memory.start += (PAGE_SIZE as usize) << max_order;
+        memory.start +=PAGE_SIZE<< max_order;
     }
 }
 
 /// Initialize the physical memory allocator.
 /// It is assumed that the boot protocol implementation hereafter marks the kernel executable with [`PageUsage::KernelSegment`].
 pub unsafe fn init(total: Range<PAddrr>, early: Range<PAddrr>) {
-    debug_assert!(total.start % PAGE_SIZE as usize == 0);
-    debug_assert!(total.end % PAGE_SIZE as usize == 0);
-    debug_assert!(early.start % PAGE_SIZE as usize == 0);
-    debug_assert!(early.end % PAGE_SIZE as usize == 0);
+    debug_assert!(total.start % PAGE_SIZE == 0);
+    debug_assert!(total.end % PAGE_SIZE == 0);
+    debug_assert!(early.start % PAGE_SIZE == 0);
+    debug_assert!(early.end % PAGE_SIZE == 0);
     unsafe {
         TOTAL_PAGES.store(total.end - total.start, Ordering::Relaxed);
-        PAGE_RANGE = total.start / PAGE_SIZE as usize..total.end / PAGE_SIZE as usize;
+        PAGE_RANGE = total.start / PAGE_SIZE..total.end / PAGE_SIZE;
         // How many pages will be used by the page metadata structs.
-        let meta_pages = (size_of::<Page>() * total.len()).div_ceil(PAGE_SIZE as usize) as PAddrr;
+        let meta_pages = (size_of::<Page>() * total.len()).div_ceil(PAGE_SIZE) as PAddrr;
         // There needs to be at least a small amount of available pages to bootstrap MM.
         if early.end - early.start < meta_pages + 64 {
             panic!("Insufficient memory");
@@ -462,13 +462,13 @@ pub unsafe fn init(total: Range<PAddrr>, early: Range<PAddrr>) {
         PAGE_STRUCTS_PADDR = early.start;
 
         // Mark all pages as unusable...
-        for page in total.step_by(PAGE_SIZE as usize) {
+        for page in total.step_by(PAGE_SIZE) {
             let page_struct = page_struct(page);
             *page_struct = core::mem::zeroed();
         }
 
         // ...but mark the early pool as free.
-        mark_free(early.start + meta_pages * PAGE_SIZE as usize..early.end);
+        mark_free(early.start + meta_pages * PAGE_SIZE..early.end);
     }
 }
 

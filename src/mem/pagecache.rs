@@ -13,7 +13,7 @@ use alloc::vec::Vec;
 
 use crate::{
     LogLevel,
-    config::PAGE_SIZE,
+    arch::mmu::PAGE_SIZE,
     error::{EResult, Errno},
     kcore::sync::{mutex::Mutex, spinlock::Spinlock, waitlist::Waitlist},
     mem::pmm::{self, PAddrr},
@@ -85,7 +85,7 @@ impl PageCache {
             return;
         }
 
-        let entry_size = (PAGE_SIZE as usize) << self.entry_pages_exp;
+        let entry_size = PAGE_SIZE << self.entry_pages_exp;
         if new_len % entry_size as u64 != 0 {
             let partial_index = new_len / entry_size as u64;
             let zero_from = (new_len % entry_size as u64) as usize;
@@ -202,7 +202,7 @@ impl PageCache {
         // Backfill with zeroes past the file's end — only on the last entry.
         let entry_end_block = start_block + (1u64 << self.entry_blocks_exp);
         if block_len <= entry_end_block {
-            let entry_bytes = (PAGE_SIZE as usize) << self.entry_pages_exp;
+            let entry_bytes = PAGE_SIZE << self.entry_pages_exp;
             let valid_bytes = (*byte_len as usize)
                 .saturating_sub(start_block as usize * (1usize << self.block_size_exp))
                 .min(entry_bytes);
@@ -298,7 +298,7 @@ impl PageCache {
 
         // SAFETY: We own this physical address through the cache entries.
         Ok(Some(unsafe {
-            MappablePage::new(ent.paddr + offset * PAGE_SIZE as usize, true, true, true)
+            MappablePage::new(ent.paddr + offset * PAGE_SIZE, true, true, true)
         }))
     }
 
@@ -361,7 +361,7 @@ impl PageCache {
 
                 // SAFETY: We own this physical address through the cache entries.
                 return Ok(MappablePage::new(
-                    paddr + offset * PAGE_SIZE as usize,
+                    paddr + offset * PAGE_SIZE,
                     true,
                     true,
                     true,
@@ -550,7 +550,7 @@ impl PageCache {
             let cur_addr = addr + progress;
             let page_base = cur_addr & !(PAGE_SIZE as u64 - 1);
             let page_offset = (cur_addr - page_base) as usize;
-            let copy_len = (PAGE_SIZE as usize - page_offset).min((len - progress) as usize);
+            let copy_len = (PAGE_SIZE - page_offset).min((len - progress) as usize);
 
             let page = self.alloc(pager, page_base)?;
             let src_vaddr = page.paddr() + unsafe { HHDM_OFFSET } + page_offset;
@@ -584,7 +584,7 @@ impl PageCache {
             let cur_addr = addr + progress;
             let page_base = cur_addr & !(PAGE_SIZE as u64 - 1);
             let page_offset = (cur_addr - page_base) as usize;
-            let copy_len = (PAGE_SIZE as usize - page_offset).min((len - progress) as usize);
+            let copy_len = (PAGE_SIZE - page_offset).min((len - progress) as usize);
 
             let page = self.alloc(pager, page_base)?;
             let dst_vaddr = page.paddr() + unsafe { HHDM_OFFSET } + page_offset;
@@ -614,7 +614,7 @@ impl PageCache {
             let cur_addr = addr + progress;
             let page_base = cur_addr & !(PAGE_SIZE as u64 - 1);
             let page_offset = (cur_addr - page_base) as usize;
-            let copy_len = (PAGE_SIZE as usize - page_offset).min((len - progress) as usize);
+            let copy_len = (PAGE_SIZE - page_offset).min((len - progress) as usize);
 
             let page = self.alloc(pager, page_base)?;
             let dst_vaddr = page.paddr() + unsafe { HHDM_OFFSET } + page_offset;
@@ -797,9 +797,9 @@ impl Pager for TestPager {
 
 vmm_ktest! { PAGECACHE_READ,
     // Verify that data from the backing store is correctly read into the cache.
-    let pager = TestPager::new(PAGE_SIZE.ilog2() as u8, PAGE_SIZE as usize * 4)?;
+    let pager = TestPager::new(PAGE_SIZE.ilog2() as u8, PAGE_SIZE * 4)?;
     pager.data.borrow_mut()[0] = 0xAB;
-    pager.data.borrow_mut()[PAGE_SIZE as usize] = 0xCD;
+    pager.data.borrow_mut()[PAGE_SIZE] = 0xCD;
     let cache = PageCache::new(pager.block_size_exp, pager.size());
 
     let page0 = cache.alloc(&pager, 0)?;
@@ -813,7 +813,7 @@ vmm_ktest! { PAGECACHE_READ,
 
 vmm_ktest! { PAGECACHE_DIRTY_WRITEBACK,
     // Verify that a dirty page is flushed to the backing store on sync.
-    let pager = TestPager::new(PAGE_SIZE.ilog2() as u8, PAGE_SIZE as usize * 4)?;
+    let pager = TestPager::new(PAGE_SIZE.ilog2() as u8, PAGE_SIZE * 4)?;
     let cache = PageCache::new(pager.block_size_exp, pager.size());
 
     let page = cache.alloc(&pager, 0)?;
@@ -827,7 +827,7 @@ vmm_ktest! { PAGECACHE_DIRTY_WRITEBACK,
 
 vmm_ktest! { PAGECACHE_NO_REDUNDANT_READ,
     // Verify that a cached page is not re-read from disk when already present.
-    let pager = TestPager::new(PAGE_SIZE.ilog2() as u8, PAGE_SIZE as usize * 4)?;
+    let pager = TestPager::new(PAGE_SIZE.ilog2() as u8, PAGE_SIZE * 4)?;
     let cache = PageCache::new(pager.block_size_exp, pager.size());
 
     let page = cache.alloc(&pager, 0)?;
@@ -841,7 +841,7 @@ vmm_ktest! { PAGECACHE_NO_REDUNDANT_READ,
 
 vmm_ktest! { PAGECACHE_NO_REDUNDANT_WRITE,
     // Verify that a clean page is not written to disk on a subsequent sync.
-    let pager = TestPager::new(PAGE_SIZE.ilog2() as u8, PAGE_SIZE as usize * 4)?;
+    let pager = TestPager::new(PAGE_SIZE.ilog2() as u8, PAGE_SIZE * 4)?;
     let cache = PageCache::new(pager.block_size_exp, pager.size());
 
     let page = cache.alloc(&pager, 0)?;
@@ -857,7 +857,7 @@ vmm_ktest! { PAGECACHE_NO_REDUNDANT_WRITE,
 
 vmm_ktest! { PAGECACHE_FLUSH_EVICTS_CLEAN,
     // A clean, unreferenced page must be evicted by flush and re-read on next access.
-    let pager = TestPager::new(PAGE_SIZE.ilog2() as u8, PAGE_SIZE as usize * 4)?;
+    let pager = TestPager::new(PAGE_SIZE.ilog2() as u8, PAGE_SIZE * 4)?;
     pager.data.borrow_mut()[0] = 0x11;
     let cache = PageCache::new(pager.block_size_exp, pager.size());
 
@@ -876,7 +876,7 @@ vmm_ktest! { PAGECACHE_FLUSH_EVICTS_CLEAN,
 
 vmm_ktest! { PAGECACHE_FLUSH_RETAINS_DIRTY,
     // A dirty, unreferenced page must survive flush to avoid data loss.
-    let pager = TestPager::new(PAGE_SIZE.ilog2() as u8, PAGE_SIZE as usize * 4)?;
+    let pager = TestPager::new(PAGE_SIZE.ilog2() as u8, PAGE_SIZE * 4)?;
     let cache = PageCache::new(pager.block_size_exp, pager.size());
 
     let page = cache.alloc(&pager, 0)?;
@@ -898,7 +898,7 @@ vmm_ktest! { PAGECACHE_FLUSH_RETAINS_DIRTY,
 
 vmm_ktest! { PAGECACHE_FLUSH_RETAINS_REFERENCED,
     // A page with an outstanding MappablePage (refcount > 0) must not be evicted.
-    let pager = TestPager::new(PAGE_SIZE.ilog2() as u8, PAGE_SIZE as usize * 4)?;
+    let pager = TestPager::new(PAGE_SIZE.ilog2() as u8, PAGE_SIZE * 4)?;
     pager.data.borrow_mut()[0] = 0x33;
     let cache = PageCache::new(pager.block_size_exp, pager.size());
 
@@ -914,9 +914,9 @@ vmm_ktest! { PAGECACHE_FLUSH_RETAINS_REFERENCED,
 vmm_ktest! { PAGECACHE_SMALL_BLOCK_CROSS_ENTRY_READ,
     // block_size (512) < page_size (4096): 8 blocks per entry, each entry is exactly 1 page.
     // Page 0 lives in entry 0 (blocks 0-7), page 1 lives in entry 1 (blocks 8-15).
-    let pager = TestPager::new(9, PAGE_SIZE as usize * 2)?;
+    let pager = TestPager::new(9, PAGE_SIZE * 2)?;
     pager.data.borrow_mut()[0] = 0xAA;
-    pager.data.borrow_mut()[PAGE_SIZE as usize] = 0xBB;
+    pager.data.borrow_mut()[PAGE_SIZE] = 0xBB;
     let cache = PageCache::new(9, pager.size());
 
     let page0 = cache.alloc(&pager, 0)?;
@@ -935,9 +935,9 @@ vmm_ktest! { PAGECACHE_LARGE_BLOCK_INTRA_ENTRY_PAGES,
     // block_size (8192) > page_size (4096): 1 block spans 2 pages, both in the same entry.
     // Both pages must be satisfied by a single disk read.
     let block_size_exp = PAGE_SIZE.ilog2() as u8 + 1;
-    let pager = TestPager::new(block_size_exp, PAGE_SIZE as usize * 2)?;
+    let pager = TestPager::new(block_size_exp, PAGE_SIZE * 2)?;
     pager.data.borrow_mut()[0] = 0xCC;
-    pager.data.borrow_mut()[PAGE_SIZE as usize] = 0xDD;
+    pager.data.borrow_mut()[PAGE_SIZE] = 0xDD;
     let cache = PageCache::new(block_size_exp, pager.size());
 
     let page0 = cache.alloc(&pager, 0)?;
@@ -955,7 +955,7 @@ vmm_ktest! { PAGECACHE_LARGE_BLOCK_INTRA_ENTRY_PAGES,
 vmm_ktest! { PAGECACHE_SMALL_BLOCK_DIRTY_WRITEBACK_SECOND_ENTRY,
     // block_size (512) < page_size (4096): dirty data in entry 1 must be written to the
     // correct block range (blocks 8-15 = bytes 4096-8191), not entry 0's range.
-    let pager = TestPager::new(9, PAGE_SIZE as usize * 2)?;
+    let pager = TestPager::new(9, PAGE_SIZE * 2)?;
     let cache = PageCache::new(9, pager.size());
 
     let page1 = cache.alloc(&pager, PAGE_SIZE as u64)?;
@@ -964,7 +964,7 @@ vmm_ktest! { PAGECACHE_SMALL_BLOCK_DIRTY_WRITEBACK_SECOND_ENTRY,
 
     cache.sync_all(&pager)?;
 
-    ktest_expect!(pager.data.borrow()[PAGE_SIZE as usize], 0xBEu8);
+    ktest_expect!(pager.data.borrow()[PAGE_SIZE], 0xBEu8);
     // Only entry 1 was dirty; exactly one writeback must have occurred.
     ktest_expect!(pager.writes(), 1usize);
 }

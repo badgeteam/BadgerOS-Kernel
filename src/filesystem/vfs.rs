@@ -25,9 +25,9 @@ use super::{
 };
 use crate::{
     LogLevel,
-    error::{EResult, Errno},
-    config::PAGE_SIZE,
+    arch::mmu::PAGE_SIZE,
     device::Device,
+    error::{EResult, Errno},
     filesystem::{
         CacheLoc, VfsLoc,
         fifo::FifoShared,
@@ -467,7 +467,7 @@ impl MemObject for VNode {
                 .unwrap()
                 .get(offset)
                 .unwrap_or(None)?,
-            PAGE_SIZE as usize,
+            PAGE_SIZE,
         ))
     }
 
@@ -482,7 +482,7 @@ impl MemObject for VNode {
         };
         Ok((
             self.pagecache.as_ref().unwrap().alloc(&pager, offset)?,
-            PAGE_SIZE as usize,
+            PAGE_SIZE,
         ))
     }
 

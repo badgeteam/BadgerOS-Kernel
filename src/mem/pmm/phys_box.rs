@@ -8,7 +8,7 @@ use alloc::sync::Arc;
 
 use crate::{
     error::EResult,
-    config::PAGE_SIZE,
+    arch::mmu::PAGE_SIZE,
     mem::{
         pmm,
         vmm::{self, kernel_mm, map::Mapping, memobject::RawMemory},
@@ -39,16 +39,16 @@ impl<T: Sized> PhysBox<T> {
         unsafe {
             let object = Arc::try_new(RawMemory::new(
                 ptr.paddr(),
-                aligned_pages * PAGE_SIZE as usize,
+                aligned_pages * PAGE_SIZE,
             ))?;
             vaddr = kernel_mm().map(
-                aligned_pages * PAGE_SIZE as usize,
+                aligned_pages * PAGE_SIZE,
                 0,
                 0,
                 prot,
                 Some(Mapping { offset: 0, object }),
             )? as *mut T;
-            core::ptr::write_bytes(vaddr as *mut u8, 0, aligned_pages * PAGE_SIZE as usize);
+            core::ptr::write_bytes(vaddr as *mut u8, 0, aligned_pages * PAGE_SIZE);
         }
 
         Ok(Self { ptr, vaddr })
@@ -96,7 +96,7 @@ vmm_ktest! { PHYS_BOX,
 
     let start_vma = &mem[0] as *const _ as usize;
     let start_pma = mem.paddr();
-    for i in (0..SIZE).step_by(PAGE_SIZE as usize) {
+    for i in (0..SIZE).step_by(PAGE_SIZE) {
         // Assert physically contiguous.
         let v2p = kernel_mm().virt2phys(start_vma + i);
         ktest_assert!(v2p.valid);

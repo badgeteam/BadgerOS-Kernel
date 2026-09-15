@@ -6,8 +6,9 @@ use alloc::vec::Vec;
 use bytemuck_derive::{AnyBitPattern, NoUninit};
 
 use crate::{
-LogLevel, error::{EResult, Errno},
-    config::PAGE_SIZE,
+    LogLevel,
+    arch::mmu::PAGE_SIZE,
+    error::{EResult, Errno},
     filesystem::{self, File, oflags},
     mem::vmm::{
         self,
@@ -84,11 +85,11 @@ fn map_helper(
     // Address calculations.
     let vaddr = phdr.vaddr as usize + load_offset;
     let end_vaddr = vaddr + phdr.file_size as usize;
-    let file_start_vaddr = vaddr / PAGE_SIZE as usize * PAGE_SIZE as usize;
+    let file_start_vaddr = vaddr / PAGE_SIZE * PAGE_SIZE;
     let file_end_vaddr =
-        (vaddr + phdr.file_size as usize).div_ceil(PAGE_SIZE as usize) * PAGE_SIZE as usize;
+        (vaddr + phdr.file_size as usize).div_ceil(PAGE_SIZE) * PAGE_SIZE;
     let mem_end_vaddr =
-        (vaddr + phdr.mem_size as usize).div_ceil(PAGE_SIZE as usize) * PAGE_SIZE as usize;
+        (vaddr + phdr.mem_size as usize).div_ceil(PAGE_SIZE) * PAGE_SIZE;
     let file_start_offset = phdr.offset - (vaddr - file_start_vaddr) as u64;
 
     let map_populate = unsafe { MAP_POPULATE } as u32 * map::POPULATE;
@@ -160,11 +161,11 @@ fn map_helper1(
     load_offset: usize,
 ) -> EResult<()> {
     let vaddr = phdr.vaddr as usize + load_offset;
-    let aligned_vaddr = vaddr / PAGE_SIZE as usize * PAGE_SIZE as usize;
+    let aligned_vaddr = vaddr / PAGE_SIZE * PAGE_SIZE;
     let vaddr_end = vaddr + phdr.mem_size as usize;
     let aligned_offset = phdr.offset / PAGE_SIZE as u64 * PAGE_SIZE as u64;
 
-    if vaddr % PAGE_SIZE as usize != phdr.offset as usize % PAGE_SIZE as usize {
+    if vaddr % PAGE_SIZE != phdr.offset as usize % PAGE_SIZE {
         return Err(Errno::ENOEXEC);
     }
 

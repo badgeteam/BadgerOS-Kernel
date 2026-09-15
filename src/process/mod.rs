@@ -37,7 +37,6 @@ use crate::{
         except::SyscallFrame,
         usermode::{ArchUserRegs, ArchUsermode, UserRegs},
     },
-    config::STACK_SIZE,
     device::{self, class::char::CharDevice},
     error::{EResult, Errno},
     filesystem::{self, File, SeekMode, device::CharDevFile, mode, oflags},
@@ -174,6 +173,8 @@ unsafe impl Send for Process {}
 unsafe impl Sync for Process {}
 
 impl Process {
+    pub const DEFAULT_USER_STACK_SIZE: usize = 4 * 1024 * 1024;
+
     /// View the process' command line.
     pub fn cmdline<'a>(&'a self) -> SharedMutexGuard<'a, Cmdline> {
         self.cmdline.unintr_lock_shared()
@@ -558,7 +559,7 @@ impl Process {
         let tid = self.tid_counter.fetch_add(1, Ordering::Relaxed);
         // TODO: Safe and owning API for memory objects?
         let u_stack = self.memmap().map(
-            STACK_SIZE as usize,
+            Self::DEFAULT_USER_STACK_SIZE,
             0,
             vmm::map::PRIVATE,
             vmm::prot::READ | vmm::prot::WRITE,
@@ -578,7 +579,7 @@ impl Process {
                 }
 
                 // Set up things on the stack.
-                let u_stack_top = (u_stack + STACK_SIZE as usize) as *mut ();
+                let u_stack_top = (u_stack + Self::DEFAULT_USER_STACK_SIZE) as *mut ();
                 let (pc, sp) = setup(u_stack_top);
 
                 // Call user mode.
@@ -588,13 +589,15 @@ impl Process {
                 // Clean up the stack.
                 let _ = proc_self
                     .memmap()
-                    .unmap(u_stack..u_stack + STACK_SIZE as usize);
+                    .unmap(u_stack..u_stack + Self::DEFAULT_USER_STACK_SIZE);
             },
             Some(self.clone()),
             name,
         );
         if thread.is_err() {
-            let _ = self.memmap().unmap(u_stack..u_stack + STACK_SIZE as usize);
+            let _ = self
+                .memmap()
+                .unmap(u_stack..u_stack + Self::DEFAULT_USER_STACK_SIZE);
         }
         self.threads.unintr_lock().threads.insert(tid, thread?);
         Ok(tid)

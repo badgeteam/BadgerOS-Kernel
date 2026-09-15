@@ -11,7 +11,7 @@ use core::{
 use super::*;
 use crate::{
     arch::{Arch, mmu::ArchMMU},
-    config::PAGE_SIZE,
+    arch::mmu::PAGE_SIZE,
     error::EResult,
     mem::pmm::{self, page_free, page_struct_base},
     util::irq::IrqGuard,
@@ -115,7 +115,7 @@ impl PhysMap {
                     self.root,
                     i,
                     Arch::pack_pte(PTE {
-                        ppn: paddr / PAGE_SIZE as usize,
+                        ppn: paddr / PAGE_SIZE,
                         flags: physmap::flags::G,
                         level: PAGING_LEVELS as u8 - 2,
                         valid: true,
@@ -154,8 +154,8 @@ impl PhysMap {
         mut len: usize,
     ) -> EResult<()> {
         unsafe {
-            debug_assert!(paddr % PAGE_SIZE as usize == 0);
-            debug_assert!(len % PAGE_SIZE as usize == 0);
+            debug_assert!(paddr % PAGE_SIZE == 0);
+            debug_assert!(len % PAGE_SIZE == 0);
 
             while len > 0 {
                 let level = calc_superpage(paddr, vaddr, len);
@@ -185,11 +185,11 @@ impl PhysMap {
     /// Create or replace one page-sized mapping.
     pub unsafe fn map(&self, vaddr: usize, paddr: PAddrr, flags: u32) -> EResult<()> {
         unsafe {
-            debug_assert!(paddr % PAGE_SIZE as usize == 0);
+            debug_assert!(paddr % PAGE_SIZE == 0);
             self.map_raw_impl(
                 vaddr,
                 Some(PTE {
-                    ppn: paddr / PAGE_SIZE as usize,
+                    ppn: paddr / PAGE_SIZE,
                     flags,
                     level: 0,
                     valid: true,
@@ -214,7 +214,7 @@ impl PhysMap {
             return;
         }
         unsafe {
-            let paddr = old.ppn * PAGE_SIZE as usize;
+            let paddr = old.ppn * PAGE_SIZE;
             let meta = page_struct_base(paddr).0;
 
             // Asked to decrease refcount upon unmap.
@@ -223,7 +223,7 @@ impl PhysMap {
                 logkf!(
                     LogLevel::Warning,
                     "Refcount underflow for physical page at 0x{:x}",
-                    old.ppn * PAGE_SIZE as usize
+                    old.ppn * PAGE_SIZE
                 );
             }
 
@@ -239,7 +239,7 @@ impl PhysMap {
     }
 
     unsafe fn map_raw_impl(&self, vaddr: usize, new_pte: Option<PTE>, level: u8) -> EResult<()> {
-        debug_assert!(vaddr % PAGE_SIZE as usize == 0);
+        debug_assert!(vaddr % PAGE_SIZE == 0);
         let mut pgtable_paddr = self.root;
         let null_pte = new_pte.as_ref().map(|x| x.is_null()).unwrap_or(false);
         let global_flag = is_canon_kernel_addr(vaddr) as u32 * flags::G;
@@ -264,7 +264,7 @@ impl PhysMap {
                             index,
                             raw_pte,
                             Arch::pack_pte(PTE {
-                                ppn: paddr / PAGE_SIZE as usize,
+                                ppn: paddr / PAGE_SIZE,
                                 flags: global_flag,
                                 valid: true,
                                 leaf: false,
@@ -288,7 +288,7 @@ impl PhysMap {
                             index,
                             raw_pte,
                             Arch::pack_pte(PTE {
-                                ppn: paddr / PAGE_SIZE as usize,
+                                ppn: paddr / PAGE_SIZE,
                                 flags: global_flag,
                                 valid: true,
                                 leaf: false,
@@ -304,7 +304,7 @@ impl PhysMap {
                         }
                     }
                 } else {
-                    pte.ppn * PAGE_SIZE as usize
+                    pte.ppn * PAGE_SIZE
                 };
                 // Loop with break at the end because Rust doesn't do labels.
                 break;
@@ -327,12 +327,12 @@ impl PhysMap {
 
     /// Delete multiple page-sized mappings.
     pub unsafe fn unmap_multiple(&self, mut vaddr: usize, mut size: usize) {
-        debug_assert!(size % PAGE_SIZE as usize == 0);
+        debug_assert!(size % PAGE_SIZE == 0);
         unsafe {
             while size > 0 {
                 self.unmap(vaddr);
-                vaddr += PAGE_SIZE as usize;
-                size -= PAGE_SIZE as usize
+                vaddr += PAGE_SIZE;
+                size -= PAGE_SIZE
             }
         }
     }
@@ -340,7 +340,7 @@ impl PhysMap {
     /// Change protection flags for all mappings within the given range.
     /// Will only decrease access permission, never increase it.
     pub unsafe fn protect(&self, mut vaddr: usize, mut size: usize, max_prot: u32) {
-        debug_assert!(size % PAGE_SIZE as usize == 0);
+        debug_assert!(size % PAGE_SIZE == 0);
         unsafe {
             while size > 0 {
                 let mut pte = self.walk(vaddr);
@@ -350,8 +350,8 @@ impl PhysMap {
                     self.map_raw_impl(vaddr, Some(pte), pte.level)
                         .expect("PhysMap::protect failed");
                 }
-                vaddr += PAGE_SIZE as usize;
-                size -= PAGE_SIZE as usize
+                vaddr += PAGE_SIZE;
+                size -= PAGE_SIZE
             }
         }
     }
@@ -379,7 +379,7 @@ impl PhysMap {
                 return pte;
             } else if pte.valid && !pte.leaf {
                 debug_assert!(pte.ppn != 0);
-                pgtable_paddr = pte.ppn * PAGE_SIZE as usize;
+                pgtable_paddr = pte.ppn * PAGE_SIZE;
             } else {
                 return pte;
             }
@@ -392,9 +392,9 @@ impl PhysMap {
     pub fn virt2phys(&self, vaddr: usize) -> Virt2Phys {
         if !is_canon_addr(vaddr) {
             return Virt2Phys {
-                page_vaddr: vaddr & !(PAGE_SIZE as usize - 1),
+                page_vaddr: vaddr & !(PAGE_SIZE - 1),
                 page_paddr: 0,
-                size: PAGE_SIZE as usize,
+                size: PAGE_SIZE,
                 paddr: 0,
                 flags: 0,
                 valid: false,
@@ -403,9 +403,9 @@ impl PhysMap {
 
         let pte: PTE = self.walk(vaddr);
 
-        let size = (PAGE_SIZE as usize) << (Arch::BITS_PER_LEVEL * pte.level as u32);
+        let size =PAGE_SIZE<< (Arch::BITS_PER_LEVEL * pte.level as u32);
         let page_vaddr = vaddr & !(size - 1);
-        let page_paddr = pte.ppn * PAGE_SIZE as usize;
+        let page_paddr = pte.ppn * PAGE_SIZE;
         let offset = vaddr - page_vaddr;
         Virt2Phys {
             page_vaddr,
@@ -437,7 +437,7 @@ impl PhysMap {
                     Self::cleanup_pte(pte);
                 } else {
                     assert!(level > 0, "Non-leaf PTE at page table root");
-                    Self::drop_impl(pte.ppn * PAGE_SIZE as usize, 0..PTE_PER_PAGE, level - 1);
+                    Self::drop_impl(pte.ppn * PAGE_SIZE, 0..PTE_PER_PAGE, level - 1);
                 }
             }
             pmm::page_free(pagetable, 0);
@@ -654,12 +654,12 @@ pub fn canon_half_pages() -> usize {
 
 /// Get the size of a "half" of the canonical ranges.
 pub fn canon_half_size() -> usize {
-    (PAGE_SIZE as usize) << (Arch::BITS_PER_LEVEL * unsafe { PAGING_LEVELS } - 1)
+   PAGE_SIZE<< (Arch::BITS_PER_LEVEL * unsafe { PAGING_LEVELS } - 1)
 }
 
 /// Get the start of the higher half.
 pub fn higher_half_page() -> usize {
-    higher_half_vaddr() / PAGE_SIZE as usize
+    higher_half_vaddr() / PAGE_SIZE
 }
 
 /// Get the start of the higher half.

@@ -21,7 +21,6 @@ use crate::{
         },
         usermode::{ArchUsermode, KernelRegs},
     },
-    config::{self, STACK_SIZE},
     error::EResult,
     impl_has_list_node,
     kcore::{
@@ -50,6 +49,13 @@ use crate::{
 };
 
 mod rr;
+
+pub const TICKS_PER_SEC: u32 = 200;
+pub const LOAD_MEASURE_WINDOW: usize = 256;
+pub const STACK_SIZE: usize = cfg_select! {
+    debug_assertions => {262144}
+    _ => {65536}
+};
 
 /// Thread queue(s) and scheduling algorithm.
 trait SchedAlgorithm {
@@ -370,7 +376,7 @@ pub struct Scheduler {
     /// Last microsecond timestamp at which time usage was accounted.
     last_account_us: u64,
     /// Bit-set used as a ringbuffer to measure load average.
-    active_set: BitSet<{ config::LOAD_MEASURE_WINDOW as usize }>,
+    active_set: BitSet<LOAD_MEASURE_WINDOW>,
     /// Which bit within `active_ticks` is written next.
     active_next: u32,
     /// Atomically-updated sum of active ticks within the last LOAD_MEASURE_WINDOW ticks.
@@ -533,7 +539,7 @@ impl Scheduler {
             });
             next.flags.fetch_or(tflags::RUNNING, Ordering::Relaxed);
 
-            self.preempt_ticks = (config::TICKS_PER_SEC as u32).div_ceil(100);
+            self.preempt_ticks = TICKS_PER_SEC.div_ceil(100);
 
             // Switch to next page table.
             let runtime = next.runtime();
@@ -584,7 +590,7 @@ impl Scheduler {
         let now_active = self.idle.is_none();
         let delta = now_active as u32 - was_active as u32; // TODO: Probably wrong.
         self.load_average.fetch_add(delta, Ordering::Relaxed);
-        self.active_next = (self.active_next + 1) % config::LOAD_MEASURE_WINDOW as u32;
+        self.active_next = (self.active_next + 1) % LOAD_MEASURE_WINDOW as u32;
 
         if self.preempt_ticks > 0 {
             self.preempt_ticks -= 1;

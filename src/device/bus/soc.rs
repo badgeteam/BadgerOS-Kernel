@@ -16,7 +16,7 @@ use dtb::DtbNode;
 use crate::{
     LogLevel,
     error::{EResult, Errno},
-    config::PAGE_SIZE,
+    arch::mmu::PAGE_SIZE,
     device::{Device, bus::Bus, class::irqctl::IrqCtlDevice},
     mem::{
         pmm::PAddrr,
@@ -366,8 +366,8 @@ impl MmioMapping {
     /// It would be unsafe to dereference the output [`Self::vaddr`] if the caller does not guarantee that the memory still exists.
     /// Therefor, this type should not be used directly for e.g. hot-swappable memory or devices.
     pub fn new(paddr: usize, size: usize, io: bool, nc: bool) -> EResult<Self> {
-        let phys_page_start = paddr - paddr % PAGE_SIZE as usize;
-        let phys_page_end = (paddr + size).div_ceil(PAGE_SIZE as usize) * PAGE_SIZE as usize;
+        let phys_page_start = paddr - paddr % PAGE_SIZE;
+        let phys_page_end = (paddr + size).div_ceil(PAGE_SIZE) * PAGE_SIZE;
         // SAFETY: See function documentation.
         let page_start = unsafe {
             kernel_mm().map(
@@ -399,8 +399,8 @@ impl MmioMapping {
 
 impl Drop for MmioMapping {
     fn drop(&mut self) {
-        let page_start = self.vaddr - self.vaddr % PAGE_SIZE as usize;
-        let page_end = (self.vaddr + self.size).div_ceil(PAGE_SIZE as usize) * PAGE_SIZE as usize;
+        let page_start = self.vaddr - self.vaddr % PAGE_SIZE;
+        let page_end = (self.vaddr + self.size).div_ceil(PAGE_SIZE) * PAGE_SIZE;
         // SAFETY: This mapping is made by a private constructor.
         unsafe {
             if let Err(x) = kernel_mm().unmap(page_start..page_end) {

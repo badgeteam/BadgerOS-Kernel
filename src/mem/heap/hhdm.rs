@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 use alloc::alloc::{AllocError, Allocator};
 
 use crate::{
-    config::PAGE_SIZE,
+    arch::mmu::PAGE_SIZE,
     mem::{pmm, vmm},
 };
 
@@ -17,7 +17,7 @@ unsafe impl Allocator for HhdmAlloc {
             pmm::page_alloc(order, pmm::PageUsage::KernelAnon).map(|paddr| {
                 NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(
                     (paddr + vmm::HHDM_OFFSET) as _,
-                    (PAGE_SIZE as usize) << order,
+                   PAGE_SIZE<< order,
                 ))
             })
         }

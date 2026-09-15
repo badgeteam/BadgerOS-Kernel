@@ -5,8 +5,8 @@
 use core::usize;
 
 use crate::{
+    arch::mmu::PAGE_SIZE,
     error::{EResult, Errno},
-    config::PAGE_SIZE,
     mem::{
         pmm::PAddrr,
         vmm::{self, kernel_mm},
@@ -114,7 +114,7 @@ unsafe impl DmaTarget for DmaFillZero {
         max_entry_size: usize,
         sink: &mut dyn FnMut(ScatterGatherEntry) -> EResult<()>,
     ) -> EResult<()> {
-        let max_entry_size = max_entry_size.min(PAGE_SIZE as usize);
+        let max_entry_size = max_entry_size.min(PAGE_SIZE);
         let vaddr = vmm::zeroes().as_ptr() as usize;
         let paddr = vmm::zeroes_paddr();
 

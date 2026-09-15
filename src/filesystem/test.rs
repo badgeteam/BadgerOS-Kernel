@@ -5,8 +5,8 @@
 use alloc::vec::Vec;
 
 use crate::{
+    arch::mmu::PAGE_SIZE,
     arch::{Arch, except::ArchExcept},
-    config::PAGE_SIZE,
     error::Errno,
     filesystem::{oflags, open, unlink},
     mem::vmm::{
@@ -153,8 +153,8 @@ rootfs_ktest! { FILE_MAP_SUBBLOCK,
 rootfs_ktest! { FILE_MAP_DENYWRITE,
     // Make a file and make it two pages long.
     let fd = open(None, b"/denywrite.bin", oflags::CREATE | oflags::READ_WRITE | oflags::TRUNCATE)?;
-    ktest_expect!(fd.writek(zeroes())?, PAGE_SIZE as usize);
-    ktest_expect!(fd.writek(zeroes())?, PAGE_SIZE as usize);
+    ktest_expect!(fd.writek(zeroes())?, PAGE_SIZE);
+    ktest_expect!(fd.writek(zeroes())?, PAGE_SIZE);
     let stat = fd.stat()?;
     ktest_expect!(stat.size, 2 * PAGE_SIZE as u64);
 
@@ -240,8 +240,8 @@ rootfs_ktest! { FILE_MAP_DENYWRITE,
 rootfs_ktest! { FILE_MAP_RESIZE,
     // Make a file and make it two pages long.
     let fd = open(None, b"/resizetest.bin", oflags::CREATE | oflags::READ_WRITE | oflags::TRUNCATE)?;
-    ktest_expect!(fd.writek(zeroes())?, PAGE_SIZE as usize);
-    ktest_expect!(fd.writek(zeroes())?, PAGE_SIZE as usize);
+    ktest_expect!(fd.writek(zeroes())?, PAGE_SIZE);
+    ktest_expect!(fd.writek(zeroes())?, PAGE_SIZE);
     let stat = fd.stat()?;
     ktest_expect!(stat.size, 2 * PAGE_SIZE as u64);
 
@@ -263,12 +263,12 @@ rootfs_ktest! { FILE_MAP_RESIZE,
 
         // Before resize: both pages accessible.
         Arch::fallible_store_u8(ptr, 1)?;
-        Arch::fallible_store_u8(ptr.add(PAGE_SIZE as usize), 2)?;
+        Arch::fallible_store_u8(ptr.add(PAGE_SIZE), 2)?;
 
         // After resize: second page no longer accessible.
         fd.resize(PAGE_SIZE as u64)?;
         Arch::fallible_store_u8(ptr, 1)?;
-        ktest_assert!(Arch::fallible_store_u8(ptr.add(PAGE_SIZE as usize), 2).is_err());
+        ktest_assert!(Arch::fallible_store_u8(ptr.add(PAGE_SIZE), 2).is_err());
 
         // Fractional page size: first page still accessible, OOB data zeroed.
         Arch::fallible_store_u8(ptr.add(42), 9)?;
@@ -278,13 +278,13 @@ rootfs_ktest! { FILE_MAP_RESIZE,
         // Complete truncation: no access at all.
         fd.resize(0)?;
         ktest_assert!(Arch::fallible_store_u8(ptr, 1).is_err());
-        ktest_assert!(Arch::fallible_store_u8(ptr.add(PAGE_SIZE as usize), 2).is_err());
+        ktest_assert!(Arch::fallible_store_u8(ptr.add(PAGE_SIZE), 2).is_err());
 
         // Make it bigger again: data still zeroes but pages accessible again.
         fd.resize(2*PAGE_SIZE as u64)?;
         ktest_expect!(Arch::fallible_load_u8(ptr)?, 0);
         ktest_expect!(Arch::fallible_load_u8(ptr.add(42))?, 0);
-        ktest_expect!(Arch::fallible_load_u8(ptr.add(PAGE_SIZE as usize))?, 0);
+        ktest_expect!(Arch::fallible_load_u8(ptr.add(PAGE_SIZE))?, 0);
 
         // Clean up by unmapping.
         kernel_mm().unmap(vaddr..vaddr + stat.size as usize)?;

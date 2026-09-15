@@ -5,8 +5,8 @@ use crate::{
         kcore::timer::ArchTimer,
         riscv64::{Riscv, csr, sbi},
     },
+    kcore,
     util::log::LogLevel,
-    config,
 };
 
 /// Whether the new SBI timer extension is in use.
@@ -82,7 +82,7 @@ fn init_common() {
     unsafe {
         SUPPORTS_SBI_TIME = sbi_time;
         BASE_TICK = base_tick;
-        TICK_INTERVAL = TICKS_PER_SEC / config::TICKS_PER_SEC as u64;
+        TICK_INTERVAL = TICKS_PER_SEC / kcore::sched::TICKS_PER_SEC as u64;
         MICROS_PER_TICK = (1_000_000 << 32) / TICKS_PER_SEC as u64;
         NANOS_PER_TICK = (1_000_000_000 << 32) / TICKS_PER_SEC as u64;
     }

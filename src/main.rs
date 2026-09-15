@@ -54,7 +54,6 @@ pub mod util;
 
 pub mod arch;
 pub mod boot;
-pub mod config;
 pub mod device;
 pub mod driver;
 pub mod error;

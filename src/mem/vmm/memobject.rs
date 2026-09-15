@@ -6,7 +6,7 @@ use core::{fmt::Debug, num::NonZeroUsize, sync::atomic::Ordering};
 
 use crate::{
 LogLevel, error::{EResult, Errno},
-    config::PAGE_SIZE,
+    arch::mmu::PAGE_SIZE,
     mem::pmm::{self, PAddrr},
 };
 
@@ -24,7 +24,7 @@ impl MappablePage {
 
     pub unsafe fn new(paddr: usize, refcounted: bool, writable: bool, tracks_dirty: bool) -> Self {
         // We allow `paddr == 0` because despite it often being a bug, some platforms, especially x86, require it.
-        assert!(paddr % PAGE_SIZE as usize == 0);
+        assert!(paddr % PAGE_SIZE == 0);
         // SAFETY: Already checked for zero with the assert above.
         Self(unsafe {
             NonZeroUsize::new_unchecked(
@@ -44,7 +44,7 @@ impl MappablePage {
     }
 
     pub const fn paddr(&self) -> PAddrr {
-        self.0.get() & (PAGE_SIZE as usize).wrapping_neg()
+        self.0.get() & (PAGE_SIZE).wrapping_neg()
     }
 
     pub const fn writable(&self) -> bool {
@@ -61,7 +61,7 @@ impl MappablePage {
 
     pub const fn into_paddr(self) -> PAddrr {
         // SAFETY: Transparent representation allows transmutation into inner type.
-        (unsafe { core::mem::transmute::<_, usize>(self) }) & (PAGE_SIZE as usize).wrapping_neg()
+        (unsafe { core::mem::transmute::<_, usize>(self) }) & (PAGE_SIZE).wrapping_neg()
     }
 }
 
@@ -75,7 +75,7 @@ impl Drop for MappablePage {
                     logkf!(
                         LogLevel::Warning,
                         "Refcount underflow for physical page at 0x{:x}",
-                        self.paddr() * PAGE_SIZE as usize
+                        self.paddr() * PAGE_SIZE
                     );
                 }
             }

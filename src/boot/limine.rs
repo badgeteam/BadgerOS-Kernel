@@ -7,7 +7,7 @@ use core::sync::atomic::Ordering;
 use limine::{BaseRevision, RequestsEndMarker, RequestsStartMarker, memmap, request::*};
 
 use crate::{
-    config::PAGE_SIZE,
+    arch::mmu::PAGE_SIZE,
     mem::{
         pmm::{self, PAddrr},
         vmm,
@@ -154,7 +154,7 @@ pub unsafe fn early_init() {
             continue;
         }
         unsafe {
-            let pages = entry.length as usize / PAGE_SIZE as usize;
+            let pages = entry.length as usize / PAGE_SIZE;
             match entry.type_ {
                 MEMMAP_USABLE => {
                     pmm::mark_free(entry.base as PAddrr..(entry.base + entry.length) as PAddrr);

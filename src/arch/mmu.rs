@@ -1,6 +1,10 @@
 use crate::mem::{pmm::PAddrr, vmm::physmap::PTE};
 
+use super::Arch;
+
 pub trait ArchMMU {
+    /// Size of one MMU page in bytes.
+    const PAGE_SIZE: usize = 4096;
     /// Virtual-address bits per page table level.
     const BITS_PER_LEVEL: u32;
     /// Value of invalid PTEs in page tables.
@@ -32,3 +36,5 @@ pub trait ArchMMU {
     /// Local TLB invalidation.
     fn vmem_fence(vaddr: Option<usize>, asid: Option<u32>);
 }
+
+pub const PAGE_SIZE: usize = <Arch as ArchMMU>::PAGE_SIZE;
