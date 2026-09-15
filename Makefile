@@ -3,15 +3,17 @@
 
 all: build
 
-ARCH      ?= riscv64
-MAKEFLAGS += --silent
-SHELL     := /usr/bin/env bash
-OUTPUT     = output/$(ARCH)
+ARCH         ?= riscv64
+MAKEFLAGS    += --silent
+SHELL        := /usr/bin/env bash
+BUILD_DIR    ?= target
+ARTIFACT_DIR ?= output/$(ARCH)
 
 .PHONY: build
 build:
-	cargo -Z unstable-options build \
-		--artifact-dir=$(OUTPUT) \
+	cargo -Z unstable-options build -vv \
+		--target-dir=$(BUILD_DIR) \
+		--artifact-dir=$(ARTIFACT_DIR) \
 		--target=misc/rust_target/$(ARCH)-kernel.json \
 		--features=dtb,acpi,ktest
 
