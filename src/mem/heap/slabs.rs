@@ -3,7 +3,11 @@ use core::{
     ptr::{NonNull, null_mut},
 };
 
-use alloc::alloc::{AllocError, Allocator};
+use alloc::{
+    alloc::{AllocError, Allocator},
+    boxed::Box,
+    vec::Vec,
+};
 
 use crate::{
     config::PAGE_SIZE,
@@ -15,8 +19,8 @@ use crate::{
 
 pub const SMALLEST: usize = 8;
 pub const SIZE_MUL: usize = 2;
-pub const SIZES: usize = 8;
-pub const LARGEST: usize = SMALLEST * SIZE_MUL.pow(SIZES as u32);
+pub const SIZES: usize = 9;
+pub const LARGEST: usize = SMALLEST * SIZE_MUL.pow(SIZES as u32 - 1);
 pub const BUDDY_ORDER: u8 = 2;
 pub const BLOCK_SIZE: usize = (PAGE_SIZE as usize) << BUDDY_ORDER;
 
@@ -43,7 +47,8 @@ impl_has_list_node!(SlabBlock, header.node);
 impl SlabBlock {
     fn new(slab_size: usize) -> Result<NonNull<Self>, AllocError> {
         unsafe {
-            let mem = pmm::page_alloc(BUDDY_ORDER, pmm::PageUsage::KernelSlab)? as *mut Self;
+            let mem = (pmm::page_alloc(BUDDY_ORDER, pmm::PageUsage::KernelSlab)? + vmm::HHDM_OFFSET)
+                as *mut Self;
             mem.write(Self {
                 header: SlabBlockHeader {
                     node: InvasiveListNode::new(),
@@ -70,7 +75,7 @@ impl SlabBlock {
         self.header.occupancy = 0;
         self.header.list_head = ptr;
 
-        for _ in overhead..self.header.capacity {
+        for _ in 0..self.header.capacity {
             let next = ptr.wrapping_byte_add(slab_size);
             unsafe { (*ptr).next = next };
             ptr = next;
@@ -118,13 +123,20 @@ impl SlabPool {
                 // Check partial blocks first.
                 let res = (*block)
                     .alloc(slab_size)
-                    .expect("Empty block in partial list");
+                    .expect("Full block in partial list");
 
                 if (*block).header.occupancy == (*block).header.capacity {
                     self.partial.remove(block);
                     let _ = self.full.push_back(block);
                 }
 
+                Ok(res)
+            } else if let Some(block) = self.empty {
+                self.empty = None;
+                let res = (*block)
+                    .alloc(slab_size)
+                    .expect("Full block in empty cache");
+                let _ = self.partial.push_back(block);
                 Ok(res)
             } else {
                 // If the partial list is empty, create a new block.
@@ -141,7 +153,7 @@ impl SlabPool {
     unsafe fn free(&mut self, ptr: NonNull<u8>) {
         unsafe {
             // The blocks are naturally aligned; we can find the address by simply masking the bottom bits off.
-            let block = (ptr.as_ptr() as usize & !BLOCK_SIZE) as *mut SlabBlock;
+            let block = (ptr.as_ptr() as usize & !(BLOCK_SIZE - 1)) as *mut SlabBlock;
             let was_full = (*block).header.occupancy == (*block).header.capacity;
             (*block).free(ptr);
 
@@ -184,6 +196,7 @@ impl SlabsAlloc {
             return None;
         }
         let slab_size = SMALLEST * SIZE_MUL.pow(log_size_mul);
+        debug_assert!(slab_size >= layout.size());
         Some((log_size_mul as usize, slab_size))
     }
 }
@@ -202,3 +215,37 @@ unsafe impl Allocator for SlabsAlloc {
 }
 
 pub static GLOBAL_SLABS: SlabsAlloc = SlabsAlloc::new();
+
+pmm_ktest! { SLABS_BASIC,
+    let a0 = Box::try_new_in([0u8; 1], &GLOBAL_SLABS)?;
+    let a1 = Box::try_new_in([0u8; 8], &GLOBAL_SLABS)?;
+    let a2 = Box::try_new_in([0u8; 16], &GLOBAL_SLABS)?;
+    let a3 = Box::try_new_in([0u8; 32], &GLOBAL_SLABS)?;
+    let a4 = Box::try_new_in([0u8; 64], &GLOBAL_SLABS)?;
+    let a5 = Box::try_new_in([0u8; LARGEST], &GLOBAL_SLABS)?;
+    drop(a0);
+    drop(a1);
+    drop(a2);
+    drop(a3);
+    drop(a4);
+    drop(a5);
+}
+
+pmm_ktest! { SLABS_EXHAUST,
+    unsafe {
+        let block = SlabBlock::new(SMALLEST)?.as_ptr();
+        let mut resv = Vec::<NonNull<u8>, _>::new_in(super::hhdm::HhdmAlloc);
+
+        let cap = (*block).header.capacity;
+        for _ in 0..cap {
+            resv.push((*block).alloc(SMALLEST)?.cast());
+        }
+        ktest_expect!((*block).header.occupancy, cap);
+        for alloc in resv {
+            (*block).free(alloc);
+        }
+        ktest_expect!((*block).header.occupancy, 0);
+
+        pmm::page_free(block as usize - vmm::HHDM_OFFSET, BUDDY_ORDER);
+    }
+}

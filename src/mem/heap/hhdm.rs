@@ -25,7 +25,7 @@ unsafe impl Allocator for HhdmAlloc {
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: core::alloc::Layout) {
         let order = pmm::size_to_order(layout.pad_to_align().size());
         unsafe {
-            pmm::page_free(ptr.addr().get(), order);
+            pmm::page_free(ptr.addr().get() - vmm::HHDM_OFFSET, order);
         }
     }
 }

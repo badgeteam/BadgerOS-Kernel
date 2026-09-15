@@ -18,9 +18,9 @@ unsafe impl GlobalAlloc for Heap {
         let layout = layout.pad_to_align();
 
         let res = if layout.size() <= slabs::LARGEST {
-            hhdm::HhdmAlloc.allocate(layout)
-        } else {
             slabs::GLOBAL_SLABS.allocate(layout)
+        } else {
+            hhdm::HhdmAlloc.allocate(layout)
         };
 
         match res {
@@ -34,9 +34,9 @@ unsafe impl GlobalAlloc for Heap {
             let ptr = NonNull::new_unchecked(ptr);
 
             if layout.size() <= slabs::LARGEST {
-                hhdm::HhdmAlloc.deallocate(ptr, layout);
-            } else {
                 slabs::GLOBAL_SLABS.deallocate(ptr, layout);
+            } else {
+                hhdm::HhdmAlloc.deallocate(ptr, layout);
             };
         }
     }
