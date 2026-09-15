@@ -25,50 +25,50 @@ macro_rules! dlist_debug_assert {
 macro_rules! impl_has_list_node {
     ($Type: ty, $($field: tt)+) => {
         impl crate::util::list::HasListNode<$Type> for $Type {
-            unsafe fn from_node(node: *mut crate::util::list::InvasiveListNode) -> *mut $Type {
+            unsafe fn from_node(node: *mut crate::util::list::IntrusiveListNode) -> *mut $Type {
                 unsafe { node.byte_sub(core::mem::offset_of!($Type, $($field)+)) as *mut $Type }
             }
 
-            fn list_node(&self) -> &crate::util::list::InvasiveListNode {
+            fn list_node(&self) -> &crate::util::list::IntrusiveListNode {
                 &self.$($field)+
             }
 
-            fn list_node_mut(&mut self) -> &mut crate::util::list::InvasiveListNode {
+            fn list_node_mut(&mut self) -> &mut crate::util::list::IntrusiveListNode {
                 &mut self.$($field)+
             }
         }
     };
 }
 
-/// Trait for types that can be stored in an [`InvasiveList`].
+/// Trait for types that can be stored in an [`IntrusiveList`].
 pub trait HasListNode<T: HasListNode<T>> {
-    unsafe fn from_node(node: *mut InvasiveListNode) -> *mut T;
-    fn list_node(&self) -> &InvasiveListNode;
-    fn list_node_mut(&mut self) -> &mut InvasiveListNode;
+    unsafe fn from_node(node: *mut IntrusiveListNode) -> *mut T;
+    fn list_node(&self) -> &IntrusiveListNode;
+    fn list_node_mut(&mut self) -> &mut IntrusiveListNode;
 }
 
-impl HasListNode<InvasiveListNode> for InvasiveListNode {
-    unsafe fn from_node(node: *mut InvasiveListNode) -> *mut InvasiveListNode {
+impl HasListNode<IntrusiveListNode> for IntrusiveListNode {
+    unsafe fn from_node(node: *mut IntrusiveListNode) -> *mut IntrusiveListNode {
         node
     }
 
-    fn list_node(&self) -> &InvasiveListNode {
+    fn list_node(&self) -> &IntrusiveListNode {
         self
     }
 
-    fn list_node_mut(&mut self) -> &mut InvasiveListNode {
+    fn list_node_mut(&mut self) -> &mut IntrusiveListNode {
         self
     }
 }
 
-/// Linked-list node for the [`InvasiveList`].
+/// Linked-list node for the [`IntrusiveList`].
 #[repr(C)]
-pub struct InvasiveListNode {
-    prev: *mut InvasiveListNode,
-    next: *mut InvasiveListNode,
+pub struct IntrusiveListNode {
+    prev: *mut IntrusiveListNode,
+    next: *mut IntrusiveListNode,
 }
 
-impl InvasiveListNode {
+impl IntrusiveListNode {
     pub const fn new() -> Self {
         Self {
             prev: null_mut(),
@@ -82,12 +82,12 @@ impl InvasiveListNode {
 }
 
 /// Invasive linked list iterator.
-pub struct InvasiveListIter<'a, T: HasListNode<T>> {
-    cur: *mut InvasiveListNode,
-    marker: PhantomData<&'a InvasiveList<T>>,
+pub struct IntrusiveListIter<'a, T: HasListNode<T>> {
+    cur: *mut IntrusiveListNode,
+    marker: PhantomData<&'a IntrusiveList<T>>,
 }
 
-impl<'a, T: HasListNode<T>> Iterator for InvasiveListIter<'a, T> {
+impl<'a, T: HasListNode<T>> Iterator for IntrusiveListIter<'a, T> {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<&'a T> {
@@ -104,14 +104,14 @@ impl<'a, T: HasListNode<T>> Iterator for InvasiveListIter<'a, T> {
 
 /// Invasive linked list.
 #[repr(C)]
-pub struct InvasiveList<T: HasListNode<T>> {
-    first: *mut InvasiveListNode,
-    last: *mut InvasiveListNode,
+pub struct IntrusiveList<T: HasListNode<T>> {
+    first: *mut IntrusiveListNode,
+    last: *mut IntrusiveListNode,
     len: usize,
     marker: PhantomData<*mut T>,
 }
 
-impl<T: HasListNode<T>> Default for InvasiveList<T> {
+impl<T: HasListNode<T>> Default for IntrusiveList<T> {
     fn default() -> Self {
         Self {
             first: null_mut(),
@@ -122,7 +122,7 @@ impl<T: HasListNode<T>> Default for InvasiveList<T> {
     }
 }
 
-impl<T: HasListNode<T>> InvasiveList<T> {
+impl<T: HasListNode<T>> IntrusiveList<T> {
     pub const fn new() -> Self {
         Self {
             first: null_mut(),
@@ -143,13 +143,13 @@ impl<T: HasListNode<T>> InvasiveList<T> {
             let mut prev = 1 as _;
             let mut cur = self.first;
             while cur > 1 as _ {
-                dlist_debug_assert!((*cur).prev == prev, "InvasiveList has broken prev link");
+                dlist_debug_assert!((*cur).prev == prev, "IntrusiveList has broken prev link");
                 prev = cur;
                 cur = (*cur).next;
                 len += 1;
-                dlist_debug_assert!(len <= self.len, "InvasiveList has too many elements");
+                dlist_debug_assert!(len <= self.len, "IntrusiveList has too many elements");
             }
-            dlist_debug_assert!(len == self.len, "InvasiveList has too few elements");
+            dlist_debug_assert!(len == self.len, "IntrusiveList has too few elements");
         }
     }
 
@@ -191,7 +191,7 @@ impl<T: HasListNode<T>> InvasiveList<T> {
                 self.first = null_mut();
                 self.last = null_mut();
             }
-            *node = InvasiveListNode::new();
+            *node = IntrusiveListNode::new();
         }
 
         self.len -= 1;
@@ -245,7 +245,7 @@ impl<T: HasListNode<T>> InvasiveList<T> {
                 self.first = null_mut();
                 self.last = null_mut();
             }
-            *node = InvasiveListNode::new();
+            *node = IntrusiveListNode::new();
         }
 
         self.len -= 1;
@@ -385,49 +385,49 @@ impl<T: HasListNode<T>> InvasiveList<T> {
             }
         }
 
-        *node = InvasiveListNode::new();
+        *node = IntrusiveListNode::new();
         self.len -= 1;
 
         dlist_debug_assert!(!self.contains(item));
         self.consistency_check();
     }
 
-    pub unsafe fn iter<'a>(&'a self) -> InvasiveListIter<'a, T> {
-        InvasiveListIter {
+    pub unsafe fn iter<'a>(&'a self) -> IntrusiveListIter<'a, T> {
+        IntrusiveListIter {
             cur: self.first,
             marker: PhantomData,
         }
     }
 }
 
-impl<T: HasListNode<T>> Drop for InvasiveList<T> {
+impl<T: HasListNode<T>> Drop for IntrusiveList<T> {
     fn drop(&mut self) {
         self.clear()
     }
 }
 
-pub trait InvasiveListAlloc: Allocator + Copy {}
-impl<T> InvasiveListAlloc for T where T: Allocator + Copy {}
+pub trait IntrusiveListAlloc: Allocator + Copy {}
+impl<T> IntrusiveListAlloc for T where T: Allocator + Copy {}
 
 /// Invasive linked list for things stored in an [`Arc`].
-pub struct ArcInvasiveList<T: HasListNode<T>, A: InvasiveListAlloc = Global> {
-    pub inner: InvasiveList<T>,
+pub struct ArcIntrusiveList<T: HasListNode<T>, A: IntrusiveListAlloc = Global> {
+    pub inner: IntrusiveList<T>,
     alloc: A,
 }
 
-impl<T: HasListNode<T>> ArcInvasiveList<T, Global> {
+impl<T: HasListNode<T>> ArcIntrusiveList<T, Global> {
     pub const fn new() -> Self {
         Self {
-            inner: InvasiveList::new(),
+            inner: IntrusiveList::new(),
             alloc: Global,
         }
     }
 }
 
-impl<T: HasListNode<T>, A: InvasiveListAlloc> ArcInvasiveList<T, A> {
+impl<T: HasListNode<T>, A: IntrusiveListAlloc> ArcIntrusiveList<T, A> {
     pub const fn new_in(alloc: A) -> Self {
         Self {
-            inner: InvasiveList::new(),
+            inner: IntrusiveList::new(),
             alloc,
         }
     }
@@ -497,36 +497,36 @@ impl<T: HasListNode<T>, A: InvasiveListAlloc> ArcInvasiveList<T, A> {
         self.inner.contains(thing)
     }
 
-    pub fn iter<'a>(&'a self) -> InvasiveListIter<'a, T> {
+    pub fn iter<'a>(&'a self) -> IntrusiveListIter<'a, T> {
         unsafe { self.inner.iter() }
     }
 }
 
-impl<T: HasListNode<T>, A: InvasiveListAlloc> Drop for ArcInvasiveList<T, A> {
+impl<T: HasListNode<T>, A: IntrusiveListAlloc> Drop for ArcIntrusiveList<T, A> {
     fn drop(&mut self) {
         self.clear()
     }
 }
 
 /// Invasive linked list for things stored in an [`Arc`].
-pub struct BoxInvasiveList<T: HasListNode<T>, A: InvasiveListAlloc = Global> {
-    pub inner: InvasiveList<T>,
+pub struct BoxIntrusiveList<T: HasListNode<T>, A: IntrusiveListAlloc = Global> {
+    pub inner: IntrusiveList<T>,
     alloc: A,
 }
 
-impl<T: HasListNode<T>> BoxInvasiveList<T, Global> {
+impl<T: HasListNode<T>> BoxIntrusiveList<T, Global> {
     pub const fn new() -> Self {
         Self {
-            inner: InvasiveList::new(),
+            inner: IntrusiveList::new(),
             alloc: Global,
         }
     }
 }
 
-impl<T: HasListNode<T>, A: InvasiveListAlloc> BoxInvasiveList<T, A> {
+impl<T: HasListNode<T>, A: IntrusiveListAlloc> BoxIntrusiveList<T, A> {
     pub const fn new_in(alloc: A) -> Self {
         Self {
-            inner: InvasiveList::new(),
+            inner: IntrusiveList::new(),
             alloc,
         }
     }
@@ -600,12 +600,12 @@ impl<T: HasListNode<T>, A: InvasiveListAlloc> BoxInvasiveList<T, A> {
         self.inner.contains(thing)
     }
 
-    pub fn iter<'a>(&'a self) -> InvasiveListIter<'a, T> {
+    pub fn iter<'a>(&'a self) -> IntrusiveListIter<'a, T> {
         unsafe { self.inner.iter() }
     }
 }
 
-impl<T: HasListNode<T>, A: InvasiveListAlloc> Drop for BoxInvasiveList<T, A> {
+impl<T: HasListNode<T>, A: IntrusiveListAlloc> Drop for BoxIntrusiveList<T, A> {
     fn drop(&mut self) {
         self.clear()
     }

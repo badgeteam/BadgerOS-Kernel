@@ -10,7 +10,7 @@ use crate::{
     config::PAGE_SIZE,
     impl_has_list_node,
     kcore::sync::mutex::Mutex,
-    util::list::{BoxInvasiveList, InvasiveListNode},
+    util::list::{BoxIntrusiveList, IntrusiveListNode},
 };
 
 use super::hhdm::HhdmAlloc;
@@ -29,7 +29,7 @@ struct SlabLink {
 
 #[repr(C)]
 struct SlabBlockHeader {
-    node: InvasiveListNode,
+    node: IntrusiveListNode,
     occupancy: usize,
     capacity: usize,
     list_head: *mut SlabLink,
@@ -53,7 +53,7 @@ impl SlabBlock {
     }
 
     fn init(&mut self, slab_size: usize) {
-        self.header.node = InvasiveListNode::new();
+        self.header.node = IntrusiveListNode::new();
 
         assert!(slab_size >= size_of::<*mut u8>());
         assert!(slab_size.is_power_of_two());
@@ -93,16 +93,16 @@ impl SlabBlock {
 
 pub struct SlabPool {
     empty: Option<Box<SlabBlock, HhdmAlloc>>,
-    partial: BoxInvasiveList<SlabBlock, HhdmAlloc>,
-    full: BoxInvasiveList<SlabBlock, HhdmAlloc>,
+    partial: BoxIntrusiveList<SlabBlock, HhdmAlloc>,
+    full: BoxIntrusiveList<SlabBlock, HhdmAlloc>,
 }
 
 impl SlabPool {
     const fn new() -> Self {
         Self {
             empty: None,
-            partial: BoxInvasiveList::new_in(HhdmAlloc),
-            full: BoxInvasiveList::new_in(HhdmAlloc),
+            partial: BoxIntrusiveList::new_in(HhdmAlloc),
+            full: BoxIntrusiveList::new_in(HhdmAlloc),
         }
     }
 

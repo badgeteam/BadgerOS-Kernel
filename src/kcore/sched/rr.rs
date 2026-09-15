@@ -6,20 +6,20 @@ use alloc::sync::Arc;
 
 use crate::{
     kcore::sched::{SchedAlgorithm, Thread},
-    util::list::ArcInvasiveList,
+    util::list::ArcIntrusiveList,
 };
 
 use super::*;
 
 /// A simple round-robin scheduler.
 pub struct RoundRobinAlgorithm {
-    queue: ArcInvasiveList<Thread>,
+    queue: ArcIntrusiveList<Thread>,
 }
 
 impl RoundRobinAlgorithm {
     pub const fn new() -> Self {
         Self {
-            queue: ArcInvasiveList::new(),
+            queue: ArcIntrusiveList::new(),
         }
     }
 }

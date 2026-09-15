@@ -12,7 +12,7 @@ use crate::{
     impl_has_list_node,
     kcore::sched::{Thread, tflags, thread_yield},
     util::irq::IrqGuard,
-    util::list::{InvasiveList, InvasiveListNode},
+    util::list::{IntrusiveListNode, IntrusiveList},
 };
 
 use super::spinlock::Spinlock;
@@ -20,7 +20,7 @@ use super::spinlock::Spinlock;
 /// Entry in the waitiling list.
 #[repr(C)]
 struct WaitingTicket {
-    node: InvasiveListNode,
+    node: IntrusiveListNode,
     thread: *const Thread,
 }
 impl_has_list_node!(WaitingTicket, node);
@@ -28,13 +28,13 @@ impl_has_list_node!(WaitingTicket, node);
 /// Helper struct used to construct types that block threads.
 #[repr(C)]
 pub struct Waitlist {
-    list: Spinlock<InvasiveList<WaitingTicket>>,
+    list: Spinlock<IntrusiveList<WaitingTicket>>,
 }
 
 impl Waitlist {
     pub const fn new() -> Self {
         Waitlist {
-            list: Spinlock::new(InvasiveList::new()),
+            list: Spinlock::new(IntrusiveList::new()),
         }
     }
 
@@ -67,7 +67,7 @@ impl Waitlist {
             current.flags.fetch_or(tflags::BLOCKED, Ordering::Relaxed);
 
             let mut ticket = WaitingTicket {
-                node: InvasiveListNode::new(),
+                node: IntrusiveListNode::new(),
                 thread: current,
             };
             let _ = self.list.lock().push_back(&raw mut ticket);
@@ -174,7 +174,7 @@ impl Waitlist {
 
         let mut tickets = Vec::try_with_capacity(lists.len())?;
         tickets.resize_with(lists.len(), || WaitingTicket {
-            node: InvasiveListNode::new(),
+            node: IntrusiveListNode::new(),
             thread: current,
         });
 
@@ -204,7 +204,7 @@ impl Waitlist {
 
         let mut tickets = Vec::try_with_capacity(lists.len())?;
         tickets.resize_with(lists.len(), || WaitingTicket {
-            node: InvasiveListNode::new(),
+            node: IntrusiveListNode::new(),
             thread: current,
         });
 

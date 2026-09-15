@@ -15,7 +15,7 @@ use crate::{
         pmm::{self, PAddrr},
         vmm::physmap::{PhysMap, Virt2Phys, higher_half_vaddr, is_canon_user_range},
     },
-    util::list::{InvasiveList, InvasiveListNode},
+    util::list::{IntrusiveList, IntrusiveListNode},
 };
 
 use super::{memobject::MemObject, physmap::canon_half_size, prot::WRITE, vmfence::VmFenceSet, *};
@@ -154,7 +154,7 @@ impl AnonMap {
 
 /// One contiguous range of mapped memory with the same protection and mapping flags.
 pub struct MapEntry {
-    node: InvasiveListNode,
+    node: IntrusiveListNode,
     /// Region start and end virtual addresses.
     range: Range<usize>,
     /// Mapping dynamic state.
@@ -315,7 +315,7 @@ pub struct VmSpaceInner {
     /// Doubly-linked list of contiguous ranges with identical map and protection flags.
     /// The map may be modified in an unrelated place while a given entry is locked,
     /// so we opted for the raw pointer variant.
-    map: Spinlock<InvasiveList<MapEntry>>,
+    map: Spinlock<IntrusiveList<MapEntry>>,
 }
 
 impl VmSpaceInner {
@@ -326,13 +326,13 @@ impl VmSpaceInner {
     pub(super) fn new(pmap: PhysMap) -> Self {
         Self {
             pmap,
-            map: Spinlock::new(InvasiveList::new()),
+            map: Spinlock::new(IntrusiveList::new()),
         }
     }
 
     /// Try to split the mappings so that they do not cross `threshold`.
     /// Used to implement the splitting logic used by the various manipulation functions.
-    fn split(threshold: usize, map: &mut InvasiveList<MapEntry>) -> EResult<()> {
+    fn split(threshold: usize, map: &mut IntrusiveList<MapEntry>) -> EResult<()> {
         unsafe {
             debug_assert!(threshold % PAGE_SIZE as usize == 0);
             let mut cur = map.front();
@@ -342,7 +342,7 @@ impl VmSpaceInner {
                     let (first, second) = guard.split(threshold - (*entry).range.start)?;
                     let new = Box::into_raw(Box::try_new(MapEntry {
                         range: threshold..(*entry).range.end,
-                        node: InvasiveListNode::new(),
+                        node: IntrusiveListNode::new(),
                         inner: Spinlock::new(second),
                     })?);
                     (*entry).range.end = threshold;
@@ -360,7 +360,7 @@ impl VmSpaceInner {
     unsafe fn remove_mappings(
         fences: &mut VmFenceSet,
         pmap: &PhysMap,
-        map: &mut InvasiveList<MapEntry>,
+        map: &mut IntrusiveList<MapEntry>,
         bounds: Range<usize>,
         vmspace: *const VmSpaceInner,
     ) {
@@ -400,7 +400,7 @@ impl VmSpaceInner {
     }
 
     /// Insert a new mapping.
-    unsafe fn insert_mapping(map: &mut InvasiveList<MapEntry>, insert: Box<MapEntry>) {
+    unsafe fn insert_mapping(map: &mut IntrusiveList<MapEntry>, insert: Box<MapEntry>) {
         unsafe {
             debug_assert!(insert.range.start % PAGE_SIZE as usize == 0);
             debug_assert!(insert.range.end % PAGE_SIZE as usize == 0);
@@ -433,7 +433,7 @@ impl VmSpaceInner {
     unsafe fn map_fixed(
         fences: &mut VmFenceSet,
         pmap: &PhysMap,
-        map: &mut InvasiveList<MapEntry>,
+        map: &mut IntrusiveList<MapEntry>,
         vmspace: *const VmSpaceInner,
         size: usize,
         addr: usize,
@@ -447,7 +447,7 @@ impl VmSpaceInner {
         Self::split(addr + size, map)?;
 
         let entry = Box::try_new(MapEntry {
-            node: InvasiveListNode::new(),
+            node: IntrusiveListNode::new(),
             range: addr..addr + size,
             inner: Spinlock::new(MapEntryInner {
                 prot_flags,
@@ -478,7 +478,7 @@ impl VmSpaceInner {
 
     /// Implementation of [`Self::map`] without the [`FIXED`] flag.
     unsafe fn map_dynamic(
-        map: &mut InvasiveList<MapEntry>,
+        map: &mut IntrusiveList<MapEntry>,
         vmspace: *const VmSpaceInner,
         size: usize,
         mut hint: usize,
@@ -530,7 +530,7 @@ impl VmSpaceInner {
         }
 
         let entry = Box::try_new(MapEntry {
-            node: InvasiveListNode::new(),
+            node: IntrusiveListNode::new(),
             range: hint..hint + size,
             inner: Spinlock::new(MapEntryInner {
                 prot_flags,
@@ -879,7 +879,7 @@ impl VmSpaceInner {
     pub fn fork(&self) -> EResult<Self> {
         let map = self.map.lock();
         let mut fences = VmFenceSet::new();
-        let mut new_map = InvasiveList::new();
+        let mut new_map = IntrusiveList::new();
 
         unsafe {
             for entry in map.iter() {
@@ -899,7 +899,7 @@ impl VmSpaceInner {
                 }
 
                 let new_entry = MapEntry {
-                    node: InvasiveListNode::new(),
+                    node: IntrusiveListNode::new(),
                     range: entry.range.clone(),
                     inner: Spinlock::new(new_inner),
                 };
@@ -921,7 +921,7 @@ impl VmSpaceInner {
     pub fn clear(&self) {
         unsafe {
             let mut map = self.map.lock();
-            let mut tmp = InvasiveList::new();
+            let mut tmp = IntrusiveList::new();
             core::mem::swap(&mut tmp, &mut map);
             let mut fences = VmFenceSet::new();
 

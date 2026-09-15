@@ -21,8 +21,8 @@ use crate::{
         },
         usermode::{ArchUsermode, KernelRegs},
     },
-    error::EResult,
     config::{self, STACK_SIZE},
+    error::EResult,
     impl_has_list_node,
     kcore::{
         smp,
@@ -45,7 +45,7 @@ use crate::{
     util::{
         bitset::BitSet,
         irq::IrqGuard,
-        list::{ArcInvasiveList, InvasiveListNode},
+        list::{ArcIntrusiveList, IntrusiveListNode},
     },
 };
 
@@ -156,7 +156,7 @@ pub mod tflags {
 
 /// Thread control block.
 pub struct Thread {
-    node: InvasiveListNode,
+    node: IntrusiveListNode,
     /// Flags about the blocking status, lifetime, etc.
     pub(super) flags: AtomicU32,
     /// Dynamic state only alive while the thread is runnable.
@@ -207,7 +207,7 @@ impl Thread {
     ) -> EResult<Arc<Self>> {
         let tcb = Arc::try_new(Thread {
             flags: AtomicU32::new(0),
-            node: InvasiveListNode::new(),
+            node: IntrusiveListNode::new(),
             runtime: UnsafeCell::new(Some(ThreadRuntime::new(code)?)),
             ktime: AtomicU64::new(0),
             utime: AtomicU64::new(0),
@@ -352,7 +352,7 @@ impl Thread {
 /// Number of currently running schedulers.
 pub(super) static RUNNING_SCHED_COUNT: AtomicU32 = AtomicU32::new(0);
 /// Global list of threads to be reaped.
-static ZOMBIES: Spinlock<ArcInvasiveList<Thread>> = Spinlock::new(ArcInvasiveList::new());
+static ZOMBIES: Spinlock<ArcIntrusiveList<Thread>> = Spinlock::new(ArcIntrusiveList::new());
 /// The thread reaper thread.
 static REAPER: Spinlock<Option<Arc<Thread>>> = Spinlock::new(None);
 
@@ -430,7 +430,7 @@ impl Scheduler {
             thread_yield();
 
             // Threads are transferred to this list and dropped at the end of the loop.
-            let mut threads = ArcInvasiveList::new();
+            let mut threads = ArcIntrusiveList::new();
 
             let _noirq = IrqGuard::new();
 
