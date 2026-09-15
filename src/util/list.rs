@@ -3,7 +3,11 @@
 
 use core::{marker::PhantomData, ptr::null_mut};
 
-use alloc::{boxed::Box, sync::Arc};
+use alloc::{
+    alloc::{Allocator, Global},
+    boxed::Box,
+    sync::Arc,
+};
 
 #[cfg(feature = "dlist_debug")]
 macro_rules! dlist_debug_assert {
@@ -402,15 +406,29 @@ impl<T: HasListNode<T>> Drop for InvasiveList<T> {
     }
 }
 
+pub trait InvasiveListAlloc: Allocator + Copy {}
+impl<T> InvasiveListAlloc for T where T: Allocator + Copy {}
+
 /// Invasive linked list for things stored in an [`Arc`].
-pub struct ArcInvasiveList<T: HasListNode<T>> {
+pub struct ArcInvasiveList<T: HasListNode<T>, A: InvasiveListAlloc = Global> {
     inner: InvasiveList<T>,
+    alloc: A,
 }
 
-impl<T: HasListNode<T>> ArcInvasiveList<T> {
+impl<T: HasListNode<T>> ArcInvasiveList<T, Global> {
     pub const fn new() -> Self {
         Self {
             inner: InvasiveList::new(),
+            alloc: Global,
+        }
+    }
+}
+
+impl<T: HasListNode<T>, A: InvasiveListAlloc> ArcInvasiveList<T, A> {
+    pub const fn new_in(alloc: A) -> Self {
+        Self {
+            inner: InvasiveList::new(),
+            alloc,
         }
     }
 
@@ -418,8 +436,8 @@ impl<T: HasListNode<T>> ArcInvasiveList<T> {
         self.inner.len()
     }
 
-    pub fn push_front(&mut self, item: Arc<T>) -> Result<(), ()> {
-        let item = Arc::into_raw(item) as *mut T;
+    pub fn push_front(&mut self, item: Arc<T, A>) -> Result<(), ()> {
+        let item = Arc::into_raw_with_allocator(item).0 as *mut T;
         unsafe {
             let res = self.inner.push_front(&mut *item);
             if res.is_err() {
@@ -429,16 +447,17 @@ impl<T: HasListNode<T>> ArcInvasiveList<T> {
         }
     }
 
-    pub fn pop_front(&mut self) -> Option<Arc<T>> {
-        unsafe { self.inner.pop_front() }.map(|raw| unsafe { Arc::from_raw(raw as *const T) })
+    pub fn pop_front(&mut self) -> Option<Arc<T, A>> {
+        unsafe { self.inner.pop_front() }
+            .map(|raw| unsafe { Arc::from_raw_in(raw as *const T, self.alloc) })
     }
 
     pub fn front(&self) -> Option<&T> {
         self.inner.front().map(|x| unsafe { &*x })
     }
 
-    pub fn push_back(&mut self, item: Arc<T>) -> Result<(), ()> {
-        let item = Arc::into_raw(item) as *mut T;
+    pub fn push_back(&mut self, item: Arc<T, A>) -> Result<(), ()> {
+        let item = Arc::into_raw_with_allocator(item).0 as *mut T;
         unsafe {
             let res = self.inner.push_back(&mut *item);
             if res.is_err() {
@@ -448,8 +467,9 @@ impl<T: HasListNode<T>> ArcInvasiveList<T> {
         }
     }
 
-    pub fn pop_back(&mut self) -> Option<Arc<T>> {
-        unsafe { self.inner.pop_back() }.map(|raw| unsafe { Arc::from_raw(raw as *const T) })
+    pub fn pop_back(&mut self) -> Option<Arc<T, A>> {
+        unsafe { self.inner.pop_back() }
+            .map(|raw| unsafe { Arc::from_raw_in(raw as *const T, self.alloc) })
     }
 
     pub fn back(&self) -> Option<&T> {
@@ -482,21 +502,32 @@ impl<T: HasListNode<T>> ArcInvasiveList<T> {
     }
 }
 
-impl<T: HasListNode<T>> Drop for ArcInvasiveList<T> {
+impl<T: HasListNode<T>, A: InvasiveListAlloc> Drop for ArcInvasiveList<T, A> {
     fn drop(&mut self) {
         self.clear()
     }
 }
 
 /// Invasive linked list for things stored in an [`Arc`].
-pub struct BoxInvasiveList<T: HasListNode<T>> {
+pub struct BoxInvasiveList<T: HasListNode<T>, A: InvasiveListAlloc = Global> {
     inner: InvasiveList<T>,
+    alloc: A,
 }
 
-impl<T: HasListNode<T>> BoxInvasiveList<T> {
+impl<T: HasListNode<T>> BoxInvasiveList<T, Global> {
     pub const fn new() -> Self {
         Self {
             inner: InvasiveList::new(),
+            alloc: Global,
+        }
+    }
+}
+
+impl<T: HasListNode<T>, A: InvasiveListAlloc> BoxInvasiveList<T, A> {
+    pub const fn new_in(alloc: A) -> Self {
+        Self {
+            inner: InvasiveList::new(),
+            alloc,
         }
     }
 
@@ -504,8 +535,8 @@ impl<T: HasListNode<T>> BoxInvasiveList<T> {
         self.inner.len()
     }
 
-    pub fn push_front(&mut self, item: Box<T>) -> Result<(), ()> {
-        let item = Box::into_raw(item) as *mut T;
+    pub fn push_front(&mut self, item: Box<T, A>) -> Result<(), ()> {
+        let item = Box::into_raw_with_allocator(item).0 as *mut T;
         unsafe {
             let res = self.inner.push_front(&mut *item);
             if res.is_err() {
@@ -515,16 +546,17 @@ impl<T: HasListNode<T>> BoxInvasiveList<T> {
         }
     }
 
-    pub fn pop_front(&mut self) -> Option<Box<T>> {
-        unsafe { self.inner.pop_front() }.map(|raw| unsafe { Box::from_raw(raw as *mut T) })
+    pub fn pop_front(&mut self) -> Option<Box<T, A>> {
+        unsafe { self.inner.pop_front() }
+            .map(|raw| unsafe { Box::from_raw_in(raw as *mut T, self.alloc) })
     }
 
     pub fn front(&self) -> Option<&T> {
         self.inner.front().map(|x| unsafe { &*x })
     }
 
-    pub fn push_back(&mut self, item: Box<T>) -> Result<(), ()> {
-        let item = Box::into_raw(item) as *mut T;
+    pub fn push_back(&mut self, item: Box<T, A>) -> Result<(), ()> {
+        let item = Box::into_raw_with_allocator(item).0 as *mut T;
         unsafe {
             let res = self.inner.push_back(&mut *item);
             if res.is_err() {
@@ -534,8 +566,9 @@ impl<T: HasListNode<T>> BoxInvasiveList<T> {
         }
     }
 
-    pub fn pop_back(&mut self) -> Option<Box<T>> {
-        unsafe { self.inner.pop_back() }.map(|raw| unsafe { Box::from_raw(raw as *mut T) })
+    pub fn pop_back(&mut self) -> Option<Box<T, A>> {
+        unsafe { self.inner.pop_back() }
+            .map(|raw| unsafe { Box::from_raw_in(raw as *mut T, self.alloc) })
     }
 
     pub fn back(&self) -> Option<&T> {
@@ -553,7 +586,7 @@ impl<T: HasListNode<T>> BoxInvasiveList<T> {
                 let next = (*cur).next;
                 (*cur).next = null_mut();
                 (*cur).prev = null_mut();
-                drop(Box::from_raw(T::from_node(cur)));
+                drop(Box::from_raw_in(T::from_node(cur), self.alloc));
                 cur = next;
             }
         }
@@ -568,7 +601,7 @@ impl<T: HasListNode<T>> BoxInvasiveList<T> {
     }
 }
 
-impl<T: HasListNode<T>> Drop for BoxInvasiveList<T> {
+impl<T: HasListNode<T>, A: InvasiveListAlloc> Drop for BoxInvasiveList<T, A> {
     fn drop(&mut self) {
         self.clear()
     }
