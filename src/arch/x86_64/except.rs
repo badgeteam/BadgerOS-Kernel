@@ -23,13 +23,16 @@ macro_rules! noexc_asm {
         let mut exc = 0usize;
         core::arch::asm!{
             // This will be set to 1 by the exception handler when it detects that the fallible instructions faulted.
-            ".equ __noexc_asm_start, .",
+            "88:",
             $code, // Actual instruction to check.
-            ".equ __noexc_asm_end, .",
+            "89:",
             // This adds it to the table of fallible instructions.
+            // The bounds are stored relative to the table entry itself; absolute addresses would
+            // need a dynamic relocation, which isn't possible in a read-only section of a PIE.
             ".pushsection \".noexc_table\", \"a\", @progbits",
-            ".8byte __noexc_asm_start",
-            ".8byte __noexc_asm_end",
+            ".balign 4",
+            ".4byte 88b - .",
+            ".4byte 89b - .",
             ".popsection"
             // Optional extra in/outs, options, etc.
             $(, $($params)+)?

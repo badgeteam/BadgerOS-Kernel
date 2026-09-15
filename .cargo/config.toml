@@ -1,5 +1,30 @@
-[build]
-rustflags = ["-C", "force-frame-pointers", "-C", "codegen-units=1"]
+[target.riscv64-kernel]
+rustflags = [
+    "-C",
+    "relocation-model=pic",
+    "-C",
+    "force-frame-pointers",
+    "-C",
+    "codegen-units=1",
+    "-C",
+    "link-arg=--gc-sections",
+    "-C",
+    "link-arg=-Tmisc/ld/riscv64.ld",
+]
+
+[target.x86_64-kernel]
+rustflags = [
+    "-C",
+    "relocation-model=pic",
+    "-C",
+    "force-frame-pointers",
+    "-C",
+    "codegen-units=1",
+    "-C",
+    "link-arg=--gc-sections",
+    "-C",
+    "link-arg=-Tmisc/ld/x86_64.ld",
+]
 
 [unstable]
 build-std = ["core", "alloc"]

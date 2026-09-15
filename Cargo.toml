@@ -10,10 +10,6 @@ dtb = ["dep:dtb"]
 acpi = []
 dlist_debug = []
 
-[lib]
-crate-type = ["staticlib"]
-test = false
-
 [dependencies]
 bytemuck = "1.23.0"
 bytemuck_derive = "1.10.2"

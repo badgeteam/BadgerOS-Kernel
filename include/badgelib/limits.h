@@ -1,4 +1,0 @@
-
-// STFU, compiler.
-
-#pragma once

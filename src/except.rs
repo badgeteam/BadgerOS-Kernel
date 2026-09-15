@@ -12,11 +12,29 @@ use crate::{
 };
 
 /// Entry in the `.noexc_table` table.
+/// The bounds are stored as offsets relative to the field that contains them so that the table
+/// needs no relocations at runtime.
 #[derive(Clone, Copy)]
 #[repr(C)]
 struct NoexcEntry {
-    start: *const (),
-    end: *const (),
+    start: i32,
+    end: i32,
+}
+
+impl NoexcEntry {
+    /// First address of the fallible instruction.
+    fn start(&self) -> *const () {
+        (&raw const self.start)
+            .wrapping_byte_offset(self.start as isize)
+            .cast()
+    }
+
+    /// Address just past the fallible instruction; where to resume after a fault.
+    fn end(&self) -> *const () {
+        (&raw const self.end)
+            .wrapping_byte_offset(self.end as isize)
+            .cast()
+    }
 }
 
 unsafe extern "C" {
@@ -83,9 +101,9 @@ pub fn generic_trap(frame: &mut TrapFrame) {
         let pc = frame.get_pc();
         let mut cur = &raw const __start_noexc;
         while !core::ptr::addr_eq(cur, &raw const __stop_noexc) {
-            let entry = unsafe { *cur };
-            if entry.start <= pc && pc < entry.end {
-                frame.noexc_skip(entry.end);
+            let entry = unsafe { &*cur };
+            if entry.start() <= pc && pc < entry.end() {
+                frame.noexc_skip(entry.end());
                 return;
             }
             cur = cur.wrapping_add(1);

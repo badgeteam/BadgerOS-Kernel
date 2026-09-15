@@ -14,8 +14,8 @@ fn main() {
     bindings
         .use_core()
         .generate()
-        .expect("Unable to generate bindings")
-        .write_to_file("target/bindings.rs")
+        .expect("Unable to generate ABI bindings")
+        .write_to_file("target/abi.rs")
         .expect("Couldn't write bindings!");
 
     println!("cargo::rerun-if-changed=misc/");
