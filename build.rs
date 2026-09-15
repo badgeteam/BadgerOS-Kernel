@@ -1,4 +1,32 @@
+use std::{fs::File, io::Write, process::Command};
+
 fn main() {
+    let mut fd = File::create("target/version.rs").expect("Failed to open target/version.rs");
+
+    fd.write(b"pub const RELEASE: &'static str = \"").unwrap();
+    if let Ok(out) = Command::new("git")
+        .args(["describe", "--tags", "--always", "--dirty"])
+        .output()
+        && out.status.success()
+    {
+        fd.write(out.stdout.trim_ascii()).unwrap();
+    } else {
+        fd.write(b"UNKNOWN").unwrap();
+    }
+    fd.write(b"\";\n").unwrap();
+
+    fd.write(b"pub const VERSION: &'static str = \"").unwrap();
+    fd.write(
+        Command::new("date")
+            .arg("+%Y-%m-%d %H:%M:%S %Z")
+            .output()
+            .unwrap()
+            .stdout
+            .trim_ascii(),
+    )
+    .unwrap();
+    fd.write(b"\";\n").unwrap();
+
     let mut bindings =
         bindgen::Builder::default().clang_args(["-Imisc/abi", "-Wno-unknown-attributes"]);
 

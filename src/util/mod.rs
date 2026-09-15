@@ -17,9 +17,8 @@ pub mod rtree;
 pub mod time;
 pub mod utf8;
 
-pub mod version {
-    include!("../../target/version.rs");
-}
+#[path = "../../target/version.rs"]
+pub mod version;
 
 /// Enum that represents either a const or a mut reference.
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
