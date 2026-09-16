@@ -4,24 +4,28 @@
 
 use core::arch::asm;
 
+#[inline(always)]
 pub unsafe fn outb(port: u16, value: u8) {
     unsafe {
         asm!("out dx, al", in("dx")port, in("al")value, options(preserves_flags));
     }
 }
 
+#[inline(always)]
 pub unsafe fn outw(port: u16, value: u16) {
     unsafe {
         asm!("out dx, ax", in("dx")port, in("ax")value, options(preserves_flags));
     }
 }
 
+#[inline(always)]
 pub unsafe fn outd(port: u16, value: u32) {
     unsafe {
         asm!("out dx, eax", in("dx")port, in("eax")value, options(preserves_flags));
     }
 }
 
+#[inline(always)]
 pub unsafe fn inb(port: u16) -> u8 {
     let res;
     unsafe {
@@ -30,6 +34,7 @@ pub unsafe fn inb(port: u16) -> u8 {
     res
 }
 
+#[inline(always)]
 pub unsafe fn inw(port: u16) -> u16 {
     let res;
     unsafe {
@@ -38,6 +43,7 @@ pub unsafe fn inw(port: u16) -> u16 {
     res
 }
 
+#[inline(always)]
 pub unsafe fn ind(port: u16) -> u32 {
     let res;
     unsafe {
