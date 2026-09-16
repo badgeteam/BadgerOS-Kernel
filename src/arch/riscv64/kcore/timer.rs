@@ -66,6 +66,11 @@ impl ArchTimer for Riscv {
         init_common();
     }
 
+    #[cfg(feature = "acpi")]
+    fn timer_init_acpi() {
+        todo!();
+    }
+
     fn time_us() -> u64 {
         let tick = time_ticks();
         let ratio = unsafe { MICROS_PER_TICK };

@@ -4,7 +4,10 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::{error::EResult, kcore::sync::waitlist::Waitlist};
+use crate::{
+    error::{EResult, Errno},
+    kcore::{sync::waitlist::Waitlist, timer::time_us},
+};
 
 /// A counting semaphore.
 #[repr(C)]
@@ -33,6 +36,11 @@ impl Semaphore {
             waitlist: Waitlist::new(),
             counter: AtomicU32::new(initial_counter),
         }
+    }
+
+    /// Reset the counter.
+    pub fn reset(&self) {
+        self.counter.store(0, Ordering::Relaxed);
     }
 
     /// Post once to the semaphore.
@@ -80,11 +88,13 @@ impl Semaphore {
 
     /// Await one post from the semaphore.
     pub fn unintr_wait(&self) {
-        self.unintr_timed_wait(u64::MAX)
+        self.unintr_timed_wait(u64::MAX).unwrap();
     }
 
     /// Await one post from the semaphore.
-    pub fn unintr_timed_wait(&self, timeout: u64) {
+    pub fn unintr_timed_wait(&self, timeout: u64) -> EResult<()> {
+        let lim = time_us().saturating_add(timeout);
+
         // Fast path.
         for _ in 0..50 {
             if self
@@ -92,7 +102,7 @@ impl Semaphore {
                 .try_update(Ordering::Release, Ordering::Relaxed, |x| x.checked_sub(1))
                 .is_ok()
             {
-                return;
+                return Ok(());
             }
         }
 
@@ -102,8 +112,15 @@ impl Semaphore {
             .try_update(Ordering::Release, Ordering::Relaxed, |x| x.checked_sub(1))
             .is_ok()
         {
-            self.waitlist
-                .unintr_block(timeout, || self.counter.load(Ordering::Relaxed) == 0);
+            let now = time_us();
+            self.waitlist.unintr_block(lim.saturating_sub(now), || {
+                self.counter.load(Ordering::Relaxed) == 0
+            });
+            if now > lim {
+                return Err(Errno::ETIMEDOUT);
+            }
         }
+
+        Ok(())
     }
 }

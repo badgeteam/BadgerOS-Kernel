@@ -5,8 +5,9 @@
 use core::{fmt::Debug, num::NonZeroUsize, sync::atomic::Ordering};
 
 use crate::{
-LogLevel, error::{EResult, Errno},
-    arch::mmu::PAGE_SIZE,
+    LogLevel,
+    arch::{self, mmu::PAGE_SIZE},
+    error::{EResult, Errno},
     mem::pmm::{self, PAddrr},
 };
 
@@ -137,7 +138,14 @@ pub struct RawMemory {
 }
 
 impl RawMemory {
-    pub const unsafe fn new(paddr: PAddrr, len: usize) -> Self {
+    pub const unsafe fn new(mut paddr: PAddrr, mut len: usize) -> Self {
+        if paddr % arch::mmu::PAGE_SIZE != 0 {
+            len += paddr % arch::mmu::PAGE_SIZE;
+            paddr -= paddr % arch::mmu::PAGE_SIZE;
+        }
+        if len % arch::mmu::PAGE_SIZE != 0 {
+            len += arch::mmu::PAGE_SIZE - len % arch::mmu::PAGE_SIZE;
+        }
         Self { paddr, len }
     }
 }

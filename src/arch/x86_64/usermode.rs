@@ -12,23 +12,23 @@ impl ArchUsermode for X86_64 {
     type UserRegs = DUMMY;
 
     fn enter_signal(
-        frame: &mut crate::arch::except::TrapFrame,
-        siginfo: siginfo_t,
-        handler: *const (),
-        returner: *const (),
+        _frame: &mut crate::arch::except::TrapFrame,
+        _siginfo: siginfo_t,
+        _handler: *const (),
+        _returner: *const (),
     ) -> AccessResult<()> {
         todo!()
     }
 
-    fn exit_signal(frame: &mut crate::arch::except::SyscallFrame) -> AccessResult<()> {
+    fn exit_signal(_frame: &mut crate::arch::except::SyscallFrame) -> AccessResult<()> {
         todo!()
     }
 
-    unsafe extern "C" fn enter_usermode(load: &crate::arch::usermode::UserRegs) {
+    unsafe extern "C" fn enter_usermode(_load: &crate::arch::usermode::UserRegs) {
         todo!()
     }
 
-    unsafe extern "C" fn exit_usermode(restore: &crate::arch::usermode::KernelRegs) -> ! {
+    unsafe extern "C" fn exit_usermode(_restore: &crate::arch::usermode::KernelRegs) -> ! {
         todo!()
     }
 }
@@ -37,11 +37,11 @@ impl ArchUsermode for X86_64 {
 pub struct DUMMY {}
 
 impl ArchUserRegs for DUMMY {
-    fn new(entry_pc: usize, entry_sp: usize) -> Self {
+    fn new(_entry_pc: usize, _entry_sp: usize) -> Self {
         todo!()
     }
 
-    fn fork_from(frame: &crate::arch::except::SyscallFrame) -> Self {
+    fn fork_from(_frame: &crate::arch::except::SyscallFrame) -> Self {
         todo!()
     }
 }

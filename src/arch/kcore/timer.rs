@@ -9,6 +9,10 @@ pub trait ArchTimer {
     #[cfg(feature = "dtb")]
     fn timer_init_dtb(cpus_node: &DtbNode);
 
+    /// Initialize CPU-local timers using ACPI information.
+    #[cfg(feature = "acpi")]
+    fn timer_init_acpi();
+
     /// Get monotonic microsecond timer.
     fn time_us() -> u64;
 }

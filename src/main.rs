@@ -70,7 +70,18 @@ pub mod process;
 #[allow(unused)]
 #[allow(unsafe_op_in_unsafe_fn)]
 #[allow(non_upper_case_globals)]
-#[path = "../target/abi.rs"]
-pub mod abi;
+pub mod abi {
+    include!(concat!(env!("OUT_DIR"), "/abi.rs"));
+}
+
+#[allow(non_upper_case_globals)]
+#[allow(non_camel_case_types)]
+#[allow(non_snake_case)]
+#[allow(unused)]
+#[allow(unsafe_op_in_unsafe_fn)]
+#[allow(non_upper_case_globals)]
+pub mod uacpi_sys {
+    include!(concat!(env!("OUT_DIR"), "/uacpi.rs"));
+}
 
 pub use util::log::*;

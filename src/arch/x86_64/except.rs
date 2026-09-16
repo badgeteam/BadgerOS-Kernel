@@ -292,13 +292,13 @@ impl ArchTrapFrame for X86TrapFrame {
 pub struct DUMMY {}
 
 impl Display for DUMMY {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    fn fmt(&self, _f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         todo!()
     }
 }
 
 impl ArchSyscallFrame for DUMMY {
-    fn set_retval(&mut self, value: usize) {
+    fn set_retval(&mut self, _value: usize) {
         todo!()
     }
 }

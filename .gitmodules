@@ -1,6 +1,9 @@
-[submodule "kernel/lib/uacpi"]
-	path = lib/uacpi
-	url = https://github.com/ultraos/uacpi
 [submodule "lib/limine"]
 	path = lib/limine
 	url = https://robotman2412@github.com/robotman2412/limine-boot-rust
+[submodule "lib/c-hdrs"]
+	path = lib/c-hdrs
+	url = https://github.com/osdev0/freestanding-c-hdrs
+[submodule "lib/uacpi"]
+	path = lib/uacpi
+	url = https://github.com/uACPI/uacpi

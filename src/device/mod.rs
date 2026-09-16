@@ -224,5 +224,15 @@ pub unsafe fn init() {
         }
     }
 
+    #[cfg(feature = "acpi")]
+    {
+        use crate::boot;
+
+        let rsdp_pma = boot::protocol::get_rsdp_paddr();
+        if rsdp_pma != 0 {
+            unsafe { acpi::init() };
+        }
+    }
+
     probe::start_thread();
 }

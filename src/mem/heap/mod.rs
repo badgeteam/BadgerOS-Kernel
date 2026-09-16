@@ -8,10 +8,10 @@ use alloc::alloc::Allocator;
 pub mod hhdm;
 pub mod slabs;
 
-struct Heap;
+pub struct Heap;
 
 #[global_allocator]
-static HEAP: Heap = Heap;
+pub static HEAP: Heap = Heap;
 
 unsafe impl GlobalAlloc for Heap {
     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {

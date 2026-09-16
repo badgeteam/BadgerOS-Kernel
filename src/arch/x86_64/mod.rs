@@ -1,12 +1,14 @@
 use crate::{arch::ArchTrait, boot::init::basic_runtime_init};
 
 pub mod cpuid;
+pub mod ioport;
+pub mod msr;
+pub mod seg;
+
 pub mod except;
 pub mod kcore;
 pub mod misc;
 pub mod mmu;
-pub mod msr;
-pub mod seg;
 pub mod usermode;
 
 pub struct X86_64;

@@ -7,8 +7,8 @@ use core::{fmt::Debug, ops::Range};
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
 use crate::{
-    error::{EResult, Errno},
     arch::mmu::PAGE_SIZE,
+    error::{EResult, Errno},
     impl_has_list_node,
     kcore::sync::spinlock::Spinlock,
     mem::{
@@ -673,9 +673,13 @@ impl VmSpaceInner {
     /// Unmap all pages within `bounds`.
     /// No changes are made on failure.
     /// Preserves the outer portion of mappings on the border of `bounds`.
-    pub unsafe fn unmap(&self, bounds: Range<usize>) -> EResult<()> {
-        debug_assert!(bounds.start % PAGE_SIZE == 0);
-        debug_assert!(bounds.end % PAGE_SIZE == 0);
+    pub unsafe fn unmap(&self, mut bounds: Range<usize>) -> EResult<()> {
+        if bounds.start % PAGE_SIZE != 0 {
+            bounds.start -= bounds.start % PAGE_SIZE;
+        }
+        if bounds.end % PAGE_SIZE != 0 {
+            bounds.end += PAGE_SIZE - bounds.end % PAGE_SIZE;
+        }
         let mut map = self.map.lock();
         Self::split(bounds.start, &mut map)?;
         Self::split(bounds.end, &mut map)?;
@@ -755,9 +759,7 @@ impl VmSpaceInner {
         }
 
         let mut fences = VmFenceSet::new();
-        for vaddr in
-            (entry.range.start + cutoff_offset..entry.range.end).step_by(PAGE_SIZE)
-        {
+        for vaddr in (entry.range.start + cutoff_offset..entry.range.end).step_by(PAGE_SIZE) {
             fences.add(Some(vaddr), None);
         }
         vmfence::shootdown(&fences);
