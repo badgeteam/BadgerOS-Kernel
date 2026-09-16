@@ -131,7 +131,7 @@ impl ArchTimer for X86_64 {
     }
 
     fn time_us() -> u64 {
-        let tick = time_ticks();
+        let tick = time_ticks() - unsafe { BASE_TICK };
         let ratio = unsafe { MICROS_PER_TICK };
         let tmp = tick.widening_mul(ratio);
         (tmp.0 >> 32) | (tmp.1 << 32)
