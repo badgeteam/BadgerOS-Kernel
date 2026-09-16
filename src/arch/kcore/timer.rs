@@ -9,7 +9,11 @@ pub trait ArchTimer {
     #[cfg(feature = "dtb")]
     fn timer_init_dtb(cpus_node: &DtbNode);
 
-    /// Initialize CPU-local timers using ACPI information.
+    /// Initialize CPU-local on ACPI systems before tables are loaded.
+    #[cfg(feature = "acpi")]
+    fn timer_init_pre_acpi();
+
+    /// Initialize CPU-local on ACPI systems after tables are loaded but before AML is loaded.
     #[cfg(feature = "acpi")]
     fn timer_init_acpi();
 

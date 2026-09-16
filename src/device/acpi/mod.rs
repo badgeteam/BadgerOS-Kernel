@@ -18,6 +18,8 @@ fn uacpi_status_to_string(status: uacpi_status) -> &'static str {
 }
 
 pub(super) unsafe fn init() {
+    Arch::timer_init_pre_acpi();
+
     let status = uacpi_initialize(0);
     if status != UACPI_STATUS_OK {
         panic!("UACPI init failed: {}", uacpi_status_to_string(status));

@@ -126,9 +126,12 @@ impl ArchTimer for X86_64 {
     }
 
     #[cfg(feature = "acpi")]
-    fn timer_init_acpi() {
+    fn timer_init_pre_acpi() {
         init();
     }
+
+    #[cfg(feature = "acpi")]
+    fn timer_init_acpi() {}
 
     fn time_us() -> u64 {
         let tick = time_ticks() - unsafe { BASE_TICK };

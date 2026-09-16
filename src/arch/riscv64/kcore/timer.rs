@@ -67,6 +67,11 @@ impl ArchTimer for Riscv {
     }
 
     #[cfg(feature = "acpi")]
+    fn timer_init_pre_acpi() {
+        todo!()
+    }
+
+    #[cfg(feature = "acpi")]
     fn timer_init_acpi() {
         todo!();
     }
