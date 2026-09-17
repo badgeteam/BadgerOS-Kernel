@@ -13,6 +13,8 @@ use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc};
 use dtb;
 use limine::{mp::MpInfo, request::MpRequest};
 
+#[cfg(feature = "acpi")]
+use crate::device::acpi::table::{MadtEntries, MadtEntry};
 use crate::{
     LogLevel,
     arch::{
@@ -131,6 +133,73 @@ pub fn init_dtb(cpus_node: &dtb::DtbNode) {
             maps.by_index.insert(smp_index, status);
             maps.by_cpuid.insert(cpuid, smp_index);
         };
+    }
+
+    maps.cpu_index_end = smp_counter;
+    init_common(&mut maps);
+}
+
+#[cfg(feature = "acpi")]
+pub fn init_acpi(madt: MadtEntries<'_>) {
+    let smp_req = SMP_REQ.response().expect("Missing SMP response");
+    #[cfg(target_arch = "riscv64")]
+    let bsp_cpuid = smp_req.bsp_hartid as CpuID;
+    #[cfg(target_arch = "x86_64")]
+    let bsp_cpuid = smp_req.bsp_lapic_id as CpuID;
+
+    let mut maps = SMP_MAPS.unintr_lock();
+    let mut smp_counter = 1u32;
+    let mut add_cpu = |cpuid: CpuID| {
+        let smp_index: u32;
+        let power;
+        if cpuid == bsp_cpuid {
+            smp_index = 0;
+            power = PowerState::Online;
+        } else {
+            smp_index = smp_counter;
+            smp_counter += 1;
+            power = PowerState::PreHandover;
+        }
+        logkf!(
+            LogLevel::Info,
+            "Detected CPU{} (CPUID {})",
+            smp_index,
+            cpuid
+        );
+
+        let mut status = SmpStatus {
+            cpulocal: Box::new(CpuLocal {
+                smp_index,
+                ..Default::default()
+            }),
+            power: AtomicU32::new(power as u32),
+        };
+
+        status.cpulocal.smp_index = smp_index;
+        status.cpulocal.cpuid = cpuid;
+
+        maps.by_index.insert(smp_index, status);
+        maps.by_cpuid.insert(cpuid, smp_index);
+    };
+
+    // For SMP init we care specifically about the LAPICs.
+    for entry in madt {
+        use MadtEntry::*;
+        match entry {
+            Lapic(lapic) => {
+                if lapic.flags & 3 != 0 {
+                    // Either already online, or online capable.
+                    add_cpu(lapic.id as CpuID)
+                }
+            }
+            LocalX2apic(lapic) => {
+                if lapic.flags & 3 != 0 {
+                    // Either already online, or online capable.
+                    add_cpu(lapic.id as CpuID)
+                }
+            }
+            _ => (),
+        }
     }
 
     maps.cpu_index_end = smp_counter;
