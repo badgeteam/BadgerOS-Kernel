@@ -57,7 +57,7 @@ pub fn logkf_unlocked(level: LogLevel, thing: &dyn Display) {
         LogLevel::Info => write_unlocked("\x1b[32m"),
         LogLevel::Debug => write_unlocked("\x1b[34m"),
     }
-    printf_unlocked!("[{:05}.{:03}] ", now / 1000000, now / 1000);
+    printf_unlocked!("[{:05}.{:03}] ", now / 1000000, now / 1000 % 1000);
     match level {
         LogLevel::Fatal => write_unlocked("FATAL "),
         LogLevel::Error => write_unlocked("ERROR "),
